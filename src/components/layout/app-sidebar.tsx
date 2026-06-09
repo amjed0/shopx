@@ -90,7 +90,7 @@ const navigation = [
       { title: "Cash Book", url: "/accounting/cashbook" },
       { title: "P&L Statement", url: "/accounting/pl-statement" },
       { title: "Balance Sheet", url: "/accounting/balance-sheet" },
-      { title: "GST Reports", url: "/accounting/gst" },
+      { title: "GST Reports", url: "/accounting/gst-reports" },
     ],
   },
   {
