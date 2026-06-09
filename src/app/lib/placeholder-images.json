@@ -1,0 +1,22 @@
+{
+  "placeholderImages": [
+    {
+      "id": "shop-hero",
+      "description": "A modern retail storefront",
+      "imageUrl": "https://picsum.photos/seed/shop-hero/1200/600",
+      "imageHint": "modern store"
+    },
+    {
+      "id": "inventory",
+      "description": "Organized warehouse shelves",
+      "imageUrl": "https://picsum.photos/seed/inventory/800/600",
+      "imageHint": "warehouse shelves"
+    },
+    {
+      "id": "billing",
+      "description": "Modern checkout counter",
+      "imageUrl": "https://picsum.photos/seed/billing/600/400",
+      "imageHint": "checkout counter"
+    }
+  ]
+}

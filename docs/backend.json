@@ -1,0 +1,75 @@
+
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "A product available in the shop inventory.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "sku": { "type": "string" },
+        "category": { "type": "string" },
+        "purchasePrice": { "type": "number" },
+        "sellingPrice": { "type": "number" },
+        "stock": { "type": "number" },
+        "minStock": { "type": "number" }
+      },
+      "required": ["name", "sku", "category", "purchasePrice", "sellingPrice", "stock"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "A customer of the shop.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "outstandingBalance": { "type": "number" }
+      },
+      "required": ["name", "phone"]
+    },
+    "Sale": {
+      "title": "Sale",
+      "description": "A recorded transaction or bill.",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "format": "date-time" },
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "total": { "type": "number" },
+        "status": { "type": "string", "enum": ["paid", "pending", "returned"] },
+        "paymentMethod": { "type": "string", "enum": ["cash", "upi", "card", "credit"] },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "productId": { "type": "string" },
+              "productName": { "type": "string" },
+              "quantity": { "type": "number" },
+              "price": { "type": "number" }
+            }
+          }
+        }
+      },
+      "required": ["date", "total", "status", "paymentMethod"]
+    }
+  },
+  "auth": {
+    "providers": ["password"]
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Store for all inventory items."
+    },
+    "/customers/{customerId}": {
+      "schema": "Customer",
+      "description": "Store for customer relationships."
+    },
+    "/sales/{saleId}": {
+      "schema": "Sale",
+      "description": "History of all bills generated."
+    }
+  }
+}
