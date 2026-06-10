@@ -11,29 +11,35 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { email, password } = body;
 
+    // ── Validate required fields ──────────────────────────────────────────────
     if (!email || !password) {
-      return NextResponse.json({ error: 'Email and password are required' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Email and password are required' },
+        { status: 400 }
+      );
     }
 
     const normalizedEmail = email.toLowerCase().trim();
 
-    // Check if user already exists
+    // ── Check duplicate user ───────────────────────────────────────────────────
     const existingUser = await User.findOne({ email: normalizedEmail });
     if (existingUser) {
-      return NextResponse.json({ error: 'An account with this email already exists' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'An account with this email already exists' },
+        { status: 400 }
+      );
     }
 
-    // Check if a shop already exists with this email (link existing data)
+    // ── Determine userId ───────────────────────────────────────────────────────
+    // If a shop record already exists for this email (pre-seeded data), reuse
+    // its userId so inventory/sales data stays linked. Otherwise generate fresh.
     const existingShop = await Shop.findOne({ email: normalizedEmail });
-    let userId: string;
+    const userId: string =
+      existingShop?.userId
+        ? String(existingShop.userId)
+        : new mongoose.Types.ObjectId().toString();
 
-    if (existingShop && existingShop.userId) {
-      userId = String(existingShop.userId);
-    } else {
-      userId = new mongoose.Types.ObjectId().toString();
-    }
-
-    // Hash password and save new user
+    // ── Create user ────────────────────────────────────────────────────────────
     const hashedPassword = hashPassword(password);
     const newUser = new User({
       _id: userId,
@@ -42,12 +48,23 @@ export async function POST(request: Request) {
     });
     await newUser.save();
 
-    // Set session cookie
+    // ── Set session cookie ─────────────────────────────────────────────────────
     const userPayload = { uid: userId, email: normalizedEmail };
     await setSessionCookie(userPayload);
 
     return NextResponse.json({ user: userPayload }, { status: 201 });
+
   } catch (error: any) {
+    console.error('[signup]', error);
+
+    // Mongoose duplicate-key error (race condition)
+    if (error.code === 11000) {
+      return NextResponse.json(
+        { error: 'An account with this email already exists' },
+        { status: 400 }
+      );
+    }
+
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
