@@ -77,6 +77,9 @@ export default function SignupPage() {
 
       const signupData = await signupRes.json()
 
+      console.log("signupData", signupData);
+      
+
       if (!signupRes.ok) {
         throw new Error(signupData.error || "Registration failed.")
       }
@@ -84,7 +87,7 @@ export default function SignupPage() {
       // Step 2: Save shop profile using userId returned from signup
       const userId = signupData.user?.uid
       const profileRes = await fetch(`/api/shop_profiles/${userId}`, {
-        method: "PUT",
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ownerName: formData.fullName,
