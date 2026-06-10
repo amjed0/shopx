@@ -83,7 +83,7 @@ export default function SignupPage() {
 
       // Step 2: Save shop profile using userId returned from signup
       const userId = signupData.user?.uid
-      const profileRes = await fetch(`/api/shop_profile/${userId}`, {
+      const profileRes = await fetch(`/api/shops/${userId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

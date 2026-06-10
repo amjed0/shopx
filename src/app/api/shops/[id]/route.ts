@@ -29,17 +29,35 @@ export async function PUT(
     await dbConnect();
     const { id } = await params;
     const data = await request.json();
-    
+
+    // Validate required fields
+    if (!data.ownerName || !data.companyName) {
+      return NextResponse.json(
+        { error: 'ownerName and companyName are required' },
+        { status: 400 }
+      );
+    }
+
     const shop = await Shop.findOneAndUpdate(
       { userId: id },
-      { ...data, userId: id },
-      { new: true, upsert: true }
+      {
+        $set: {
+          userId:      id,
+          ownerName:   data.ownerName   || '',
+          companyName: data.companyName || '',
+          location:    data.location    || '',
+          phone:       data.phone       || '',
+          email:       data.email       || '',
+        },
+      },
+      { new: true, upsert: true, runValidators: true }
     );
-    
+
     const obj = shop.toObject();
     obj.id = obj.userId;
     return NextResponse.json(obj);
   } catch (error: any) {
+    console.error('[shop_profile PUT]', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
