@@ -9,16 +9,16 @@ import {
   Wallet,
   Banknote,
   History,
-  AlertCircle,
   CheckCircle2,
   FileText,
   ShoppingCart,
   Zap,
-  UserPlus
+  UserPlus,
+  Loader2
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { toast } from "@/hooks/use-toast"
@@ -32,12 +32,17 @@ import {
   DialogTitle,
   DialogTrigger
 } from "@/components/ui/dialog"
-import { useCollection, useFirestore, collection, addDoc, updateDoc, doc, query, orderBy } from "@/firebase"
-import { Product } from "../../inventory/page"
-import { Customer } from "../../managment/customers/page"
-import { errorEmitter } from '@/firebase/error-emitter'
-import { FirestorePermissionError } from '@/firebase/errors'
 import { cn } from "@/lib/utils"
+import { useUser } from "@/app/auth/use-user"
+import { Product } from "../../inventory/page"
+
+interface Customer {
+  id: string
+  name: string
+  phone: string
+  email?: string
+  outstandingBalance: number
+}
 
 interface BillItem {
   product: Product
@@ -45,19 +50,33 @@ interface BillItem {
 }
 
 export default function NewBillPage() {
-  const firestore = useFirestore()
+  const { user } = useUser()
   const [customerSearch, setCustomerSearch] = React.useState("")
   const [productSearch, setProductSearch] = React.useState("")
   const [selectedCustomer, setSelectedCustomer] = React.useState<Customer | null>(null)
   const [billItems, setBillItems] = React.useState<BillItem[]>([])
   const [paymentMethod, setPaymentMethod] = React.useState<string>("upi")
   const [isCustomerDialogOpen, setIsCustomerDialogOpen] = React.useState(false)
+  const [isSubmitting, setIsSubmitting] = React.useState(false)
+  const [isAddingCustomer, setIsAddingCustomer] = React.useState(false)
 
-  const productsQuery = React.useMemo(() => firestore ? query(collection(firestore, 'products'), orderBy('name')) : null, [firestore])
-  const customersQuery = React.useMemo(() => firestore ? query(collection(firestore, 'customers'), orderBy('name')) : null, [firestore])
+  const [products, setProducts] = React.useState<Product[]>([])
+  const [customers, setCustomers] = React.useState<Customer[]>([])
 
-  const { data: products = [] } = useCollection<Product>(productsQuery)
-  const { data: customers = [] } = useCollection<Customer>(customersQuery)
+  // Fetch products and customers from MongoDB API
+  React.useEffect(() => {
+    if (!user?.uid) return
+
+    fetch("/api/products", { headers: { "x-user-id": user.uid } })
+      .then(res => res.ok ? res.json() : [])
+      .then((data: Product[]) => setProducts(Array.isArray(data) ? data : []))
+      .catch(() => setProducts([]))
+
+    fetch("/api/customers", { headers: { "x-user-id": user.uid } })
+      .then(res => res.ok ? res.json() : [])
+      .then((data: Customer[]) => setCustomers(Array.isArray(data) ? data : []))
+      .catch(() => setCustomers([]))
+  }, [user?.uid])
 
   const filteredCustomers = customerSearch.length > 0
     ? customers.filter(c => c.name.toLowerCase().includes(customerSearch.toLowerCase()) || c.phone.includes(customerSearch))
@@ -83,9 +102,9 @@ export default function NewBillPage() {
     setBillItems(billItems.map(item => item.product.id === productId ? { ...item, quantity: Math.max(1, item.quantity + delta) } : item))
   }
 
-  const handleAddCustomer = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleAddCustomer = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (!firestore) return
+    if (!user?.uid) return
     const formData = new FormData(e.currentTarget)
     const name = formData.get("name") as string
     const phone = formData.get("phone") as string
@@ -96,87 +115,86 @@ export default function NewBillPage() {
       return
     }
 
-    const custData = {
-      name,
-      phone,
-      email: email || "",
-      outstandingBalance: 0,
+    const custData = { name, phone, email: email || "", outstandingBalance: 0 }
+
+    try {
+      setIsAddingCustomer(true)
+      const res = await fetch("/api/customers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-user-id": user.uid },
+        body: JSON.stringify(custData),
+      })
+      if (!res.ok) throw new Error("Failed to add customer")
+      const newCustomer = await res.json()
+      setCustomers(prev => [...prev, newCustomer])
+      setSelectedCustomer(newCustomer)
+      setIsCustomerDialogOpen(false)
+      toast({ title: "Customer Registered", description: `${name} is now selected.` })
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Error", description: err.message })
+    } finally {
+      setIsAddingCustomer(false)
     }
-
-    setIsCustomerDialogOpen(false)
-
-    addDoc(collection(firestore, 'customers'), custData)
-      .then((docRef) => {
-        setSelectedCustomer({ ...custData, id: docRef.id })
-        toast({ title: "Customer Registered", description: `${name} is now selected.` })
-      })
-      .catch(async (err) => {
-        errorEmitter.emit('permission-error', new FirestorePermissionError({
-          path: 'customers',
-          operation: 'create',
-          requestResourceData: custData
-        }))
-      })
   }
 
   const subtotal = billItems.reduce((acc, item) => acc + (item.product.sellingPrice * item.quantity), 0)
 
-  const handleCompleteSale = () => {
-    if (billItems.length === 0 || !firestore) return
+  const handleCompleteSale = async () => {
+    if (billItems.length === 0 || !user?.uid) return
 
     const saleData = {
       date: new Date().toISOString(),
       customerId: selectedCustomer?.id || "walk-in",
       customerName: selectedCustomer?.name || "Walk-in Customer",
       total: subtotal,
-      status: paymentMethod === 'credit' ? 'pending' : 'paid',
+      status: paymentMethod === "credit" ? "pending" : "paid",
       paymentMethod,
       items: billItems.map(item => ({
         productId: item.product.id,
         productName: item.product.name,
         quantity: item.quantity,
-        price: item.product.sellingPrice
-      }))
+        price: item.product.sellingPrice,
+      })),
     }
 
-    const itemsToProcess = [...billItems]
-    setBillItems([])
-    setSelectedCustomer(null)
-    toast({ title: "Sale Confirmed", description: "Transaction completed successfully." })
+    try {
+      setIsSubmitting(true)
 
-    addDoc(collection(firestore, 'sales'), saleData)
-      .catch(async (err) => {
-        errorEmitter.emit('permission-error', new FirestorePermissionError({
-          path: 'sales',
-          operation: 'create',
-          requestResourceData: saleData
-        }))
+      // Step 1: Create the sale record
+      const saleRes = await fetch("/api/sales", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-user-id": user.uid },
+        body: JSON.stringify(saleData),
       })
+      if (!saleRes.ok) throw new Error("Failed to save sale")
 
-    itemsToProcess.forEach(item => {
-      const productRef = doc(firestore, 'products', item.product.id)
-      updateDoc(productRef, {
-        stock: item.product.stock - item.quantity
-      }).catch(async (err) => {
-        errorEmitter.emit('permission-error', new FirestorePermissionError({
-          path: `products/${item.product.id}`,
-          operation: 'update',
-          requestResourceData: { stock: item.product.stock - item.quantity }
-        }))
-      })
-    })
+      // Step 2: Update stock for each product
+      await Promise.all(
+        billItems.map(item =>
+          fetch(`/api/products/${item.product.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json", "x-user-id": user.uid },
+            body: JSON.stringify({ stock: item.product.stock - item.quantity }),
+          })
+        )
+      )
 
-    if (paymentMethod === 'credit' && selectedCustomer) {
-      const customerRef = doc(firestore, 'customers', selectedCustomer.id)
-      updateDoc(customerRef, {
-        outstandingBalance: selectedCustomer.outstandingBalance + subtotal
-      }).catch(async (err) => {
-        errorEmitter.emit('permission-error', new FirestorePermissionError({
-          path: `customers/${selectedCustomer.id}`,
-          operation: 'update',
-          requestResourceData: { outstandingBalance: selectedCustomer.outstandingBalance + subtotal }
-        }))
-      })
+      // Step 3: Update customer balance if credit
+      if (paymentMethod === "credit" && selectedCustomer) {
+        await fetch(`/api/customers/${selectedCustomer.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", "x-user-id": user.uid },
+          body: JSON.stringify({ outstandingBalance: selectedCustomer.outstandingBalance + subtotal }),
+        })
+      }
+
+      setBillItems([])
+      setSelectedCustomer(null)
+      toast({ title: "Sale Confirmed ✓", description: "Transaction completed successfully." })
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Sale Failed", description: err.message })
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -218,7 +236,10 @@ export default function NewBillPage() {
                       </div>
                     </div>
                     <DialogFooter>
-                      <Button type="submit" className="w-full">Create & Select Profile</Button>
+                      <Button type="submit" className="w-full" disabled={isAddingCustomer}>
+                        {isAddingCustomer && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
+                        Create & Select Profile
+                      </Button>
                     </DialogFooter>
                   </form>
                 </DialogContent>
@@ -302,7 +323,7 @@ export default function NewBillPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-6 pt-6">
-            <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+            <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2">
               {billItems.map(item => (
                 <div key={item.product.id} className="flex justify-between items-center group">
                   <div className="space-y-0.5">
@@ -369,9 +390,13 @@ export default function NewBillPage() {
             <Button
               className="w-full h-14 bg-accent text-accent-foreground font-bold text-lg rounded-2xl shadow-xl shadow-accent/20 hover:scale-[1.01] active:scale-[0.99] transition-all"
               onClick={handleCompleteSale}
-              disabled={billItems.length === 0}
+              disabled={billItems.length === 0 || isSubmitting}
             >
-              Complete Sale
+              {isSubmitting ? (
+                <><Loader2 className="w-5 h-5 animate-spin mr-2" /> Processing...</>
+              ) : (
+                <><CheckCircle2 className="w-5 h-5 mr-2" /> Complete Sale</>
+              )}
             </Button>
           </CardContent>
         </Card>

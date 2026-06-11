@@ -13,7 +13,6 @@ import {
   LogOut,
   User as UserIcon,
   ShieldCheck,
-  Receipt
 } from "lucide-react"
 
 import {
@@ -28,14 +27,36 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
   SidebarGroup,
-  useSidebar
+  useSidebar,
 } from "@/components/ui/sidebar"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
-import { useUser, signOut, useDoc, doc, getFirestore } from "@/firebase"
+import * as VisuallyHidden from "@radix-ui/react-visually-hidden"
+import { useSession, signOut } from "next-auth/react"
+
+interface ShopData {
+  ownerName?: string
+  companyName?: string
+}
+
+function useShop(userId: string | null): { data: ShopData | null; loading: boolean } {
+  const [data, setData] = React.useState<ShopData | null>(null)
+  const [loading, setLoading] = React.useState(true)
+
+  React.useEffect(() => {
+    if (!userId) { setLoading(false); return }
+    fetch(`/api/shop_profiles/${userId}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((json) => setData(json ?? null))
+      .catch(() => setData(null))
+      .finally(() => setLoading(false))
+  }, [userId])
+
+  return { data, loading }
+}
 
 const navigation = [
   {
@@ -76,10 +97,10 @@ const navigation = [
   {
     title: "Management",
     icon: Users,
-    url: "/customers",
+    url: "/managment",
     items: [
-      { title: "Customers", url: "management/customers" },
-      { title: "Credit Tracking", url: "management/credit-tracking" },
+      { title: "Customers", url: "/managment/customers" },
+      { title: "Credit Tracking", url: "/managment/credit-tracking" },
     ],
   },
   {
@@ -103,24 +124,19 @@ const navigation = [
 export function AppSidebar() {
   const pathname = usePathname()
   const router = useRouter()
-  const { user, loading: userLoading } = useUser()
   const { state } = useSidebar()
-  const db = getFirestore()
+  const { data: session, status } = useSession()
 
-  const shopRef = React.useMemo(
-    () => (user ? doc(db, "shops", user.uid) : null),
-    [db, user]
-  )
-  const { data: shopData, loading: shopLoading } = useDoc(shopRef)
+  const userId = session?.user?.id ?? null
+  const { data: shopData, loading: shopLoading } = useShop(userId)
 
-  // True while either user session or shop profile is still fetching
-  const isLoading = userLoading || shopLoading
+  const isLoading = status === "loading" || shopLoading
 
   const handleLogout = async (e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
     try {
-      await signOut()
+      await signOut({ redirect: false })
       router.push("/login")
     } catch (error) {
       console.error("Logout failed", error)
@@ -130,6 +146,9 @@ export function AppSidebar() {
   return (
     <Sidebar collapsible="icon" className="border-r border-sidebar-border">
       <SidebarHeader className="h-16 flex items-center px-4 justify-between">
+        <VisuallyHidden.Root>
+          <span>Navigation Sidebar</span>
+        </VisuallyHidden.Root>
         <div className="flex items-center gap-3">
           <div className="bg-primary p-2 rounded-lg">
             <ShieldCheck className="w-5 h-5 text-primary-foreground" />
@@ -197,16 +216,15 @@ export function AppSidebar() {
             className="flex items-center gap-3 p-2 rounded-xl hover:bg-sidebar-accent transition-colors cursor-pointer group"
           >
             <Avatar className="h-9 w-9 rounded-lg border-2 border-primary/20 group-hover:border-primary/50 transition-colors">
-              <AvatarImage src={`https://picsum.photos/seed/${user?.uid || "shopx"}/40/40`} />
+              <AvatarImage src={`https://picsum.photos/seed/${userId || "shopx"}/40/40`} />
               <AvatarFallback className="rounded-lg bg-primary text-primary-foreground font-bold">
-                {user?.email?.charAt(0).toUpperCase() || "SX"}
+                {session?.user?.email?.charAt(0).toUpperCase() || "SX"}
               </AvatarFallback>
             </Avatar>
 
             {state !== "collapsed" && (
               <div className="grid flex-1 text-left text-sm leading-tight">
                 {isLoading ? (
-                  // Skeleton while loading — no flash of "Owner" / "companyName"
                   <>
                     <span className="h-3 w-24 rounded bg-muted-foreground/20 animate-pulse mb-1" />
                     <span className="h-2 w-16 rounded bg-muted-foreground/10 animate-pulse" />
@@ -214,7 +232,7 @@ export function AppSidebar() {
                 ) : (
                   <>
                     <span className="truncate font-bold text-foreground">
-                      {shopData?.ownerName || user?.email?.split("@")[0] || ""}
+                      {shopData?.ownerName || ""}
                     </span>
                     <span className="truncate text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
                       {shopData?.companyName || ""}

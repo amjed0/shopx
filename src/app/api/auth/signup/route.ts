@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import dbConnect from '../../../../../lib/mongodb';
 import User from '../../../../../models/User';
 import Shop from '../../../../../models/Shop';
-import { hashPassword, setSessionCookie } from '../../../../../lib/session';
+import bcrypt from 'bcryptjs';
 import mongoose from 'mongoose';
 
 export async function POST(request: Request) {
@@ -11,7 +11,6 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { email, password } = body;
 
-    // ── Validate required fields ──────────────────────────────────────────────
     if (!email || !password) {
       return NextResponse.json(
         { error: 'Email and password are required' },
@@ -21,7 +20,6 @@ export async function POST(request: Request) {
 
     const normalizedEmail = email.toLowerCase().trim();
 
-    // ── Check duplicate user ───────────────────────────────────────────────────
     const existingUser = await User.findOne({ email: normalizedEmail });
     if (existingUser) {
       return NextResponse.json(
@@ -30,17 +28,13 @@ export async function POST(request: Request) {
       );
     }
 
-    // ── Determine userId ───────────────────────────────────────────────────────
-    // If a shop record already exists for this email (pre-seeded data), reuse
-    // its userId so inventory/sales data stays linked. Otherwise generate fresh.
     const existingShop = await Shop.findOne({ email: normalizedEmail });
     const userId: string =
       existingShop?.userId
         ? String(existingShop.userId)
         : new mongoose.Types.ObjectId().toString();
 
-    // ── Create user ────────────────────────────────────────────────────────────
-    const hashedPassword = hashPassword(password);
+    const hashedPassword = await bcrypt.hash(password, 10);
     const newUser = new User({
       _id: userId,
       email: normalizedEmail,
@@ -48,16 +42,13 @@ export async function POST(request: Request) {
     });
     await newUser.save();
 
-    // ── Set session cookie ─────────────────────────────────────────────────────
     const userPayload = { uid: userId, email: normalizedEmail };
-    await setSessionCookie(userPayload);
 
     return NextResponse.json({ user: userPayload }, { status: 201 });
 
   } catch (error: any) {
     console.error('[signup]', error);
 
-    // Mongoose duplicate-key error (race condition)
     if (error.code === 11000) {
       return NextResponse.json(
         { error: 'An account with this email already exists' },

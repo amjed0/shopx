@@ -1,4 +1,3 @@
-
 "use client"
 
 import * as React from "react"
@@ -8,7 +7,7 @@ import { Separator } from "@/components/ui/separator"
 import { Bell, Search, Loader2 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { useUser } from "@/firebase"
+import { useSession } from "next-auth/react"
 import { useRouter } from "next/navigation"
 
 export default function DashboardLayout({
@@ -16,16 +15,16 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode
 }) {
-  const { user, loading } = useUser()
+  const { data: session, status } = useSession()
   const router = useRouter()
 
   React.useEffect(() => {
-    if (!loading && !user) {
+    if (status === "unauthenticated") {
       router.push("/login")
     }
-  }, [user, loading, router])
+  }, [status, router])
 
-  if (loading) {
+  if (status === "loading") {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
@@ -33,10 +32,10 @@ export default function DashboardLayout({
     )
   }
 
-  if (!user) {
+  if (!session) {
     return null
   }
- 
+
   return (
     <SidebarProvider>
       <div className="flex min-h-screen bg-background font-body">
@@ -48,8 +47,8 @@ export default function DashboardLayout({
               <Separator orientation="vertical" className="mr-2 h-4" />
               <div className="relative w-full max-w-sm hidden md:flex items-center">
                 <Search className="absolute left-3 h-4 w-4 text-muted-foreground" />
-                <Input 
-                  placeholder="Search products, invoices, customers..." 
+                <Input
+                  placeholder="Search products, invoices, customers..."
                   className="pl-9 bg-muted/40 border-none focus-visible:ring-1 focus-visible:ring-primary h-9 rounded-full"
                 />
               </div>
@@ -61,11 +60,11 @@ export default function DashboardLayout({
               </Button>
               <div className="h-8 w-[1px] bg-border mx-2" />
               <Button
-                          onClick={() => router.push("/sales/new")}
-                          className="bg-primary text-primary-foreground font-semibold px-6 rounded-full shadow-lg shadow-primary/20"
-                        >
-                          New Bill
-                        </Button>
+                onClick={() => router.push("/sales/new")}
+                className="bg-primary text-primary-foreground font-semibold px-6 rounded-full shadow-lg shadow-primary/20"
+              >
+                New Bill
+              </Button>
             </div>
           </header>
           <main className="flex-1 overflow-y-auto p-6 lg:p-10 max-w-7xl mx-auto w-full">

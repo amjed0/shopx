@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { toast } from "@/hooks/use-toast"
+import { signIn } from "next-auth/react"
 
 export default function LoginPage() {
   const router = useRouter()
@@ -22,50 +23,48 @@ export default function LoginPage() {
   const isPasswordTouched = password.length > 0
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError(null)
+  e.preventDefault()
+  setError(null)
 
-    if (!validateEmail(email)) {
-      setError("Please enter a valid email address (e.g. name@company.com).")
-      return
-    }
-
-    if (password.length < 6) {
-      setError("Password must be at least 6 characters long.")
-      return
-    }
-
-    setIsLoading(true)
-    try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      })
-
-      const data = await res.json()
-
-      if (!res.ok) {
-        throw new Error(data.error || "Invalid credentials. Please try again.")
-      }
-
-      toast({
-        title: "Access Granted",
-        description: "Welcome back to ShopX Elite.",
-      })
-      router.push("/dashboard")
-    } catch (err: any) {
-      const msg = err.message || "Invalid credentials. Please try again."
-      setError(msg)
-      toast({
-        variant: "destructive",
-        title: "Authentication Failed",
-        description: msg,
-      })
-    } finally {
-      setIsLoading(false)
-    }
+  if (!validateEmail(email)) {
+    setError("Please enter a valid email address (e.g. name@company.com).")
+    return
   }
+
+  if (password.length < 6) {
+    setError("Password must be at least 6 characters long.")
+    return
+  }
+
+  setIsLoading(true)
+  try {
+    const res = await signIn("credentials", {
+      email,
+      password,
+      redirect: false,
+    })
+
+    if (res?.error) {
+      throw new Error("Invalid credentials. Please try again.")
+    }
+
+    toast({
+      title: "Access Granted",
+      description: "Welcome back to ShopX Elite.",
+    })
+    router.push("/dashboard")
+  } catch (err: any) {
+    const msg = err.message || "Invalid credentials. Please try again."
+    setError(msg)
+    toast({
+      variant: "destructive",
+      title: "Authentication Failed",
+      description: msg,
+    })
+  } finally {
+    setIsLoading(false)
+  }
+}
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4 sm:p-8">

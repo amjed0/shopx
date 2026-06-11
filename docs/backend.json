@@ -57,19 +57,5 @@
   },
   "auth": {
     "providers": ["password"]
-  },
-  "firestore": {
-    "/products/{productId}": {
-      "schema": "Product",
-      "description": "Store for all inventory items."
-    },
-    "/customers/{customerId}": {
-      "schema": "Customer",
-      "description": "Store for customer relationships."
-    },
-    "/sales/{saleId}": {
-      "schema": "Sale",
-      "description": "History of all bills generated."
-    }
   }
 }

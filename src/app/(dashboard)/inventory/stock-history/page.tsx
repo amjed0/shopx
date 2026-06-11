@@ -4,7 +4,6 @@ import * as React from "react"
 import {
   ArrowLeft,
   ArrowDownCircle,
-  ArrowUpCircle,
   Package,
   Search,
   Loader2,
@@ -18,7 +17,7 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
-import { useCollection, useFirestore, collection, query } from "@/firebase"
+import { useUser } from "@/app/auth/use-user"
 
 interface SaleItem {
   productId: string
@@ -28,6 +27,7 @@ interface SaleItem {
 }
 
 interface Sale {
+  _id: string
   id: string
   date: string
   customerName: string
@@ -59,23 +59,33 @@ interface StockEntry {
 
 export default function StockHistoryPage() {
   const router = useRouter()
-  const firestore = useFirestore()
+  const { user } = useUser()
+  const [sales, setSales] = React.useState<Sale[]>([])
+  const [products, setProducts] = React.useState<Product[]>([])
+  const [salesLoading, setSalesLoading] = React.useState(true)
+  const [productsLoading, setProductsLoading] = React.useState(true)
+  const [searchQuery, setSearchQuery] = React.useState("")
 
-  const salesQuery = React.useMemo(() => {
-    if (!firestore) return null
-    return query(collection(firestore, "sales"))
-  }, [firestore])
+  // Fetch sales and products from MongoDB API
+  React.useEffect(() => {
+    if (!user?.uid) return
 
-  const productsQuery = React.useMemo(() => {
-    if (!firestore) return null
-    return query(collection(firestore, "products"))
-  }, [firestore])
+    setSalesLoading(true)
+    fetch("/api/sales", { headers: { "x-user-id": user.uid } })
+      .then(res => res.ok ? res.json() : [])
+      .then((data: Sale[]) => setSales(Array.isArray(data) ? data : []))
+      .catch(() => setSales([]))
+      .finally(() => setSalesLoading(false))
 
-  const { data: sales = [], loading: salesLoading } = useCollection<Sale>(salesQuery)
-  const { data: products = [], loading: productsLoading } = useCollection<Product>(productsQuery)
+    setProductsLoading(true)
+    fetch("/api/products", { headers: { "x-user-id": user.uid } })
+      .then(res => res.ok ? res.json() : [])
+      .then((data: Product[]) => setProducts(Array.isArray(data) ? data : []))
+      .catch(() => setProducts([]))
+      .finally(() => setProductsLoading(false))
+  }, [user?.uid])
 
   const loading = salesLoading || productsLoading
-  const [searchQuery, setSearchQuery] = React.useState("")
 
   // Build product lookup map
   const productMap = React.useMemo(() => {
@@ -89,16 +99,17 @@ export default function StockHistoryPage() {
     const entries: StockEntry[] = []
     sales.forEach(sale => {
       if (sale.status === "returned") return
+      const saleId = sale.id || sale._id
       ;(sale.items || []).forEach(item => {
         entries.push({
-          id: `${sale.id}-${item.productId}`,
+          id: `${saleId}-${item.productId}`,
           date: sale.date,
           productId: item.productId,
           productName: item.productName,
           sku: productMap[item.productId]?.sku || "—",
           category: productMap[item.productId]?.category || "—",
           change: -item.quantity,
-          reference: `INV-${sale.id.slice(-6).toUpperCase()}`,
+          reference: `INV-${saleId.slice(-6).toUpperCase()}`,
         })
       })
     })

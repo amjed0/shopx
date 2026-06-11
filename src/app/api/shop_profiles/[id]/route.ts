@@ -9,7 +9,9 @@ export async function GET(
   try {
     await dbConnect();
     const { id } = await params;
+    console.log("Looking for userId:", id);
     const shop = await Shop.findOne({ userId: id });
+    console.log("Shop found:", shop);
     if (!shop) {
       return NextResponse.json(null);
     }

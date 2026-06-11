@@ -36,9 +36,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
-import { useCollection, useFirestore, collection, doc, updateDoc, query, orderBy } from "@/firebase"
-import { errorEmitter } from '@/firebase/error-emitter'
-import { FirestorePermissionError } from '@/firebase/errors'
+import { useUser } from "@/app/auth/use-user"
 
 export interface Product {
   id: string
@@ -47,13 +45,16 @@ export interface Product {
   category: string
   purchasePrice: number
   sellingPrice: number
-  stock: number;
-  minStock: number;
+  stock: number
+  minStock: number
 }
 
 export default function StockAlertsPage() {
   const router = useRouter()
-  const firestore = useFirestore()
+  const { user } = useUser()
+  const [products, setProducts] = React.useState<Product[]>([])
+  const [loading, setLoading] = React.useState(true)
+  const [error, setError] = React.useState<string | null>(null)
   const [searchQuery, setSearchQuery] = React.useState("")
 
   // Edit Product Dialog State
@@ -62,14 +63,22 @@ export default function StockAlertsPage() {
   const [editCategoryMode, setEditCategoryMode] = React.useState(false)
   const [editSelectedCategory, setEditSelectedCategory] = React.useState("")
   const [editNewCategoryInput, setEditNewCategoryInput] = React.useState("")
+  const [isSubmitting, setIsSubmitting] = React.useState(false)
 
-  // Query products from firestore mock
-  const productsQuery = React.useMemo(() => {
-    if (!firestore) return null
-    return query(collection(firestore, 'products'), orderBy('name'))
-  }, [firestore])
-  
-  const { data: products = [], loading, error } = useCollection<Product>(productsQuery)
+  // Fetch products from MongoDB API
+  React.useEffect(() => {
+    if (!user?.uid) return
+    setLoading(true)
+    setError(null)
+    fetch("/api/products", { headers: { "x-user-id": user.uid } })
+      .then(res => {
+        if (!res.ok) throw new Error("Failed to load products")
+        return res.json()
+      })
+      .then((data: Product[]) => setProducts(Array.isArray(data) ? data : []))
+      .catch(err => setError(err.message))
+      .finally(() => setLoading(false))
+  }, [user?.uid])
 
   // Categories list for edit dialog
   const categories = React.useMemo(() => 
@@ -91,7 +100,7 @@ export default function StockAlertsPage() {
     )
   }, [lowStockItems, searchQuery])
 
-  // Estimated refill cost: difference between double min stock and current stock
+  // Estimated refill cost
   const totalShortageValue = React.useMemo(() => {
     return lowStockItems.reduce(
       (acc, p) => acc + p.purchasePrice * Math.max(0, p.minStock * 2 - p.stock),
@@ -99,9 +108,9 @@ export default function StockAlertsPage() {
     )
   }, [lowStockItems])
 
-  const handleEditProduct = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleEditProduct = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (!productToEdit || !firestore) return
+    if (!productToEdit || !user?.uid) return
 
     const formDataEdit = new FormData(e.currentTarget)
     const category = editCategoryMode ? editNewCategoryInput : editSelectedCategory
@@ -114,24 +123,30 @@ export default function StockAlertsPage() {
     const updatedData = {
       name: formDataEdit.get("name") as string,
       sku: formDataEdit.get("sku") as string,
-      category: category,
+      category,
       purchasePrice: Number(formDataEdit.get("purchasePrice")),
       sellingPrice: Number(formDataEdit.get("sellingPrice")),
       stock: Number(formDataEdit.get("stock")),
       minStock: Number(formDataEdit.get("minStock")),
     }
 
-    updateDoc(doc(firestore, 'products', productToEdit.id), updatedData)
-      .catch(async (err) => {
-        errorEmitter.emit('permission-error', new FirestorePermissionError({
-          path: `products/${productToEdit.id}`,
-          operation: 'update',
-          requestResourceData: updatedData
-        }))
+    try {
+      setIsSubmitting(true)
+      const res = await fetch(`/api/products/${productToEdit.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "x-user-id": user.uid },
+        body: JSON.stringify(updatedData),
       })
-
-    setIsEditDialogOpen(false)
-    toast({ title: "Product Updated", description: "Changes saved successfully." })
+      if (!res.ok) throw new Error("Failed to update product")
+      const updated = await res.json()
+      setProducts(prev => prev.map(p => p.id === updated.id ? updated : p))
+      setIsEditDialogOpen(false)
+      toast({ title: "Product Updated", description: "Changes saved successfully." })
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Error", description: err.message })
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -206,7 +221,7 @@ export default function StockAlertsPage() {
         <Card className="border-destructive/40 bg-destructive/5 shadow-none">
           <CardContent className="flex items-center gap-3 py-4 text-destructive text-sm font-medium">
             <AlertTriangle className="w-4 h-4 shrink-0" />
-            <span>Failed to load data from MongoDB: {error.message || String(error)}</span>
+            <span>Failed to load data: {error}</span>
           </CardContent>
         </Card>
       )}
@@ -240,21 +255,11 @@ export default function StockAlertsPage() {
             <Table>
               <TableHeader className="bg-secondary/10">
                 <TableRow className="border-border/30 hover:bg-transparent">
-                  <TableHead className="font-bold uppercase text-[10px] py-4 pl-6">
-                    Product Details
-                  </TableHead>
-                  <TableHead className="font-bold uppercase text-[10px] py-4">
-                    Stock Status
-                  </TableHead>
-                  <TableHead className="font-bold uppercase text-[10px] py-4">
-                    Alert Level
-                  </TableHead>
-                  <TableHead className="font-bold uppercase text-[10px] py-4">
-                    Inventory Health
-                  </TableHead>
-                  <TableHead className="text-right font-bold uppercase text-[10px] py-4 pr-6">
-                    Actions
-                  </TableHead>
+                  <TableHead className="font-bold uppercase text-[10px] py-4 pl-6">Product Details</TableHead>
+                  <TableHead className="font-bold uppercase text-[10px] py-4">Stock Status</TableHead>
+                  <TableHead className="font-bold uppercase text-[10px] py-4">Alert Level</TableHead>
+                  <TableHead className="font-bold uppercase text-[10px] py-4">Inventory Health</TableHead>
+                  <TableHead className="text-right font-bold uppercase text-[10px] py-4 pr-6">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -292,16 +297,11 @@ export default function StockAlertsPage() {
                           >
                             {p.stock}
                           </span>
-                          <span className="text-[10px] text-muted-foreground">
-                            units left
-                          </span>
+                          <span className="text-[10px] text-muted-foreground">units left</span>
                         </div>
                       </TableCell>
                       <TableCell>
-                        <Badge
-                          variant="outline"
-                          className="bg-secondary/30 border-none font-code text-[11px]"
-                        >
+                        <Badge variant="outline" className="bg-secondary/30 border-none font-code text-[11px]">
                           {p.minStock}
                         </Badge>
                       </TableCell>
@@ -311,15 +311,11 @@ export default function StockAlertsPage() {
                             value={healthPercent}
                             className={cn(
                               "h-1.5",
-                              p.stock === 0
-                                ? "[&>div]:bg-destructive"
-                                : "[&>div]:bg-orange-500"
+                              p.stock === 0 ? "[&>div]:bg-destructive" : "[&>div]:bg-orange-500"
                             )}
                           />
                           <p className="text-[9px] text-muted-foreground font-bold uppercase tracking-wider">
-                            {p.stock === 0
-                              ? "Critically Empty"
-                              : `${healthPercent.toFixed(0)}% of Min Level`}
+                            {p.stock === 0 ? "Critically Empty" : `${healthPercent.toFixed(0)}% of Min Level`}
                           </p>
                         </div>
                       </TableCell>
@@ -353,10 +349,7 @@ export default function StockAlertsPage() {
                             : "No items match your search."}
                         </p>
                         {lowStockItems.length === 0 && (
-                          <Button
-                            variant="link"
-                            onClick={() => router.push("/inventory")}
-                          >
+                          <Button variant="link" onClick={() => router.push("/inventory")}>
                             Go to Inventory
                           </Button>
                         )}
@@ -413,9 +406,9 @@ export default function StockAlertsPage() {
                       variant="ghost" 
                       size="icon"
                       onClick={() => {
-                        setEditCategoryMode(!editCategoryMode);
-                        if (!editCategoryMode) setEditSelectedCategory("");
-                        else setEditNewCategoryInput("");
+                        setEditCategoryMode(!editCategoryMode)
+                        if (!editCategoryMode) setEditSelectedCategory("")
+                        else setEditNewCategoryInput("")
                       }}
                       title={editCategoryMode ? "Cancel new category" : "Add new category"}
                     >
@@ -446,7 +439,10 @@ export default function StockAlertsPage() {
               </div>
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setIsEditDialogOpen(false)}>Cancel</Button>
-                <Button type="submit">Update Details</Button>
+                <Button type="submit" disabled={isSubmitting}>
+                  {isSubmitting && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
+                  Update Details
+                </Button>
               </DialogFooter>
             </form>
           )}

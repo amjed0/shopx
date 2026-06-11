@@ -20,7 +20,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge"
 import { useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
-import { useCollection, useFirestore, collection, query } from "@/firebase"
+import { useUser } from "@/app/auth/use-user"
 
 export interface Sale {
   id: string
@@ -48,16 +48,22 @@ const METHOD_STYLE: Record<string, string> = {
 
 export default function SalesHistoryPage() {
   const router = useRouter()
-  const firestore = useFirestore()
-
-  const salesQuery = React.useMemo(() => {
-    if (!firestore) return null
-    return query(collection(firestore, "sales"))
-  }, [firestore])
-
-  const { data: sales = [], loading } = useCollection<Sale>(salesQuery)
+  const { user } = useUser()
+  const [sales, setSales] = React.useState<Sale[]>([])
+  const [loading, setLoading] = React.useState(true)
   const [searchQuery, setSearchQuery] = React.useState("")
   const [expandedSaleId, setExpandedSaleId] = React.useState<string | null>(null)
+
+  // Fetch sales from MongoDB API
+  React.useEffect(() => {
+    if (!user?.uid) return
+    setLoading(true)
+    fetch("/api/sales?sort=date:desc", { headers: { "x-user-id": user.uid } })
+      .then(res => res.ok ? res.json() : [])
+      .then((data: Sale[]) => setSales(Array.isArray(data) ? data : []))
+      .catch(() => setSales([]))
+      .finally(() => setLoading(false))
+  }, [user?.uid])
 
   const filteredSales = React.useMemo(() => {
     const q = searchQuery.toLowerCase()

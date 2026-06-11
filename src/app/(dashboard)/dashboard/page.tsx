@@ -13,33 +13,84 @@ import { SalesChart } from "@/components/dashboard/sales-chart"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { useCollection, useFirestore, collection, query, orderBy, useUser, useDoc, doc } from "@/firebase"
-import { Product } from "../inventory/page"
-import { Sale } from "../sales/sales-history/page"
 import { useRouter } from "next/navigation"
+import { useSession } from "next-auth/react"
+
+export interface Product {
+  _id: string
+  name: string
+  category: string
+  purchasePrice: number
+  stock: number
+  minStock: number
+}
+
+export interface Sale {
+  _id: string
+  date: string
+  total: number
+  customerName?: string
+  paymentMethod: string
+}
+
+interface ShopData {
+  ownerName?: string
+}
+
+function useShop(userId: string | null) {
+  const [data, setData] = React.useState<ShopData | null>(null)
+  const [loading, setLoading] = React.useState(true)
+
+  React.useEffect(() => {
+    if (!userId) { setLoading(false); return }
+    fetch(`/api/shop_profiles/${userId}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((json) => setData(json))
+      .catch(() => setData(null))
+      .finally(() => setLoading(false))
+  }, [userId])
+
+  return { data, loading }
+}
+
+function useProducts() {
+  const [data, setData] = React.useState<Product[]>([])
+  const [loading, setLoading] = React.useState(true)
+
+  React.useEffect(() => {
+    fetch("/api/products")
+      .then((r) => r.ok ? r.json() : [])
+      .then((json) => setData(Array.isArray(json) ? json : []))
+      .catch(() => setData([]))
+      .finally(() => setLoading(false))
+  }, [])
+
+  return { data, loading }
+}
+
+function useSales() {
+  const [data, setData] = React.useState<Sale[]>([])
+  const [loading, setLoading] = React.useState(true)
+
+  React.useEffect(() => {
+    fetch("/api/sales?sort=date:desc")
+      .then((r) => r.ok ? r.json() : [])
+      .then((json) => setData(Array.isArray(json) ? json : []))
+      .catch(() => setData([]))
+      .finally(() => setLoading(false))
+  }, [])
+
+  return { data, loading }
+}
 
 export default function DashboardPage() {
   const router = useRouter()
-  const firestore = useFirestore()
-  const { user, loading: userLoading } = useUser()
+  const { data: session, status } = useSession()
 
-  const shopRef = React.useMemo(
-    () => (user ? doc(firestore, "shops", user.uid) : null),
-    [firestore, user]
-  )
-  const { data: shopData, loading: shopLoading } = useDoc(shopRef)
-
-  const productsQuery = React.useMemo(
-    () => (firestore ? query(collection(firestore, "products")) : null),
-    [firestore]
-  )
-  const salesQuery = React.useMemo(
-    () => (firestore ? query(collection(firestore, "sales"), orderBy("date", "desc")) : null),
-    [firestore]
-  )
-
-  const { data: products = [] } = useCollection<Product>(productsQuery)
-  const { data: allSales = [] } = useCollection<Sale>(salesQuery)
+  const userId = session?.user?.id ?? null
+  const { data: shopData, loading: shopLoading } = useShop(userId)
+  const { data: products } = useProducts()
+  const { data: allSales } = useSales()
 
   const recentSales = React.useMemo(() => allSales.slice(0, 5), [allSales])
 
@@ -69,13 +120,8 @@ export default function DashboardPage() {
     }
   }, [products, allSales])
 
-  // True while user session or shop profile is still fetching
-  const isLoading = userLoading || shopLoading
-
-  // Greeting name: blank while loading, then shopData name, then email fallback
-  const greetingName = isLoading
-    ? ""
-    : shopData?.ownerName || user?.email?.split("@")[0] || ""
+  const isLoading = status === "loading" || shopLoading
+  const greetingName = isLoading ? "" : shopData?.ownerName || ""
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
@@ -87,7 +133,6 @@ export default function DashboardPage() {
           <h1 className="text-4xl font-headline font-bold tracking-tight text-foreground">
             Good Morning,{" "}
             {isLoading ? (
-              // Skeleton pulse instead of "Owner" flash
               <span className="inline-block h-9 w-40 rounded-lg bg-primary/10 animate-pulse align-middle" />
             ) : (
               <span className="text-primary">{greetingName}</span>
@@ -157,7 +202,7 @@ export default function DashboardPage() {
               <CardContent className="space-y-4">
                 {products.slice(0, 3).map((item) => (
                   <div
-                    key={item.id}
+                    key={item._id}
                     className="flex items-center justify-between p-3 rounded-xl bg-secondary/30"
                   >
                     <div>
@@ -187,7 +232,7 @@ export default function DashboardPage() {
               <CardContent className="space-y-4">
                 {stats.lowStockItems.map((item) => (
                   <div
-                    key={item.id}
+                    key={item._id}
                     className="flex items-center justify-between p-3 rounded-xl bg-destructive/5"
                   >
                     <div>
@@ -222,7 +267,7 @@ export default function DashboardPage() {
             <CardContent className="space-y-4">
               {recentSales.map((sale) => (
                 <div
-                  key={sale.id}
+                  key={sale._id}
                   className="flex items-center justify-between group cursor-pointer hover:bg-secondary/20 p-2 rounded-lg transition-colors"
                 >
                   <div className="flex items-center gap-3">

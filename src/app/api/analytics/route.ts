@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import dbConnect from '../../../../lib/mongodb';
-import { getSessionUser } from '../../../../lib/session';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '../../../../lib/auth';
 import mongoose from 'mongoose';
 
 // Inline models to avoid import issues
@@ -45,11 +46,11 @@ export async function GET(request: Request) {
   try {
     await dbConnect();
 
-    const sessionUser = await getSessionUser();
-    if (!sessionUser?.uid) {
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    const userId = sessionUser.uid;
+    const userId = session.user.id;
 
     const { searchParams } = new URL(request.url);
     const from = searchParams.get('from'); // ISO date string
