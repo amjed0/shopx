@@ -124,7 +124,7 @@ const navigation = [
 export function AppSidebar() {
   const pathname = usePathname()
   const router = useRouter()
-  const { state } = useSidebar()
+  const { state, setOpenMobile, isMobile } = useSidebar()
   const { data: session, status } = useSession()
 
   const userId = session?.user?.id ?? null
@@ -143,14 +143,19 @@ export function AppSidebar() {
     }
   }
 
+  // Close mobile sidebar when navigating
+  const handleNavClick = () => {
+    if (isMobile) setOpenMobile(false)
+  }
+
   return (
     <Sidebar collapsible="icon" className="border-r border-sidebar-border">
-      <SidebarHeader className="h-16 flex items-center px-4 justify-between">
+      <SidebarHeader className="h-14 md:h-16 flex items-center px-4 justify-between">
         <VisuallyHidden.Root>
           <span>Navigation Sidebar</span>
         </VisuallyHidden.Root>
         <div className="flex items-center gap-3">
-          <div className="bg-primary p-2 rounded-lg">
+          <div className="bg-primary p-2 rounded-lg shrink-0">
             <ShieldCheck className="w-5 h-5 text-primary-foreground" />
           </div>
           {state !== "collapsed" && (
@@ -175,18 +180,24 @@ export function AppSidebar() {
                   {item.items ? (
                     <>
                       <CollapsibleTrigger asChild>
-                        <SidebarMenuButton tooltip={item.title}>
-                          <item.icon className="w-4 h-4" />
+                        <SidebarMenuButton tooltip={item.title} className="touch-manipulation">
+                          <item.icon className="w-4 h-4 shrink-0" />
                           <span>{item.title}</span>
-                          <ChevronRight className="ml-auto w-4 h-4 transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
+                          <ChevronRight className="ml-auto w-4 h-4 shrink-0 transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
                         </SidebarMenuButton>
                       </CollapsibleTrigger>
                       <CollapsibleContent>
                         <SidebarMenuSub>
                           {item.items.map((subItem) => (
                             <SidebarMenuSubItem key={subItem.title}>
-                              <SidebarMenuSubButton asChild isActive={pathname === subItem.url}>
-                                <Link href={subItem.url}>{subItem.title}</Link>
+                              <SidebarMenuSubButton
+                                asChild
+                                isActive={pathname === subItem.url}
+                                className="touch-manipulation"
+                              >
+                                <Link href={subItem.url} onClick={handleNavClick}>
+                                  {subItem.title}
+                                </Link>
                               </SidebarMenuSubButton>
                             </SidebarMenuSubItem>
                           ))}
@@ -194,9 +205,14 @@ export function AppSidebar() {
                       </CollapsibleContent>
                     </>
                   ) : (
-                    <SidebarMenuButton asChild isActive={pathname === item.url} tooltip={item.title}>
-                      <Link href={item.url}>
-                        <item.icon className="w-4 h-4" />
+                    <SidebarMenuButton
+                      asChild
+                      isActive={pathname === item.url}
+                      tooltip={item.title}
+                      className="touch-manipulation"
+                    >
+                      <Link href={item.url} onClick={handleNavClick}>
+                        <item.icon className="w-4 h-4 shrink-0" />
                         <span>{item.title}</span>
                       </Link>
                     </SidebarMenuButton>
@@ -208,14 +224,14 @@ export function AppSidebar() {
         </SidebarGroup>
       </SidebarContent>
 
-      <SidebarFooter className="p-4">
-        <div className="flex flex-col gap-4">
+      <SidebarFooter className="p-3 md:p-4">
+        <div className="flex flex-col gap-3 md:gap-4">
           <div
             role="button"
-            onClick={() => router.push("/profile")}
-            className="flex items-center gap-3 p-2 rounded-xl hover:bg-sidebar-accent transition-colors cursor-pointer group"
+            onClick={() => { router.push("/profile"); handleNavClick() }}
+            className="flex items-center gap-3 p-2 rounded-xl hover:bg-sidebar-accent transition-colors cursor-pointer group touch-manipulation"
           >
-            <Avatar className="h-9 w-9 rounded-lg border-2 border-primary/20 group-hover:border-primary/50 transition-colors">
+            <Avatar className="h-9 w-9 rounded-lg border-2 border-primary/20 group-hover:border-primary/50 transition-colors shrink-0">
               <AvatarImage src={`https://picsum.photos/seed/${userId || "shopx"}/40/40`} />
               <AvatarFallback className="rounded-lg bg-primary text-primary-foreground font-bold">
                 {session?.user?.email?.charAt(0).toUpperCase() || "SX"}
@@ -223,7 +239,7 @@ export function AppSidebar() {
             </Avatar>
 
             {state !== "collapsed" && (
-              <div className="grid flex-1 text-left text-sm leading-tight">
+              <div className="grid flex-1 text-left text-sm leading-tight min-w-0">
                 {isLoading ? (
                   <>
                     <span className="h-3 w-24 rounded bg-muted-foreground/20 animate-pulse mb-1" />
@@ -243,7 +259,7 @@ export function AppSidebar() {
             )}
 
             {state !== "collapsed" && (
-              <UserIcon className="h-4 w-4 text-muted-foreground opacity-50" />
+              <UserIcon className="h-4 w-4 text-muted-foreground opacity-50 shrink-0" />
             )}
           </div>
 
@@ -251,17 +267,17 @@ export function AppSidebar() {
             <Button
               variant="secondary"
               size="sm"
-              className="w-full justify-start gap-3 bg-secondary/50 text-muted-foreground hover:text-destructive hover:bg-destructive/10 font-bold transition-all rounded-xl"
+              className="w-full justify-start gap-3 bg-secondary/50 text-muted-foreground hover:text-destructive hover:bg-destructive/10 font-bold transition-all rounded-xl touch-manipulation"
               onClick={handleLogout}
             >
-              <LogOut className="h-4 w-4" />
+              <LogOut className="h-4 w-4 shrink-0" />
               <span>Exit Terminal</span>
             </Button>
           ) : (
             <Button
               variant="ghost"
               size="icon"
-              className="w-full h-9 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-xl"
+              className="w-full h-9 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-xl touch-manipulation"
               onClick={handleLogout}
               title="Logout"
             >
