@@ -38,38 +38,75 @@ export default function DashboardLayout({
 
   return (
     <SidebarProvider>
-      <div className="flex min-h-screen bg-background font-body">
+      {/* ── ROOT WRAPPER: full height, no overflow bleed ── */}
+      <div className="flex min-h-screen w-full overflow-hidden bg-background font-body">
         <AppSidebar />
-        <SidebarInset>
-          <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12 border-b bg-background/80 backdrop-blur-md px-6">
-            <div className="flex flex-1 items-center gap-4">
-              <SidebarTrigger className="-ml-1" />
-              <Separator orientation="vertical" className="mr-2 h-4" />
-              <div className="relative w-full max-w-sm hidden md:flex items-center">
-                <Search className="absolute left-3 h-4 w-4 text-muted-foreground" />
+
+        <SidebarInset className="flex flex-col min-w-0 flex-1">
+
+          {/* ── HEADER ── */}
+          <header className="sticky top-0 z-30 flex h-14 md:h-16 shrink-0 items-center gap-2 border-b bg-background/80 backdrop-blur-md px-3 md:px-6">
+
+            <div className="flex flex-1 items-center gap-2 md:gap-4 min-w-0">
+              {/* Sidebar toggle — always visible */}
+              <SidebarTrigger className="-ml-1 shrink-0" />
+              <Separator orientation="vertical" className="h-4 shrink-0" />
+
+              {/* Search — hidden on mobile, shown from md up */}
+              <div className="relative hidden md:flex items-center w-full max-w-sm">
+                <Search className="absolute left-3 h-4 w-4 text-muted-foreground pointer-events-none" />
                 <Input
                   placeholder="Search products, invoices, customers..."
                   className="pl-9 bg-muted/40 border-none focus-visible:ring-1 focus-visible:ring-primary h-9 rounded-full"
                 />
               </div>
             </div>
-            <div className="flex items-center gap-3">
-              <Button variant="ghost" size="icon" className="relative text-muted-foreground hover:text-foreground">
+
+            <div className="flex items-center gap-1 md:gap-3 shrink-0">
+              {/* Mobile search icon — tappable on small screens */}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="md:hidden text-muted-foreground hover:text-foreground"
+                aria-label="Search"
+              >
+                <Search className="h-5 w-5" />
+              </Button>
+
+              {/* Bell notification */}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="relative text-muted-foreground hover:text-foreground"
+                aria-label="Notifications"
+              >
                 <Bell className="h-5 w-5" />
                 <span className="absolute top-2.5 right-2.5 h-2 w-2 rounded-full bg-accent animate-pulse" />
               </Button>
-              <div className="h-8 w-[1px] bg-border mx-2" />
+
+              <div className="hidden md:block h-8 w-[1px] bg-border mx-1" />
+
+              {/* New Bill — shortened label on mobile */}
               <Button
                 onClick={() => router.push("/sales/new")}
-                className="bg-primary text-primary-foreground font-semibold px-6 rounded-full shadow-lg shadow-primary/20"
+                className="bg-primary text-primary-foreground font-semibold px-3 md:px-6 rounded-full shadow-lg shadow-primary/20 text-xs md:text-sm h-8 md:h-9"
               >
-                New Bill
+                <span className="md:hidden">+ Bill</span>
+                <span className="hidden md:inline">New Bill</span>
               </Button>
             </div>
           </header>
-          <main className="flex-1 overflow-y-auto p-6 lg:p-10 max-w-7xl mx-auto w-full">
+
+          {/* ── MAIN CONTENT ── */}
+          {/* 
+            - p-4 on mobile, p-6 on md, p-10 on lg
+            - max-w-7xl keeps wide-screen content from stretching too far
+            - overflow-y-auto so the main area scrolls, not the body
+          */}
+          <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-10 w-full max-w-7xl mx-auto">
             {children}
           </main>
+
         </SidebarInset>
       </div>
     </SidebarProvider>

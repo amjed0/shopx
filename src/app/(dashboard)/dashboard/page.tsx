@@ -133,39 +133,49 @@ export default function DashboardPage() {
   const greetingName = isLoading ? "" : shopData?.ownerName || ""
 
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <div>
+    <div className="space-y-6 md:space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
+
+      {/* ── HEADER ── */}
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3 md:gap-4">
+        <div className="min-w-0">
           <Badge className="bg-primary/10 text-primary border-none mb-2 px-3 py-1 text-[10px] tracking-widest uppercase font-bold">
             ShopX Elite Overview
           </Badge>
-          <h1 className="text-4xl font-headline font-bold tracking-tight text-foreground">
+          {/* Responsive headline: smaller on mobile */}
+          <h1 className="text-2xl sm:text-3xl md:text-4xl font-headline font-bold tracking-tight text-foreground leading-tight">
             Good Morning,{" "}
             {isLoading ? (
-              <span className="inline-block h-9 w-40 rounded-lg bg-primary/10 animate-pulse align-middle" />
+              <span className="inline-block h-7 sm:h-9 w-32 sm:w-40 rounded-lg bg-primary/10 animate-pulse align-middle" />
             ) : (
               <span className="text-primary">{greetingName}</span>
             )}
           </h1>
-          <p className="text-muted-foreground mt-1">Here is what is happening with your shop today.</p>
+          <p className="text-muted-foreground mt-1 text-sm md:text-base">
+            Here is what is happening with your shop today.
+          </p>
         </div>
-        <div className="flex gap-2">
+
+        {/* Action buttons: stack on very small, row on sm+ */}
+        <div className="flex gap-2 shrink-0">
           <Button
             variant="outline"
-            className="border-border hover:bg-muted font-semibold rounded-full"
+            className="border-border hover:bg-muted font-semibold rounded-full text-xs md:text-sm h-8 md:h-9 px-3 md:px-4"
           >
-            Export Report
+            Export
           </Button>
           <Button
             onClick={() => router.push("/sales/new")}
-            className="bg-primary text-primary-foreground font-semibold px-6 rounded-full shadow-lg shadow-primary/20"
+            className="bg-primary text-primary-foreground font-semibold px-4 md:px-6 rounded-full shadow-lg shadow-primary/20 text-xs md:text-sm h-8 md:h-9"
           >
             New Bill
           </Button>
         </div>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+      {/* ── STAT CARDS ──
+          2 cols on mobile, 4 on lg
+      */}
+      <div className="grid gap-3 md:gap-6 grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="Today's Sales"
           value={`₹${stats.todaySales.toLocaleString()}`}
@@ -196,29 +206,37 @@ export default function DashboardPage() {
         />
       </div>
 
+      {/* ── MAIN GRID ──
+          Single column on mobile/tablet, 3-col on lg
+      */}
       <div className="grid gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-2 space-y-6">
+
+        {/* Left column: chart + two cards */}
+        <div className="lg:col-span-2 space-y-6 min-w-0">
           <SalesChart />
 
+          {/* Fast Moving + Low Stock — stack on mobile, side by side on md */}
           <div className="grid gap-6 md:grid-cols-2">
+
+            {/* Fast Moving Items */}
             <Card className="border-none bg-card shadow-sm">
-              <CardHeader>
-                <CardTitle className="font-headline flex items-center gap-2">
-                  <Zap className="w-5 h-5 text-accent" />
+              <CardHeader className="pb-3">
+                <CardTitle className="font-headline flex items-center gap-2 text-sm md:text-base">
+                  <Zap className="w-4 h-4 md:w-5 md:h-5 text-accent shrink-0" />
                   Fast Moving Items
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent className="space-y-3">
                 {products.slice(0, 3).map((item) => (
                   <div
                     key={item._id}
-                    className="flex items-center justify-between p-3 rounded-xl bg-secondary/30"
+                    className="flex items-center justify-between p-2.5 md:p-3 rounded-xl bg-secondary/30 gap-2"
                   >
-                    <div>
-                      <p className="text-sm font-semibold">{item.name}</p>
-                      <p className="text-xs text-muted-foreground">{item.category}</p>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold truncate">{item.name}</p>
+                      <p className="text-xs text-muted-foreground truncate">{item.category}</p>
                     </div>
-                    <Badge variant="outline" className="border-accent/50 text-accent font-code">
+                    <Badge variant="outline" className="border-accent/50 text-accent font-code shrink-0 text-[10px]">
                       Stable
                     </Badge>
                   </div>
@@ -231,28 +249,29 @@ export default function DashboardPage() {
               </CardContent>
             </Card>
 
+            {/* Low Stock Alerts */}
             <Card className="border-none bg-card shadow-sm">
-              <CardHeader>
-                <CardTitle className="font-headline flex items-center gap-2 text-destructive">
-                  <AlertTriangle className="w-5 h-5" />
+              <CardHeader className="pb-3">
+                <CardTitle className="font-headline flex items-center gap-2 text-destructive text-sm md:text-base">
+                  <AlertTriangle className="w-4 h-4 md:w-5 md:h-5 shrink-0" />
                   Low Stock Alerts
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent className="space-y-3">
                 {stats.lowStockItems.map((item) => (
                   <div
                     key={item._id}
-                    className="flex items-center justify-between p-3 rounded-xl bg-destructive/5"
+                    className="flex items-center justify-between p-2.5 md:p-3 rounded-xl bg-destructive/5 gap-2"
                   >
-                    <div>
-                      <p className="text-sm font-semibold">{item.name}</p>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold truncate">{item.name}</p>
                       <p className="text-xs text-muted-foreground">In Stock: {item.stock}</p>
                     </div>
                     <Button
                       onClick={() => router.push("/inventory")}
                       variant="ghost"
                       size="sm"
-                      className="h-7 text-[10px] text-destructive hover:bg-destructive/10 uppercase tracking-widest font-bold"
+                      className="h-7 text-[10px] text-destructive hover:bg-destructive/10 uppercase tracking-widest font-bold shrink-0"
                     >
                       Restock
                     </Button>
@@ -268,23 +287,30 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div className="space-y-6">
+        {/* Right column: Recent Sales
+            On mobile this comes AFTER the left column (natural DOM order).
+            On lg it sits in the 3rd column.
+        */}
+        <div className="space-y-6 min-w-0">
           <Card className="border-none bg-card shadow-sm">
-            <CardHeader>
-              <CardTitle className="font-headline text-lg">Recent Sales</CardTitle>
+            <CardHeader className="pb-3">
+              <CardTitle className="font-headline text-base md:text-lg">Recent Sales</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-3">
               {recentSales.map((sale) => (
                 <div
                   key={sale._id}
-                  className="flex items-center justify-between group cursor-pointer hover:bg-secondary/20 p-2 rounded-lg transition-colors"
+                  className="flex items-center justify-between group cursor-pointer hover:bg-secondary/20 p-2 rounded-lg transition-colors gap-2"
                 >
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center font-bold text-primary group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
+                  <div className="flex items-center gap-2 md:gap-3 min-w-0">
+                    {/* Avatar */}
+                    <div className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-secondary flex items-center justify-center font-bold text-primary group-hover:bg-primary group-hover:text-primary-foreground transition-colors shrink-0 text-xs md:text-sm">
                       {sale.customerName?.charAt(0) || "W"}
                     </div>
-                    <div>
-                      <p className="text-sm font-semibold">{sale.customerName || "Walk-in"}</p>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold truncate">
+                        {sale.customerName || "Walk-in"}
+                      </p>
                       <p className="text-xs text-muted-foreground">
                         ₹{sale.total.toLocaleString()} •{" "}
                         {new Date(sale.date).toLocaleTimeString([], {
@@ -294,7 +320,8 @@ export default function DashboardPage() {
                       </p>
                     </div>
                   </div>
-                  <Badge variant="outline" className="text-accent">
+                  {/* Payment badge — hidden on very small screens to save space */}
+                  <Badge variant="outline" className="text-accent shrink-0 text-[9px] hidden xs:flex">
                     {sale.paymentMethod.toUpperCase()}
                   </Badge>
                 </div>
