@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { useRouter } from "next/navigation"
-import { useSession } from "next-auth/react"
+import { useUser } from "@/app/auth/use-user"
 
 export interface Product {
   _id: string
@@ -37,60 +37,69 @@ interface ShopData {
   ownerName?: string
 }
 
-function useShop(userId: string | null) {
+function useShop(uid: string | null) {
   const [data, setData] = React.useState<ShopData | null>(null)
   const [loading, setLoading] = React.useState(true)
 
   React.useEffect(() => {
-    if (!userId) { setLoading(false); return }
-    fetch(`/api/shop_profiles/${userId}`)
+    if (!uid) { setLoading(false); return }
+    fetch(`/api/shop_profiles/${uid}`)
       .then((r) => r.ok ? r.json() : null)
       .then((json) => setData(json))
       .catch(() => setData(null))
       .finally(() => setLoading(false))
-  }, [userId])
+  }, [uid])
 
   return { data, loading }
 }
 
-function useProducts() {
+function useProducts(uid: string | null) {
   const [data, setData] = React.useState<Product[]>([])
   const [loading, setLoading] = React.useState(true)
 
   React.useEffect(() => {
-    fetch("/api/products")
+    if (!uid) { setLoading(false); return }
+    fetch("/api/products", {
+      headers: { "x-user-id": uid },
+      credentials: "include",
+    })
       .then((r) => r.ok ? r.json() : [])
       .then((json) => setData(Array.isArray(json) ? json : []))
       .catch(() => setData([]))
       .finally(() => setLoading(false))
-  }, [])
+  }, [uid])
 
   return { data, loading }
 }
 
-function useSales() {
+function useSales(uid: string | null) {
   const [data, setData] = React.useState<Sale[]>([])
   const [loading, setLoading] = React.useState(true)
 
   React.useEffect(() => {
-    fetch("/api/sales?sort=date:desc")
+    if (!uid) { setLoading(false); return }
+    fetch("/api/sales?sort=date:desc", {
+      headers: { "x-user-id": uid },
+      credentials: "include",
+    })
       .then((r) => r.ok ? r.json() : [])
       .then((json) => setData(Array.isArray(json) ? json : []))
       .catch(() => setData([]))
       .finally(() => setLoading(false))
-  }, [])
+  }, [uid])
 
   return { data, loading }
 }
 
 export default function DashboardPage() {
   const router = useRouter()
-  const { data: session, status } = useSession()
+  const { user, loading: userLoading } = useUser()
 
-  const userId = session?.user?.id ?? null
-  const { data: shopData, loading: shopLoading } = useShop(userId)
-  const { data: products } = useProducts()
-  const { data: allSales } = useSales()
+  const uid = user?.uid ?? null
+
+  const { data: shopData, loading: shopLoading } = useShop(uid)
+  const { data: products } = useProducts(uid)
+  const { data: allSales } = useSales(uid)
 
   const recentSales = React.useMemo(() => allSales.slice(0, 5), [allSales])
 
@@ -120,7 +129,7 @@ export default function DashboardPage() {
     }
   }, [products, allSales])
 
-  const isLoading = status === "loading" || shopLoading
+  const isLoading = userLoading || shopLoading
   const greetingName = isLoading ? "" : shopData?.ownerName || ""
 
   return (
