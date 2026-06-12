@@ -297,9 +297,8 @@ export default function DashboardPage() {
               <CardTitle className="font-headline text-base md:text-lg">Recent Sales</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              {recentSales.map((sale) => (
-                <div
-                  key={sale._id}
+              {recentSales.map((sale, i) => (
+                <div key={sale._id ?? i}
                   className="flex items-center justify-between group cursor-pointer hover:bg-secondary/20 p-2 rounded-lg transition-colors gap-2"
                 >
                   <div className="flex items-center gap-2 md:gap-3 min-w-0">
