@@ -14,7 +14,8 @@ import {
   ShoppingCart,
   Zap,
   UserPlus,
-  Loader2
+  Loader2,
+  Percent
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -59,6 +60,10 @@ export default function NewBillPage() {
   const [isCustomerDialogOpen, setIsCustomerDialogOpen] = React.useState(false)
   const [isSubmitting, setIsSubmitting] = React.useState(false)
   const [isAddingCustomer, setIsAddingCustomer] = React.useState(false)
+
+  // Discount state - either flat amount (₹) or percentage
+  const [discountType, setDiscountType] = React.useState<"flat" | "percent">("flat")
+  const [discountValue, setDiscountValue] = React.useState<number>(0)
 
   const [products, setProducts] = React.useState<Product[]>([])
   const [customers, setCustomers] = React.useState<Customer[]>([])
@@ -139,14 +144,37 @@ export default function NewBillPage() {
 
   const subtotal = billItems.reduce((acc, item) => acc + (item.product.sellingPrice * item.quantity), 0)
 
+  // Compute discount amount based on type, clamped so it never exceeds the subtotal
+  const discountAmount = React.useMemo(() => {
+    if (!discountValue || discountValue <= 0) return 0
+    const raw = discountType === "percent"
+      ? (subtotal * discountValue) / 100
+      : discountValue
+    return Math.min(Math.max(raw, 0), subtotal)
+  }, [discountType, discountValue, subtotal])
+
+  const grandTotal = Math.max(subtotal - discountAmount, 0)
+
   const handleCompleteSale = async () => {
     if (billItems.length === 0 || !user?.uid) return
+
+    // Shop Credit sales must have a registered customer attached
+    if (paymentMethod === "credit" && !selectedCustomer) {
+      toast({
+        variant: "destructive",
+        title: "Customer Required",
+        description: "Please select or register a customer before billing on Shop Credit."
+      })
+      return
+    }
 
     const saleData = {
       date: new Date().toISOString(),
       customerId: selectedCustomer?.id || "walk-in",
       customerName: selectedCustomer?.name || "Walk-in Customer",
-      total: subtotal,
+      subtotal,
+      discount: discountAmount,
+      total: grandTotal,
       status: paymentMethod === "credit" ? "pending" : "paid",
       paymentMethod,
       items: billItems.map(item => ({
@@ -184,12 +212,13 @@ export default function NewBillPage() {
         await fetch(`/api/customers/${selectedCustomer.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json", "x-user-id": user.uid },
-          body: JSON.stringify({ outstandingBalance: selectedCustomer.outstandingBalance + subtotal }),
+          body: JSON.stringify({ outstandingBalance: selectedCustomer.outstandingBalance + grandTotal }),
         })
       }
 
       setBillItems([])
       setSelectedCustomer(null)
+      setDiscountValue(0)
       toast({ title: "Sale Confirmed ✓", description: "Transaction completed successfully." })
     } catch (err: any) {
       toast({ variant: "destructive", title: "Sale Failed", description: err.message })
@@ -198,21 +227,25 @@ export default function NewBillPage() {
     }
   }
 
-  return (
-    <div className="grid gap-8 lg:grid-cols-3">
-      <div className="lg:col-span-2 space-y-6">
-        <h1 className="text-3xl font-headline font-bold flex items-center gap-3">
-          <FileText className="text-primary" /> Billing Terminal
-        </h1>
+  const isCreditMissingCustomer = paymentMethod === "credit" && !selectedCustomer
 
-        <Card>
+  return (
+    <div className="space-y-6">
+      <h1 className="text-3xl font-headline font-bold flex items-center gap-3">
+        <FileText className="text-primary" /> Billing Terminal
+      </h1>
+
+      {/* Top row: small customer selection box (left) + larger product search box (right) */}
+      <div className="grid gap-6 grid-cols-1 lg:grid-cols-3">
+        {/* Customer Selection - small square */}
+        <Card className="lg:col-span-1">
           <CardHeader className="flex flex-row justify-between items-center">
-            <CardTitle className="text-lg">Customer Selection</CardTitle>
+            <CardTitle className="text-lg">Customer</CardTitle>
             {!selectedCustomer && (
               <Dialog open={isCustomerDialogOpen} onOpenChange={setIsCustomerDialogOpen}>
                 <DialogTrigger asChild>
                   <Button variant="outline" size="sm" className="rounded-full">
-                    <UserPlus className="w-4 h-4 mr-2" /> New Customer
+                    <UserPlus className="w-4 h-4 mr-2" /> New
                   </Button>
                 </DialogTrigger>
                 <DialogContent>
@@ -250,7 +283,7 @@ export default function NewBillPage() {
             {!selectedCustomer ? (
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input placeholder="Search existing customer by name or phone..." className="pl-9 bg-secondary/30 border-none rounded-xl" value={customerSearch} onChange={e => setCustomerSearch(e.target.value)} />
+                <Input placeholder="Search by name or phone..." className="pl-9 bg-secondary/30 border-none rounded-xl" value={customerSearch} onChange={e => setCustomerSearch(e.target.value)} />
                 {customerSearch && filteredCustomers.length > 0 && (
                   <div className="absolute top-full w-full bg-card border rounded-xl mt-2 z-50 shadow-xl overflow-hidden">
                     {filteredCustomers.map(c => (
@@ -266,32 +299,38 @@ export default function NewBillPage() {
                     ))}
                   </div>
                 )}
+                {paymentMethod === "credit" && (
+                  <p className="text-[10px] text-destructive mt-2 font-bold">
+                    A customer must be selected for Shop Credit sales.
+                  </p>
+                )}
               </div>
             ) : (
-              <div className="flex justify-between items-center p-4 bg-primary/10 rounded-xl border border-primary/20">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-bold">
+              <div className="flex justify-between items-center p-3 bg-primary/10 rounded-xl border border-primary/20">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-9 h-9 shrink-0 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-bold">
                     {selectedCustomer.name.charAt(0)}
                   </div>
-                  <div>
-                    <p className="font-bold text-foreground">{selectedCustomer.name}</p>
+                  <div className="min-w-0">
+                    <p className="font-bold text-foreground truncate">{selectedCustomer.name}</p>
                     <p className="text-xs text-muted-foreground">{selectedCustomer.phone}</p>
                   </div>
                 </div>
-                <Button variant="ghost" size="sm" className="text-xs text-primary hover:bg-primary/10" onClick={() => setSelectedCustomer(null)}>Change Customer</Button>
+                <Button variant="ghost" size="sm" className="text-xs text-primary hover:bg-primary/10 shrink-0" onClick={() => setSelectedCustomer(null)}>Change</Button>
               </div>
             )}
           </CardContent>
         </Card>
 
-        <Card className="border-none shadow-sm">
+        {/* Product Search - larger square */}
+        <Card className="lg:col-span-2 border-none shadow-sm">
           <CardHeader className="pb-4">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input placeholder="Search inventory by name or SKU..." className="pl-9 bg-secondary/30 border-none rounded-xl h-11" value={productSearch} onChange={e => setProductSearch(e.target.value)} />
             </div>
           </CardHeader>
-          <CardContent className="grid gap-3 sm:grid-cols-2 max-h-[500px] overflow-y-auto">
+          <CardContent className="grid gap-3 sm:grid-cols-2 max-h-[320px] overflow-y-auto">
             {displayProducts.map(p => (
               <div key={p.id} className="p-4 border border-border/50 rounded-xl hover:bg-secondary/50 cursor-pointer transition-colors group" onClick={() => addItem(p)}>
                 <div className="flex justify-between items-start mb-1">
@@ -313,21 +352,34 @@ export default function NewBillPage() {
         </Card>
       </div>
 
-      <div className="space-y-6">
-        <Card className="h-fit sticky top-24 border-none shadow-xl bg-card/50 backdrop-blur-sm">
-          <CardHeader className="border-b border-border/50">
-            <CardTitle className="text-xl font-headline flex items-center gap-2">
-              <ShoppingCart className="w-5 h-5 text-primary" />
-              Review Invoice
-              {billItems.length > 0 && <Badge className="ml-2">{billItems.length}</Badge>}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-6 pt-6">
-            <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2">
+      {/* Bottom row: full-width Review Invoice */}
+      <Card className="border-none shadow-xl bg-card/50 backdrop-blur-sm">
+        <CardHeader className="border-b border-border/50 flex flex-row items-center justify-between">
+          <CardTitle className="text-xl font-headline flex items-center gap-2">
+            <ShoppingCart className="w-5 h-5 text-primary" />
+            Review Invoice
+            {billItems.length > 0 && <Badge className="ml-2">{billItems.length}</Badge>}
+          </CardTitle>
+          <Button
+            className="h-11 px-6 bg-accent text-accent-foreground font-bold rounded-2xl shadow-lg shadow-accent/20 hover:scale-[1.01] active:scale-[0.99] transition-all"
+            onClick={handleCompleteSale}
+            disabled={billItems.length === 0 || isSubmitting || isCreditMissingCustomer}
+          >
+            {isSubmitting ? (
+              <><Loader2 className="w-5 h-5 animate-spin mr-2" /> Processing...</>
+            ) : (
+              <><CheckCircle2 className="w-5 h-5 mr-2" /> Complete Sale</>
+            )}
+          </Button>
+        </CardHeader>
+        <CardContent className="pt-6">
+          <div className="grid gap-6 lg:grid-cols-3">
+            {/* Cart items */}
+            <div className="lg:col-span-2 space-y-3 max-h-[300px] overflow-y-auto pr-2">
               {billItems.map(item => (
                 <div key={item.product.id} className="flex justify-between items-center group">
                   <div className="space-y-0.5">
-                    <p className="text-sm font-bold truncate max-w-[150px]">{item.product.name}</p>
+                    <p className="text-sm font-bold truncate max-w-[220px]">{item.product.name}</p>
                     <p className="text-[10px] text-muted-foreground">₹{item.product.sellingPrice.toLocaleString()} per unit</p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -349,58 +401,99 @@ export default function NewBillPage() {
               )}
             </div>
 
-            <Separator className="bg-border/50" />
+            {/* Totals, discount & payment */}
+            <div className="space-y-5">
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm text-muted-foreground">
+                  <span>Items Subtotal</span>
+                  <span>₹{subtotal.toLocaleString()}</span>
+                </div>
 
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm text-muted-foreground">
-                <span>Items Subtotal</span>
-                <span>₹{subtotal.toLocaleString()}</span>
+                {/* Discount input */}
+                <div className="flex items-center justify-between gap-2 text-sm">
+                  <Label className="text-muted-foreground shrink-0">Discount</Label>
+                  <div className="flex items-center gap-1">
+                    <Input
+                      type="number"
+                      min={0}
+                      value={discountValue || ""}
+                      onChange={e => setDiscountValue(Math.max(0, Number(e.target.value) || 0))}
+                      placeholder="0"
+                      className="h-8 w-20 text-right bg-secondary/30 border-none rounded-lg"
+                    />
+                    <div className="flex items-center bg-secondary/50 rounded-lg p-0.5 border border-border/30">
+                      <Button
+                        type="button"
+                        variant={discountType === "flat" ? "default" : "ghost"}
+                        size="icon"
+                        className="h-8 w-8 rounded-md"
+                        onClick={() => setDiscountType("flat")}
+                        title="Flat amount (₹)"
+                      >
+                        ₹
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={discountType === "percent" ? "default" : "ghost"}
+                        size="icon"
+                        className="h-8 w-8 rounded-md"
+                        onClick={() => setDiscountType("percent")}
+                        title="Percentage (%)"
+                      >
+                        <Percent className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                {discountAmount > 0 && (
+                  <div className="flex justify-between text-sm text-destructive">
+                    <span>Discount Applied</span>
+                    <span>- ₹{discountAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                  </div>
+                )}
+
+                <Separator className="bg-border/50 my-2" />
+
+                <div className="flex justify-between text-2xl font-bold text-foreground">
+                  <span>Grand Total</span>
+                  <span className="text-primary">₹{grandTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                </div>
               </div>
-              <div className="flex justify-between text-2xl font-bold text-foreground">
-                <span>Grand Total</span>
-                <span className="text-primary">₹{subtotal.toLocaleString()}</span>
+
+              <div className="space-y-3">
+                <Label className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Settlement Method</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { id: 'upi', label: 'UPI/Scan', icon: Zap },
+                    { id: 'cash', label: 'Cash', icon: Banknote },
+                    { id: 'card', label: 'Debit/Credit', icon: CreditCard },
+                    { id: 'credit', label: 'Shop Credit', icon: History }
+                  ].map(m => (
+                    <Button
+                      key={m.id}
+                      variant={paymentMethod === m.id ? "default" : "outline"}
+                      className={cn(
+                        "h-12 justify-start gap-2 rounded-xl transition-all",
+                        paymentMethod === m.id ? "bg-primary shadow-lg shadow-primary/20 scale-[1.02]" : "hover:bg-secondary/50"
+                      )}
+                      onClick={() => setPaymentMethod(m.id)}
+                    >
+                      <m.icon className="w-4 h-4" />
+                      <span className="text-[10px] font-bold uppercase">{m.label}</span>
+                    </Button>
+                  ))}
+                </div>
+                {isCreditMissingCustomer && (
+                  <p className="text-[10px] text-destructive font-bold">
+                    Select or register a customer above to use Shop Credit.
+                  </p>
+                )}
               </div>
             </div>
-
-            <div className="space-y-3">
-              <Label className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Settlement Method</Label>
-              <div className="grid grid-cols-2 gap-2">
-                {[
-                  { id: 'upi', label: 'UPI/Scan', icon: Zap },
-                  { id: 'cash', label: 'Cash', icon: Banknote },
-                  { id: 'card', label: 'Debit/Credit', icon: CreditCard },
-                  { id: 'credit', label: 'Shop Credit', icon: History }
-                ].map(m => (
-                  <Button
-                    key={m.id}
-                    variant={paymentMethod === m.id ? "default" : "outline"}
-                    className={cn(
-                      "h-12 justify-start gap-2 rounded-xl transition-all",
-                      paymentMethod === m.id ? "bg-primary shadow-lg shadow-primary/20 scale-[1.02]" : "hover:bg-secondary/50"
-                    )}
-                    onClick={() => setPaymentMethod(m.id)}
-                  >
-                    <m.icon className="w-4 h-4" />
-                    <span className="text-[10px] font-bold uppercase">{m.label}</span>
-                  </Button>
-                ))}
-              </div>
-            </div>
-
-            <Button
-              className="w-full h-14 bg-accent text-accent-foreground font-bold text-lg rounded-2xl shadow-xl shadow-accent/20 hover:scale-[1.01] active:scale-[0.99] transition-all"
-              onClick={handleCompleteSale}
-              disabled={billItems.length === 0 || isSubmitting}
-            >
-              {isSubmitting ? (
-                <><Loader2 className="w-5 h-5 animate-spin mr-2" /> Processing...</>
-              ) : (
-                <><CheckCircle2 className="w-5 h-5 mr-2" /> Complete Sale</>
-              )}
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   )
 }
