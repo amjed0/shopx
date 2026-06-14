@@ -9,14 +9,14 @@ export async function POST(request: Request) {
   try {
     await dbConnect();
     const body = await request.json();
-    const { email, password } = body;
+    const { name, email, password } = body;
 
-    if (!email || !password) {
-      return NextResponse.json(
-        { error: 'Email and password are required' },
-        { status: 400 }
-      );
-    }
+   if (!name || !email || !password) {
+  return NextResponse.json(
+    { error: 'Name, email and password are required' },
+    { status: 400 }
+  );
+}
 
     const normalizedEmail = email.toLowerCase().trim();
 
@@ -37,6 +37,7 @@ export async function POST(request: Request) {
     const hashedPassword = await bcrypt.hash(password, 10);
     const newUser = new User({
       _id: userId,
+      name: name.trim(),
       email: normalizedEmail,
       password: hashedPassword,
     });
