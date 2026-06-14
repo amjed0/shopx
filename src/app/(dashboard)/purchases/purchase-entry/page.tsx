@@ -43,7 +43,7 @@ import { useUser } from "@/app/auth/use-user"
 
 interface Supplier {
   id: string
-   _id?: string
+  _id?: string
   name: string
   contactPerson: string
   phone: string
@@ -83,7 +83,6 @@ export default function NewPurchasePage() {
   const [isSubmitting, setIsSubmitting] = React.useState(false)
   const [loadingData, setLoadingData] = React.useState(true)
 
-  // New Product Dialog States
   const [isAddProductOpen, setIsAddProductOpen] = React.useState(false)
   const [isNewCategoryMode, setIsNewCategoryMode] = React.useState(false)
   const [selectedCategory, setSelectedCategory] = React.useState("")
@@ -128,7 +127,6 @@ export default function NewPurchasePage() {
     Array.from(new Set(products.map(p => p.category))).sort(),
   [products])
 
-  // Quick select filtered products inside dialog
   const quickSelectProducts = React.useMemo(() => {
     const q = quickSelectSearch.toLowerCase()
     if (!q) return []
@@ -140,7 +138,6 @@ export default function NewPurchasePage() {
   const filteredSuppliers = suppliers.filter(s =>
     s.name.toLowerCase().includes(supplierSearch.toLowerCase())
   )
-
 
   const filteredProducts = products.filter(p =>
     !purchaseItems.find(item => item.productId === p.id) &&
@@ -214,102 +211,84 @@ export default function NewPurchasePage() {
 
   const total = purchaseItems.reduce((acc, i) => acc + i.quantity * i.purchasePrice, 0)
 
+  const handleComplete = async () => {
+    if (!selectedSupplier || purchaseItems.length === 0 || !user?.uid) return
+    setIsSubmitting(true)
+    try {
+      const updateRequests = purchaseItems.map(async (item) => {
+        const existingProduct = products.find(p => p.id === item.productId)
+        if (!existingProduct) throw new Error(`Product not found: ${item.productName}`)
+        const supplierId = (selectedSupplier as any)._id || selectedSupplier.id
 
-const handleComplete = async () => {
-  if (!selectedSupplier || purchaseItems.length === 0 || !user?.uid) return
+        const res = await fetch(`/api/products/${item.productId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", "x-user-id": user.uid },
+          credentials: "include",
+          body: JSON.stringify({
+            stock: Number(existingProduct.stock) + Number(item.quantity),
+            purchasePrice: Number(item.purchasePrice),
+          }),
+        })
+        if (!res.ok) throw new Error(`Failed updating ${item.productName}`)
 
-  setIsSubmitting(true)
-
-
-  try {
-    const updateRequests = purchaseItems.map(async (item) => {
-      const existingProduct = products.find(p => p.id === item.productId)
-      if (!existingProduct) throw new Error(`Product not found: ${item.productName}`)
-
-      const supplierId = (selectedSupplier as any)._id || selectedSupplier.id
-
-      // UPDATE PRODUCT STOCK
-      const res = await fetch(`/api/products/${item.productId}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          "x-user-id": user.uid,
-        },
-        credentials: "include",
-        body: JSON.stringify({
-          stock: Number(existingProduct.stock) + Number(item.quantity),
-          purchasePrice: Number(item.purchasePrice),
-        }),
-      })
-      if (!res.ok) throw new Error(`Failed updating ${item.productName}`)
-
-      // SAVE PURCHASE RECORD
-      const purchaseRes = await fetch("/api/purchases", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-user-id": user.uid,
-        },
-        credentials: "include",
-        body: JSON.stringify({
-          supplierId,
-          productId: item.productId,
-          productName: item.productName,
-          quantity: Number(item.quantity),
-          purchasePrice: Number(item.purchasePrice),
-        }),
+        const purchaseRes = await fetch("/api/purchases", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-user-id": user.uid },
+          credentials: "include",
+          body: JSON.stringify({
+            supplierId,
+            productId: item.productId,
+            productName: item.productName,
+            quantity: Number(item.quantity),
+            purchasePrice: Number(item.purchasePrice),
+          }),
+        })
+        if (!purchaseRes.ok) {
+          const err = await purchaseRes.text()
+          console.error("Purchase save failed:", err)
+        }
+        return res.json()
       })
 
-      if (!purchaseRes.ok) {
-        const err = await purchaseRes.text()
-        console.error("Purchase save failed:", err)
-      }
-
-      return res.json()
-    })
-
-    await Promise.all(updateRequests)
-
-    toast({
-      title: "Purchase Completed",
-      description: `Successfully updated ${purchaseItems.length} products.`,
-    })
-
-    router.push("/purchases/purchase-entry")
-  } catch (err: any) {
-    console.error("UPDATE ERROR:", err)
-    toast({ variant: "destructive", title: "Operation Failed", description: err.message })
-  } finally {
-    setIsSubmitting(false)
+      await Promise.all(updateRequests)
+      toast({ title: "Purchase Completed", description: `Successfully updated ${purchaseItems.length} products.` })
+      router.push("/purchases/purchase-entry")
+    } catch (err: any) {
+      console.error("UPDATE ERROR:", err)
+      toast({ variant: "destructive", title: "Operation Failed", description: err.message })
+    } finally {
+      setIsSubmitting(false)
+    }
   }
-}
+
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => router.back()} className="rounded-full">
+
+      {/* ── HEADER ── */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="icon" onClick={() => router.back()} className="rounded-full shrink-0">
             <ArrowLeft className="w-5 h-5" />
           </Button>
           <div>
-            <h1 className="text-3xl font-headline font-bold">
+            <h1 className="text-2xl sm:text-3xl font-headline font-bold">
               Inward <span className="text-accent">Bulk Terminal</span>
             </h1>
-            <p className="text-sm text-muted-foreground">Sheet interface for high-speed stock procurement.</p>
+            <p className="text-xs sm:text-sm text-muted-foreground">Sheet interface for high-speed stock procurement.</p>
           </div>
         </div>
-        <div className="flex gap-3">
+        <div className="flex gap-2 ml-11 sm:ml-0 shrink-0">
           <Button
             variant="outline"
-            className="rounded-xl font-bold uppercase tracking-wider text-[10px]"
+            className="rounded-xl font-bold uppercase tracking-wider text-[10px] h-8 sm:h-9"
             onClick={() => setPurchaseItems([])}
             disabled={purchaseItems.length === 0}
           >
-            Clear Sheet
+            Clear
           </Button>
           <Button
             onClick={handleComplete}
-            className="bg-accent text-accent-foreground font-bold px-8 rounded-xl shadow-lg shadow-accent/20"
+            className="bg-accent text-accent-foreground font-bold px-4 sm:px-8 rounded-xl shadow-lg shadow-accent/20 h-8 sm:h-9 text-xs sm:text-sm"
             disabled={purchaseItems.length === 0 || !selectedSupplier || isSubmitting}
           >
             {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
@@ -319,8 +298,10 @@ const handleComplete = async () => {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-4">
-        {/* Left Panel */}
-        <div className="lg:col-span-1 space-y-6">
+
+        {/* ── LEFT PANEL ── */}
+        <div className="lg:col-span-1 grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
+
           {/* Supplier Selector */}
           <Card className="border-none bg-card shadow-sm">
             <CardHeader className="pb-3">
@@ -354,14 +335,18 @@ const handleComplete = async () => {
                   )}
                 </div>
               ) : (
-                <div className="p-3 bg-accent/10 rounded-lg border border-accent/20 group relative">
+                <div className="p-3 bg-accent/10 rounded-lg border border-accent/20 group">
                   <div className="flex justify-between items-start">
-                    <div>
-                      <p className="font-bold text-sm text-foreground">{selectedSupplier.name}</p>
+                    <div className="min-w-0">
+                      <p className="font-bold text-sm truncate">{selectedSupplier.name}</p>
                       <p className="text-[10px] text-muted-foreground">{selectedSupplier.phone}</p>
                     </div>
-                    <Button variant="ghost" size="icon" className="h-6 w-6 text-accent opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => setSelectedSupplier(null)}>
-                      <Trash2 className="w-3 h-3" />
+                    <Button
+                      variant="ghost" size="icon"
+                      className="h-6 w-6 text-destructive/50 hover:text-destructive shrink-0"
+                      onClick={() => setSelectedSupplier(null)}
+                    >
+                      <X className="w-3 h-3" />
                     </Button>
                   </div>
                 </div>
@@ -369,7 +354,7 @@ const handleComplete = async () => {
             </CardContent>
           </Card>
 
-          {/* Product Selector */}
+          {/* Product Fast Add */}
           <Card className="border-none bg-card shadow-sm">
             <CardHeader className="pb-3 flex flex-row items-center justify-between">
               <CardTitle className="text-xs font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-2">
@@ -384,13 +369,12 @@ const handleComplete = async () => {
                     <PlusCircle className="w-3 h-3 mr-1" /> New
                   </Button>
                 </DialogTrigger>
-                <DialogContent className="sm:max-w-md">
+                <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
                   <form onSubmit={handleCreateNewProduct}>
                     <DialogHeader>
                       <DialogTitle className="text-xl font-bold">New Product Entry</DialogTitle>
                     </DialogHeader>
 
-                    {/* Quick Select Existing */}
                     <div className="mt-4 mb-5 space-y-2">
                       <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Quick Select Existing</p>
                       <div className="relative">
@@ -411,11 +395,11 @@ const handleComplete = async () => {
                               className="w-full p-2.5 text-left hover:bg-secondary/50 flex justify-between items-center border-b border-border/30 last:border-0 transition-colors"
                               onClick={() => handleQuickSelect(p)}
                             >
-                              <div>
-                                <p className="font-bold text-xs">{p.name}</p>
+                              <div className="min-w-0">
+                                <p className="font-bold text-xs truncate">{p.name}</p>
                                 <p className="text-[10px] text-muted-foreground font-code">{p.sku}</p>
                               </div>
-                              <Badge variant="outline" className="text-[9px] font-code">₹{p.purchasePrice}</Badge>
+                              <Badge variant="outline" className="text-[9px] font-code shrink-0 ml-2">₹{p.purchasePrice}</Badge>
                             </button>
                           ))}
                         </div>
@@ -424,9 +408,7 @@ const handleComplete = async () => {
 
                     <div className="h-px bg-border/50 mb-5" />
 
-                    {/* Form Fields */}
                     <div className="grid gap-4">
-                      {/* Name */}
                       <div className="grid grid-cols-4 items-center gap-3">
                         <Label className="text-right font-semibold text-sm">Name</Label>
                         <Input
@@ -436,8 +418,6 @@ const handleComplete = async () => {
                           required
                         />
                       </div>
-
-                      {/* SKU */}
                       <div className="grid grid-cols-4 items-center gap-3">
                         <Label className="text-right font-semibold text-sm">SKU</Label>
                         <div className="col-span-3 flex gap-2">
@@ -448,18 +428,14 @@ const handleComplete = async () => {
                             required
                           />
                           <Button
-                            type="button"
-                            variant="outline"
-                            size="icon"
-                            className="h-10 w-10 rounded-lg border-border/50"
+                            type="button" variant="outline" size="icon"
+                            className="h-10 w-10 rounded-lg border-border/50 shrink-0"
                             onClick={() => setNewProductForm({ ...newProductForm, sku: generateSKU() })}
                           >
                             <RefreshCw className="w-4 h-4" />
                           </Button>
                         </div>
                       </div>
-
-                      {/* Category */}
                       <div className="grid grid-cols-4 items-center gap-3">
                         <Label className="text-right font-semibold text-sm">Category</Label>
                         <div className="col-span-3 flex gap-2">
@@ -482,24 +458,19 @@ const handleComplete = async () => {
                             </Select>
                           )}
                           <Button
-                            type="button"
-                            variant="outline"
-                            size="icon"
-                            className="h-10 w-10 rounded-lg border-border/50"
+                            type="button" variant="outline" size="icon"
+                            className="h-10 w-10 rounded-lg border-border/50 shrink-0"
                             onClick={() => setIsNewCategoryMode(!isNewCategoryMode)}
                           >
                             {isNewCategoryMode ? <X className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
                           </Button>
                         </div>
                       </div>
-
-                      {/* Purchase & Selling Price */}
                       <div className="grid grid-cols-2 gap-4 mt-1">
                         <div className="space-y-1.5">
                           <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Purchase ₹</p>
                           <Input
-                            type="number"
-                            placeholder="Cost"
+                            type="number" placeholder="Cost"
                             className="h-11 bg-secondary/20 border-none rounded-xl"
                             value={newProductForm.purchasePrice}
                             onChange={e => setNewProductForm({ ...newProductForm, purchasePrice: e.target.value })}
@@ -509,8 +480,7 @@ const handleComplete = async () => {
                         <div className="space-y-1.5">
                           <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Selling ₹</p>
                           <Input
-                            type="number"
-                            placeholder="Price"
+                            type="number" placeholder="Price"
                             className="h-11 bg-secondary/20 border-none rounded-xl"
                             value={newProductForm.sellingPrice}
                             onChange={e => setNewProductForm({ ...newProductForm, sellingPrice: e.target.value })}
@@ -518,14 +488,11 @@ const handleComplete = async () => {
                           />
                         </div>
                       </div>
-
-                      {/* Stock Qty & Alert Level */}
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-1.5">
                           <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Stock QTY</p>
                           <Input
-                            type="number"
-                            placeholder="Stock"
+                            type="number" placeholder="Stock"
                             className="h-11 bg-secondary/20 border-none rounded-xl"
                             value={newProductForm.stock}
                             onChange={e => setNewProductForm({ ...newProductForm, stock: e.target.value })}
@@ -534,8 +501,7 @@ const handleComplete = async () => {
                         <div className="space-y-1.5">
                           <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Alert Level</p>
                           <Input
-                            type="number"
-                            placeholder="Min"
+                            type="number" placeholder="Min"
                             className="h-11 bg-secondary/20 border-none rounded-xl"
                             value={newProductForm.minStock}
                             onChange={e => setNewProductForm({ ...newProductForm, minStock: e.target.value })}
@@ -546,8 +512,7 @@ const handleComplete = async () => {
 
                     <DialogFooter className="mt-6">
                       <Button
-                        type="submit"
-                        disabled={isCreatingProduct}
+                        type="submit" disabled={isCreatingProduct}
                         className="w-full h-12 rounded-full bg-primary text-primary-foreground font-bold text-base shadow-lg shadow-primary/20"
                       >
                         {isCreatingProduct && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
@@ -573,18 +538,18 @@ const handleComplete = async () => {
                   <Loader2 className="w-5 h-5 animate-spin text-accent opacity-50" />
                 </div>
               ) : (
-                <div className="space-y-1 max-h-[350px] overflow-y-auto pr-1">
+                <div className="space-y-1 max-h-[280px] lg:max-h-[350px] overflow-y-auto pr-1">
                   {filteredProducts.map(p => (
                     <button
                       key={p.id}
                       onClick={() => addItem(p)}
                       className="w-full p-2 rounded-lg border border-transparent hover:border-accent/30 hover:bg-accent/5 flex justify-between items-center group transition-all"
                     >
-                      <div className="text-left">
+                      <div className="text-left min-w-0">
                         <p className="font-bold text-[11px] group-hover:text-accent truncate max-w-[140px]">{p.name}</p>
                         <p className="text-[9px] text-muted-foreground font-code">{p.sku}</p>
                       </div>
-                      <Badge variant="outline" className="text-[8px] h-4 px-1 py-0 opacity-50 font-code">{p.stock}</Badge>
+                      <Badge variant="outline" className="text-[8px] h-4 px-1 py-0 opacity-50 font-code shrink-0">{p.stock}</Badge>
                     </button>
                   ))}
                   {productSearch && filteredProducts.length === 0 && (
@@ -596,93 +561,155 @@ const handleComplete = async () => {
           </Card>
         </div>
 
-        {/* Right Panel — Acquisition Sheet */}
+        {/* ── RIGHT PANEL: Acquisition Sheet ── */}
         <div className="lg:col-span-3 space-y-6">
-          <Card className="border-none bg-card shadow-xl overflow-hidden min-h-[500px]">
-            <CardHeader className="bg-secondary/20 border-b border-border/50 py-4 flex flex-row items-center justify-between">
-              <div className="flex items-center gap-3">
-                <Calculator className="w-5 h-5 text-accent" />
-                <div>
-                  <CardTitle className="text-lg">Acquisition Sheet</CardTitle>
-                  <CardDescription className="text-[10px] uppercase font-bold tracking-widest text-muted-foreground">
+          <Card className="border-none bg-card shadow-xl overflow-hidden min-h-[300px]">
+            <CardHeader className="bg-secondary/20 border-b border-border/50 py-3 md:py-4 flex flex-row items-center justify-between gap-3">
+              <div className="flex items-center gap-2 md:gap-3 min-w-0">
+                <Calculator className="w-4 h-4 md:w-5 md:h-5 text-accent shrink-0" />
+                <div className="min-w-0">
+                  <CardTitle className="text-base md:text-lg">Acquisition Sheet</CardTitle>
+                  <CardDescription className="text-[10px] uppercase font-bold tracking-widest text-muted-foreground hidden sm:block">
                     Excel-style bulk editor
                   </CardDescription>
                 </div>
               </div>
-              <div className="text-right">
-                <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider mb-1">Sheet Total</p>
-                <p className="text-3xl font-code font-bold text-accent">₹{total.toLocaleString()}</p>
+              <div className="text-right shrink-0">
+                <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider mb-0.5">Sheet Total</p>
+                <p className="text-xl md:text-3xl font-code font-bold text-accent">₹{total.toLocaleString()}</p>
               </div>
             </CardHeader>
+
             <CardContent className="p-0">
-              <Table>
-                <TableHeader className="bg-secondary/10">
-                  <TableRow className="border-border/50">
-                    <TableHead className="w-12 text-center text-[10px] font-bold uppercase py-3">#</TableHead>
-                    <TableHead className="text-[10px] font-bold uppercase py-3">Item Name</TableHead>
-                    <TableHead className="text-[10px] font-bold uppercase py-3">SKU Code</TableHead>
-                    <TableHead className="w-[120px] text-[10px] font-bold uppercase py-3">Qty</TableHead>
-                    <TableHead className="w-[150px] text-[10px] font-bold uppercase py-3">Cost (₹)</TableHead>
-                    <TableHead className="w-[150px] text-right text-[10px] font-bold uppercase py-3">Subtotal (₹)</TableHead>
-                    <TableHead className="w-12 py-3"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {purchaseItems.map((item, index) => (
-                    <TableRow key={item.productId} className="border-border/30 group hover:bg-secondary/5">
-                      <TableCell className="text-center font-code text-xs text-muted-foreground">{index + 1}</TableCell>
-                      <TableCell><p className="font-bold text-sm">{item.productName}</p></TableCell>
-                      <TableCell className="font-code text-[11px] opacity-70">{item.sku}</TableCell>
-                      <TableCell>
-                        <Input
-                          type="number"
-                          className="h-8 text-xs bg-secondary/20 border-none font-bold text-center"
-                          value={item.quantity}
-                          onChange={e => updateItem(item.productId, "quantity",  Number(e.target.value))}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Input
-                          type="number"
-                          className="h-8 text-xs bg-secondary/20 border-none font-bold text-right"
-                          value={item.purchasePrice}
-                          onChange={e => updateItem(item.productId, "purchasePrice", Number(e.target.value))}
-                        />
-                      </TableCell>
-                      <TableCell className="text-right font-code font-bold text-foreground">
-                        {(item.quantity * item.purchasePrice).toLocaleString()}
-                      </TableCell>
-                      <TableCell>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-destructive/30 hover:text-destructive hover:bg-destructive/10"
-                          onClick={() => removeItem(item.productId)}
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  {purchaseItems.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={7} className="h-72 text-center">
-                        <div className="flex flex-col items-center justify-center opacity-30 gap-3">
-                          <Package className="w-12 h-12" />
+
+              {/* ── MOBILE: card-based item list ── */}
+              <div className="block md:hidden">
+                {purchaseItems.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-16 opacity-30 gap-3">
+                    <Package className="w-10 h-10" />
+                    <p className="text-sm font-bold">Terminal Empty</p>
+                    <p className="text-xs text-center px-6">Select existing products or create new ones.</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-border/30">
+                    {purchaseItems.map((item, index) => (
+                      <div key={item.productId} className="p-4 space-y-3">
+                        <div className="flex justify-between items-start">
+                          <div className="min-w-0">
+                            <p className="font-bold text-sm truncate">{item.productName}</p>
+                            <p className="text-[10px] font-code opacity-60">{item.sku}</p>
+                          </div>
+                          <Button
+                            variant="ghost" size="icon"
+                            className="h-7 w-7 text-destructive/30 hover:text-destructive hover:bg-destructive/10 shrink-0"
+                            onClick={() => removeItem(item.productId)}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
                           <div className="space-y-1">
-                            <p className="text-sm font-bold">Terminal Empty</p>
-                            <p className="text-xs">Select existing products or create new ones to build your purchase.</p>
+                            <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Qty</p>
+                            <Input
+                              type="number" min={1}
+                              className="h-8 text-xs bg-secondary/20 border-none font-bold text-center"
+                              value={item.quantity}
+                              onChange={e => updateItem(item.productId, "quantity", Number(e.target.value))}
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Cost (₹)</p>
+                            <Input
+                              type="number"
+                              className="h-8 text-xs bg-secondary/20 border-none font-bold text-right"
+                              value={item.purchasePrice}
+                              onChange={e => updateItem(item.productId, "purchasePrice", Number(e.target.value))}
+                            />
                           </div>
                         </div>
-                      </TableCell>
+                        <div className="flex justify-between items-center">
+                          <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Subtotal</span>
+                          <span className="font-code font-bold text-foreground">
+                            ₹{(item.quantity * item.purchasePrice).toLocaleString()}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* ── DESKTOP: table view ── */}
+              <div className="hidden md:block">
+                <Table>
+                  <TableHeader className="bg-secondary/10">
+                    <TableRow className="border-border/50">
+                      <TableHead className="w-12 text-center text-[10px] font-bold uppercase py-3">#</TableHead>
+                      <TableHead className="text-[10px] font-bold uppercase py-3">Item Name</TableHead>
+                      <TableHead className="text-[10px] font-bold uppercase py-3">SKU Code</TableHead>
+                      <TableHead className="w-[120px] text-[10px] font-bold uppercase py-3">Qty</TableHead>
+                      <TableHead className="w-[150px] text-[10px] font-bold uppercase py-3">Cost (₹)</TableHead>
+                      <TableHead className="w-[150px] text-right text-[10px] font-bold uppercase py-3">Subtotal (₹)</TableHead>
+                      <TableHead className="w-12 py-3" />
                     </TableRow>
-                  )}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {purchaseItems.map((item, index) => (
+                      <TableRow key={item.productId} className="border-border/30 group hover:bg-secondary/5">
+                        <TableCell className="text-center font-code text-xs text-muted-foreground">{index + 1}</TableCell>
+                        <TableCell><p className="font-bold text-sm">{item.productName}</p></TableCell>
+                        <TableCell className="font-code text-[11px] opacity-70">{item.sku}</TableCell>
+                        <TableCell>
+                          <Input
+                            type="number"
+                            className="h-8 text-xs bg-secondary/20 border-none font-bold text-center"
+                            value={item.quantity}
+                            onChange={e => updateItem(item.productId, "quantity", Number(e.target.value))}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            type="number"
+                            className="h-8 text-xs bg-secondary/20 border-none font-bold text-right"
+                            value={item.purchasePrice}
+                            onChange={e => updateItem(item.productId, "purchasePrice", Number(e.target.value))}
+                          />
+                        </TableCell>
+                        <TableCell className="text-right font-code font-bold text-foreground">
+                          {(item.quantity * item.purchasePrice).toLocaleString()}
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            variant="ghost" size="icon"
+                            className="h-7 w-7 text-destructive/30 hover:text-destructive hover:bg-destructive/10"
+                            onClick={() => removeItem(item.productId)}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {purchaseItems.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={7} className="h-72 text-center">
+                          <div className="flex flex-col items-center justify-center opacity-30 gap-3">
+                            <Package className="w-12 h-12" />
+                            <div className="space-y-1">
+                              <p className="text-sm font-bold">Terminal Empty</p>
+                              <p className="text-xs">Select existing products or create new ones.</p>
+                            </div>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
             </CardContent>
+
             {purchaseItems.length > 0 && (
-              <CardContent className="bg-secondary/10 border-t border-border/50 py-3 px-6">
-                <div className="flex justify-between items-center text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
+              <CardContent className="bg-secondary/10 border-t border-border/50 py-3 px-4 md:px-6">
+                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1 text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
                   <span>Inward Readiness Verified</span>
                   <span className="flex items-center gap-1.5 text-accent">
                     <CheckCircle2 className="w-3.5 h-3.5" /> Commit Available
