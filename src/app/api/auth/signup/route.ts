@@ -4,6 +4,7 @@ import User from '../../../../../models/User';
 import Shop from '../../../../../models/Shop';
 import bcrypt from 'bcryptjs';
 import mongoose from 'mongoose';
+import { setSessionCookie } from '../../../../../lib/session'; // add this import
 
 export async function POST(request: Request) {
   try {
@@ -44,6 +45,8 @@ export async function POST(request: Request) {
     await newUser.save();
 
     const userPayload = { uid: userId, email: normalizedEmail };
+
+    await setSessionCookie(userPayload);
 
     return NextResponse.json({ user: userPayload }, { status: 201 });
 

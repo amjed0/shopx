@@ -84,7 +84,13 @@ export default function SignupPage() {
       if (!signupRes.ok) {
         throw new Error(signupData.error || "Registration failed.")
       }
+      
+      const userPayload = { uid: signupData.user?.uid, email: formData.email }
+      localStorage.setItem('shopx-user', JSON.stringify(userPayload))
+       window.dispatchEvent(new CustomEvent('auth-state-change', { detail: userPayload }))
 
+
+        
       // Step 2: Save shop profile using userId returned from signup
       const userId = signupData.user?.uid
       const profileRes = await fetch(`/api/shop_profiles/${userId}`, {
