@@ -9,14 +9,21 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { toast } from "@/hooks/use-toast"
-import { signIn } from "next-auth/react"
+import { signIn, useSession } from "next-auth/react"
 
 export default function LoginPage() {
   const router = useRouter()
+  const { status } = useSession()
   const [isLoading, setIsLoading] = React.useState(false)
   const [email, setEmail] = React.useState("")
   const [password, setPassword] = React.useState("")
   const [error, setError] = React.useState<string | null>(null)
+
+  React.useEffect(() => {
+    if (status === "authenticated") {
+      router.push("/purchases/suppliers")
+    }
+  }, [status, router])
 
   const validateEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.trim())
   const isEmailTouched = email.length > 0
@@ -52,7 +59,7 @@ export default function LoginPage() {
       title: "Access Granted",
       description: "Welcome back to ShopX Elite.",
     })
-    router.push("/dashboard")
+    router.push("/purchases/suppliers")
   } catch (err: any) {
     const msg = err.message || "Invalid credentials. Please try again."
     setError(msg)

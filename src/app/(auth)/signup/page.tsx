@@ -116,7 +116,7 @@ export default function SignupPage() {
         title: "Account Initialized",
         description: "Your shop profile has been created successfully.",
       })
-      router.push("/dashboard")
+      router.push("/purchases/suppliers")
     } catch (err: any) {
       const msg = err.message || "Registration failed."
       setError(msg)
