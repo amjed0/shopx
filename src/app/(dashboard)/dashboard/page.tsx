@@ -6,7 +6,9 @@ import {
   TrendingUp,
   Package,
   AlertTriangle,
-  Zap
+  Zap,
+  Eye,
+  EyeOff,
 } from "lucide-react"
 import { StatCard } from "@/components/dashboard/stat-card"
 import { SalesChart } from "@/components/dashboard/sales-chart"
@@ -32,10 +34,18 @@ export interface Sale {
   total: number
   customerName?: string
   paymentMethod: string
+  status?: string
+  items?: Array<{
+    productId: string
+    productName: string
+    quantity: number
+    price: number
+  }>
 }
 
 interface ShopData {
   ownerName?: string
+  companyName?: string
 }
 
 function useShop(uid: string | null) {
@@ -154,8 +164,28 @@ export default function DashboardPage() {
     }
   }, [products, allSales])
 
+  const [hideAmounts, setHideAmounts] = React.useState(false)
+
+  React.useEffect(() => {
+    const saved = localStorage.getItem("shopx_hide_amounts")
+    if (saved === "true") {
+      setHideAmounts(true)
+    }
+  }, [])
+
+  const toggleHideAmounts = React.useCallback(() => {
+    setHideAmounts((prev) => {
+      const next = !prev
+      localStorage.setItem("shopx_hide_amounts", String(next))
+      return next
+    })
+  }, [])
+
   const isLoading = userLoading || shopLoading
-  const greetingName = isLoading ? "" : shopData?.ownerName || ""
+  // Use companyName first as requested, fallback to ownerName or user name
+  const greetingName = isLoading
+    ? ""
+    : shopData?.companyName || shopData?.ownerName || "ShopX"
 
   return (
     <div className="space-y-6 md:space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
@@ -163,10 +193,31 @@ export default function DashboardPage() {
       {/* ── HEADER ── */}
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3 md:gap-4">
         <div className="min-w-0">
-          <Badge className="bg-primary/10 text-primary border-none mb-2 px-3 py-1 text-[10px] tracking-widest uppercase font-bold">
-            ShopX Elite Overview
-          </Badge>
-          {/* Responsive headline: smaller on mobile */}
+          <div className="flex items-center gap-2 mb-2 flex-wrap">
+            <Badge className="bg-primary/10 text-primary border-none px-3 py-1 text-[10px] tracking-widest uppercase font-bold">
+              ShopX Elite Overview
+            </Badge>
+            <button
+              type="button"
+              onClick={toggleHideAmounts}
+              className="inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-semibold rounded-full border border-border/50 bg-secondary/40 text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
+              title={hideAmounts ? "Show financial numbers" : "Hide financial numbers (Privacy Mode)"}
+            >
+              {hideAmounts ? (
+                <>
+                  <EyeOff className="w-3.5 h-3.5 text-accent" />
+                  <span>Hidden</span>
+                </>
+              ) : (
+                <>
+                  <Eye className="w-3.5 h-3.5 text-muted-foreground" />
+                  <span>Hide Values</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* Responsive headline: displays company name */}
           <h1 className="text-2xl sm:text-3xl md:text-4xl font-headline font-bold tracking-tight text-foreground leading-tight">
             Good Morning,{" "}
             {isLoading ? (
@@ -207,6 +258,9 @@ export default function DashboardPage() {
           icon={IndianRupee}
           trend={{ value: "Live", positive: true }}
           colorClass="bg-primary/10 text-primary"
+          isHidden={hideAmounts}
+          showEyeToggle={true}
+          onToggleHide={toggleHideAmounts}
         />
         <StatCard
           title="Monthly Sales"
@@ -214,6 +268,9 @@ export default function DashboardPage() {
           icon={TrendingUp}
           trend={{ value: "Actual", positive: true }}
           colorClass="bg-accent/10 text-accent"
+          isHidden={hideAmounts}
+          showEyeToggle={true}
+          onToggleHide={toggleHideAmounts}
         />
         <StatCard
           title="Stock Value"
@@ -221,6 +278,9 @@ export default function DashboardPage() {
           icon={Package}
           description="Total inventory on hand"
           colorClass="bg-purple-500/10 text-purple-400"
+          isHidden={hideAmounts}
+          showEyeToggle={true}
+          onToggleHide={toggleHideAmounts}
         />
         <StatCard
           title="Low Stock"
@@ -238,7 +298,7 @@ export default function DashboardPage() {
 
         {/* Left column: chart + two cards */}
         <div className="lg:col-span-2 space-y-6 min-w-0">
-          <SalesChart />
+          <SalesChart sales={allSales} products={products} />
 
           {/* Fast Moving + Low Stock — stack on mobile, side by side on md */}
           <div className="grid gap-6 md:grid-cols-2">
