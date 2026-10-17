@@ -26,6 +26,19 @@ export default function DashboardLayout({
     }
   }, [status, router])
 
+  // If launched from a phone Home Screen shortcut that was saved on /purchases/suppliers,
+  // automatically redirect fresh launches to the Dashboard for logged-in users.
+  React.useEffect(() => {
+    if (typeof window !== "undefined" && status === "authenticated") {
+      const isLaunchedFresh = !sessionStorage.getItem("shopx_session_started")
+      sessionStorage.setItem("shopx_session_started", "true")
+
+      if (isLaunchedFresh && window.location.pathname === "/purchases/suppliers") {
+        router.replace("/dashboard")
+      }
+    }
+  }, [status, router])
+
   if (status === "loading") {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
