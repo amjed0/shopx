@@ -21,7 +21,7 @@ export default function LoginPage() {
 
   React.useEffect(() => {
     if (status === "authenticated") {
-      router.push("/purchases/suppliers")
+      router.push("/dashboard")
     }
   }, [status, router])
 
@@ -59,7 +59,7 @@ export default function LoginPage() {
       title: "Access Granted",
       description: "Welcome back to ShopX Elite.",
     })
-    router.push("/purchases/suppliers")
+    router.push("/dashboard")
   } catch (err: any) {
     const msg = err.message || "Invalid credentials. Please try again."
     setError(msg)
