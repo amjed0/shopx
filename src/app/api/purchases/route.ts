@@ -111,6 +111,14 @@ export async function PATCH(request: Request) {
     obj.id = obj._id.toString();
     delete obj._id;
 
+    if (global.io) {
+      global.io.emit('inventory_update', {
+        action: 'update',
+        productId: productId,
+        product: obj,
+      });
+    }
+
     return NextResponse.json(obj);
   } catch (error: any) {
     console.error(error);

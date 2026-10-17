@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { useSession } from "next-auth/react"
 import { useRouter } from "next/navigation"
+import { MobileBottomNav } from "@/components/layout/mobile-bottom-nav"
 
 export default function DashboardLayout({
   children,
@@ -109,13 +110,12 @@ export default function DashboardLayout({
 
                   <div className="hidden sm:block h-8 w-[1px] bg-border mx-1" />
 
-                  {/* New Bill */}
+                  {/* New Bill (Desktop only - mobile uses bottom navigation bar) */}
                   <Button
                     onClick={() => router.push("/sales/new")}
-                    className="bg-primary text-primary-foreground font-semibold px-3 md:px-6 rounded-full shadow-lg shadow-primary/20 text-xs md:text-sm h-8 md:h-9"
+                    className="hidden md:inline-flex bg-primary text-primary-foreground font-semibold px-4 md:px-6 rounded-full shadow-lg shadow-primary/20 text-xs md:text-sm h-8 md:h-9"
                   >
-                    <span className="hidden sm:inline">New Bill</span>
-                    <span className="sm:hidden">+ Bill</span>
+                    New Bill
                   </Button>
                 </div>
               </>
@@ -123,9 +123,12 @@ export default function DashboardLayout({
           </header>
 
           {/* ── MAIN CONTENT ── */}
-          <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-10 w-full max-w-7xl mx-auto">
+          <main className="flex-1 overflow-y-auto p-4 pb-24 md:pb-6 md:p-6 lg:p-10 w-full max-w-7xl mx-auto">
             {children}
           </main>
+
+          {/* ── MOBILE BOTTOM NAVIGATION ── */}
+          <MobileBottomNav />
 
         </SidebarInset>
       </div>

@@ -36,6 +36,7 @@ import {
 import { cn } from "@/lib/utils"
 import { useUser } from "@/app/auth/use-user"
 import { Product } from "../../inventory/page"
+import { useSocket } from "@/hooks/useSocket"
 
 interface Customer {
   id: string
@@ -82,6 +83,21 @@ export default function NewBillPage() {
       .then((data: Customer[]) => setCustomers(Array.isArray(data) ? data : []))
       .catch(() => setCustomers([]))
   }, [user?.uid])
+
+  useSocket((data) => {
+    if (!user?.uid) return
+    console.log("Socket inventory update received in billing terminal:", data)
+    if (data.action === "update" && data.product) {
+      setProducts(prev => prev.map(p => p.id === data.product.id ? data.product : p))
+    } else if (data.action === "delete" && data.productId) {
+      setProducts(prev => prev.filter(p => p.id !== data.productId))
+    } else if (data.action === "create" && data.product) {
+      setProducts(prev => {
+        if (prev.some(p => p.id === data.product.id)) return prev
+        return [...prev, data.product].sort((a, b) => a.name.localeCompare(b.name))
+      })
+    }
+  })
 
   const filteredCustomers = customerSearch.length > 0
     ? customers.filter(c => c.name.toLowerCase().includes(customerSearch.toLowerCase()) || c.phone.includes(customerSearch))

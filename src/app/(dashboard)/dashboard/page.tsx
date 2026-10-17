@@ -15,9 +15,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { useRouter } from "next/navigation"
 import { useUser } from "@/app/auth/use-user"
+import { useSocket } from "@/hooks/useSocket"
 
 export interface Product {
-  _id: string
+  id: string
   name: string
   category: string
   purchasePrice: number
@@ -26,7 +27,7 @@ export interface Product {
 }
 
 export interface Sale {
-  _id: string
+  id: string
   date: string
   total: number
   customerName?: string
@@ -69,6 +70,21 @@ function useProducts(uid: string | null) {
       .finally(() => setLoading(false))
   }, [uid])
 
+  useSocket((socketData) => {
+    if (!uid) return
+    console.log("Dashboard socket inventory update received:", socketData)
+    if (socketData.action === "update" && socketData.product) {
+      setData(prev => prev.map(p => p.id === socketData.product.id ? socketData.product : p))
+    } else if (socketData.action === "delete" && socketData.productId) {
+      setData(prev => prev.filter(p => p.id !== socketData.productId))
+    } else if (socketData.action === "create" && socketData.product) {
+      setData(prev => {
+        if (prev.some(p => p.id === socketData.product.id)) return prev
+        return [...prev, socketData.product]
+      })
+    }
+  })
+
   return { data, loading }
 }
 
@@ -87,6 +103,15 @@ function useSales(uid: string | null) {
       .catch(() => setData([]))
       .finally(() => setLoading(false))
   }, [uid])
+
+  useSocket("new_sale", (sale) => {
+    if (!uid) return
+    console.log("Dashboard socket new sale received:", sale)
+    setData(prev => {
+      if (prev.some(s => s.id === sale.id)) return prev
+      return [sale, ...prev]
+    })
+  })
 
   return { data, loading }
 }
@@ -229,7 +254,7 @@ export default function DashboardPage() {
               <CardContent className="space-y-3">
                 {products.slice(0, 3).map((item) => (
                   <div
-                    key={item._id}
+                    key={item.id}
                     className="flex items-center justify-between p-2.5 md:p-3 rounded-xl bg-secondary/30 gap-2"
                   >
                     <div className="min-w-0">
@@ -260,7 +285,7 @@ export default function DashboardPage() {
               <CardContent className="space-y-3">
                 {stats.lowStockItems.map((item) => (
                   <div
-                    key={item._id}
+                    key={item.id}
                     className="flex items-center justify-between p-2.5 md:p-3 rounded-xl bg-destructive/5 gap-2"
                   >
                     <div className="min-w-0">
@@ -298,7 +323,7 @@ export default function DashboardPage() {
             </CardHeader>
             <CardContent className="space-y-3">
               {recentSales.map((sale, i) => (
-                <div key={sale._id ?? i}
+                <div key={sale.id ?? i}
                   className="flex items-center justify-between group cursor-pointer hover:bg-secondary/20 p-2 rounded-lg transition-colors gap-2"
                 >
                   <div className="flex items-center gap-2 md:gap-3 min-w-0">

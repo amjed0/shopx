@@ -38,6 +38,11 @@ export async function POST(request: Request) {
     const obj = newSale.toObject();
     obj.id = obj._id.toString();
     delete obj._id;
+
+    if (global.io) {
+      global.io.emit('new_sale', obj);
+    }
+
     return NextResponse.json(obj, { status: 201 });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });

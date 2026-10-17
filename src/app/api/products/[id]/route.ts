@@ -28,6 +28,15 @@ export async function PATCH(
     const obj = updatedProduct.toObject();
     obj.id = obj._id.toString();
     delete obj._id;
+    
+    if (global.io) {
+      global.io.emit('inventory_update', {
+        action: 'update',
+        productId: id,
+        product: obj,
+      });
+    }
+
     return NextResponse.json(obj);
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -49,6 +58,12 @@ export async function DELETE(
     
     if (!deletedProduct) {
       return NextResponse.json({ error: 'Product not found' }, { status: 404 });
+    }
+    if (global.io) {
+      global.io.emit('inventory_update', {
+        action: 'delete',
+        productId: id,
+      });
     }
     
     return NextResponse.json({ success: true });

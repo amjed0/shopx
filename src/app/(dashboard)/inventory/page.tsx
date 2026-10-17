@@ -49,6 +49,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
 import { useUser } from "@/app/auth/use-user"
+import { useSocket } from "@/hooks/useSocket"
 
 export interface Product {
   id: string;
@@ -89,9 +90,24 @@ export default function InventoryPage() {
     }
   }, [user?.uid])
 
- React.useEffect(() => {
-  fetchProducts()
-}, [fetchProducts])
+  React.useEffect(() => {
+    fetchProducts()
+  }, [fetchProducts])
+
+  useSocket((data) => {
+    if (!user?.uid) return
+    console.log("Socket inventory update received:", data)
+    if (data.action === "update" && data.product) {
+      setProducts(prev => prev.map(p => p.id === data.product.id ? data.product : p))
+    } else if (data.action === "delete" && data.productId) {
+      setProducts(prev => prev.filter(p => p.id !== data.productId))
+    } else if (data.action === "create" && data.product) {
+      setProducts(prev => {
+        if (prev.some(p => p.id === data.product.id)) return prev
+        return [...prev, data.product].sort((a, b) => a.name.localeCompare(b.name))
+      })
+    }
+  })
 
 
 
