@@ -22,12 +22,17 @@ export interface ScannedItem {
   name: string
   quantity: number
   purchasePrice: number
+  sellingPrice?: number | null
   category: string
 }
 
 export interface ScanResult {
   items: ScannedItem[]
   supplierName: string | null
+  supplierPhone?: string | null
+  supplierEmail?: string | null
+  supplierAddress?: string | null
+  supplierContactPerson?: string | null
   invoiceNumber: string | null
   invoiceDate: string | null
   totalAmount: number | null

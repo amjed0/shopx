@@ -26,6 +26,7 @@ interface Purchase {
   productName: string
   quantity: number
   purchasePrice: number
+  billingDate?: string
   createdAt: string
 }
 
@@ -270,7 +271,7 @@ export default function PurchaseHistoryPage() {
                                       </div>
                                     </TableCell>
                                     <TableCell className="text-xs text-muted-foreground py-2">
-                                      {new Date(p.createdAt).toLocaleDateString()}
+                                      {p.billingDate || new Date(p.createdAt).toLocaleDateString()}
                                     </TableCell>
                                     <TableCell className="py-2">
                                       <span className="font-bold">{p.quantity}</span>

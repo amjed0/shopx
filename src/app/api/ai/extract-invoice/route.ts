@@ -29,10 +29,15 @@ For EACH product item found, extract:
 - "name": Product name (as written on the bill)
 - "quantity": Number of units purchased (default to 1 if not clear)
 - "purchasePrice": Price per unit in INR (if only total is given, divide by quantity)
+- "sellingPrice": MRP or selling price per unit if visible (null if not shown)
 - "category": Best guess category (e.g. "Electronics", "Grocery", "Hardware", "Clothing", "Auto Parts", "Stationery", "Medicine", etc.)
 
 Also extract these invoice-level details if visible:
 - "supplierName": Name of the supplier/vendor/shop on the bill
+- "supplierPhone": Phone number of the supplier (null if not visible)
+- "supplierEmail": Email of the supplier (null if not visible)
+- "supplierAddress": Address of the supplier (null if not visible)
+- "supplierContactPerson": Contact person name (null if not visible)
 - "invoiceNumber": Invoice/bill number
 - "invoiceDate": Date on the invoice (in YYYY-MM-DD format)
 - "totalAmount": Grand total amount on the bill
@@ -51,10 +56,15 @@ Return ONLY this JSON structure:
       "name": "Product Name",
       "quantity": 1,
       "purchasePrice": 100,
+      "sellingPrice": 150,
       "category": "Category"
     }
   ],
   "supplierName": "Vendor Name or null",
+  "supplierPhone": "9876543210 or null",
+  "supplierEmail": "email@example.com or null",
+  "supplierAddress": "Full address or null",
+  "supplierContactPerson": "Contact name or null",
   "invoiceNumber": "INV-001 or null",
   "invoiceDate": "2026-01-15 or null",
   "totalAmount": 1500
@@ -127,12 +137,17 @@ Return ONLY this JSON structure:
       name: String(item.name || 'Unknown Product'),
       quantity: Math.max(1, Number(item.quantity) || 1),
       purchasePrice: Math.max(0, Number(item.purchasePrice) || 0),
+      sellingPrice: item.sellingPrice ? Math.max(0, Number(item.sellingPrice)) : null,
       category: String(item.category || 'General'),
     }));
 
     return NextResponse.json({
       items,
       supplierName: parsed.supplierName || null,
+      supplierPhone: parsed.supplierPhone || null,
+      supplierEmail: parsed.supplierEmail || null,
+      supplierAddress: parsed.supplierAddress || null,
+      supplierContactPerson: parsed.supplierContactPerson || null,
       invoiceNumber: parsed.invoiceNumber || null,
       invoiceDate: parsed.invoiceDate || null,
       totalAmount: parsed.totalAmount || null,

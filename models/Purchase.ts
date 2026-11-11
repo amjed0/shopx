@@ -7,6 +7,7 @@ export interface IPurchase extends Document {
   productName: string;
   quantity: number;
   purchasePrice: number;
+  billingDate: string;
   createdAt: string;
 }
 
@@ -17,8 +18,14 @@ const PurchaseSchema = new Schema<IPurchase>({
   productName: { type: String, required: true },
   quantity: { type: Number, required: true },
   purchasePrice: { type: Number, required: true },
+  billingDate: { type: String, default: () => new Date().toISOString().split('T')[0] },
   createdAt: { type: String, default: () => new Date().toISOString() },
-});
+}, { strict: false });
+
+// Clear cached model in dev
+if (process.env.NODE_ENV !== 'production') {
+  delete mongoose.models.Purchase;
+}
 
 const Purchase: Model<IPurchase> =
   mongoose.models.Purchase || mongoose.model<IPurchase>('Purchase', PurchaseSchema);

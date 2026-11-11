@@ -44,7 +44,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { supplierId, productId, productName, quantity, purchasePrice } = body;
+    const { supplierId, productId, productName, quantity, purchasePrice, billingDate } = body;
 
     const purchase = await Purchase.create({
       userId,
@@ -53,6 +53,7 @@ export async function POST(request: Request) {
       productName,
       quantity,
       purchasePrice,
+      billingDate: billingDate || new Date().toISOString().split('T')[0],
     });
 
     const obj = purchase.toObject() as any;
@@ -76,7 +77,7 @@ export async function PATCH(request: Request) {
     }
 
     const body = await request.json();
-    const { productId, quantity, purchasePrice, supplierId } = body;
+    const { productId, quantity, purchasePrice, supplierId, sellingPrice, billingDate } = body;
 
     if (!productId) {
       return NextResponse.json({ error: 'Product ID is required' }, { status: 400 });
@@ -94,6 +95,9 @@ export async function PATCH(request: Request) {
     if (purchasePrice !== undefined) {
       product.purchasePrice = Number(purchasePrice);
     }
+    if (sellingPrice !== undefined && Number(sellingPrice) > 0) {
+      product.sellingPrice = Number(sellingPrice);
+    }
     await product.save();
 
     if (supplierId) {
@@ -104,6 +108,7 @@ export async function PATCH(request: Request) {
         productName: product.name,
         quantity: Number(quantity),
         purchasePrice: Number(purchasePrice ?? product.purchasePrice ?? 0),
+        billingDate: billingDate || new Date().toISOString().split('T')[0],
       });
     }
 

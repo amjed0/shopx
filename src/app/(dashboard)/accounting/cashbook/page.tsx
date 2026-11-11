@@ -20,9 +20,20 @@ import {
   Wallet,
   StickyNote,
   History,
+  Truck,
+  Building2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Badge } from "@/components/ui/badge"
+import { Label } from "@/components/ui/label"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog"
 import {
   Card,
   CardContent,
@@ -57,9 +68,9 @@ const INCOME_CATEGORIES = [
 ]
 
 const EXPENSE_CATEGORIES = [
-  "Rent", "Electricity", "Salaries", "Transport", "Maintenance",
+  "Supplier Payment", "Purchase / Stock", "Rent", "Electricity", "Salaries", "Transport", "Maintenance",
   "Marketing", "Miscellaneous", "Office Supplies", "Food & Beverage",
-  "Internet & Phone", "Purchase / Stock",
+  "Internet & Phone",
 ]
 
 const PAYMENT_MODES = ["Cash", "UPI", "Bank Transfer", "Card", "Cheque"]
@@ -273,6 +284,111 @@ export default function CashbookPage() {
   const [isSubmitting, setIsSubmitting] = React.useState(false)
   const [customCategory, setCustomCategory] = React.useState<Record<string, boolean>>({})
 
+  // Supplier Payment State
+  const [suppliers, setSuppliers] = React.useState<{ id: string; name: string; phone?: string }[]>([])
+  const [supplierPayOpen, setSupplierPayOpen] = React.useState(false)
+  const [selectedSupplierId, setSelectedSupplierId] = React.useState("")
+  const [supplierBalance, setSupplierBalance] = React.useState<{ totalPurchased: number; totalPaid: number; balance: number } | null>(null)
+  const [loadingSupplierBalance, setLoadingSupplierBalance] = React.useState(false)
+  const [payAmount, setPayAmount] = React.useState("")
+  const [payMode, setPayMode] = React.useState("Cash")
+  const [payNote, setPayNote] = React.useState("")
+  const [isSubmittingPay, setIsSubmittingPay] = React.useState(false)
+
+  // Fetch suppliers on mount
+  React.useEffect(() => {
+    if (!user?.uid) return
+    fetch("/api/suppliers", { headers: { "x-user-id": user.uid } })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setSuppliers(data))
+      .catch(console.error)
+  }, [user?.uid])
+
+  // Fetch supplier balance when selected
+  React.useEffect(() => {
+    if (!selectedSupplierId || !user?.uid) {
+      setSupplierBalance(null)
+      return
+    }
+    setLoadingSupplierBalance(true)
+    fetch(`/api/supplier-payments?supplierId=${selectedSupplierId}`, {
+      headers: { "x-user-id": user.uid },
+    })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data) {
+          setSupplierBalance({
+            totalPurchased: data.totalPurchased || 0,
+            totalPaid: data.totalPaid || 0,
+            balance: data.balance || 0,
+          })
+          if (data.balance > 0) {
+            setPayAmount(String(data.balance))
+          }
+        }
+      })
+      .catch(console.error)
+      .finally(() => setLoadingSupplierBalance(false))
+  }, [selectedSupplierId, user?.uid])
+
+  const handleRecordSupplierPayment = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!user?.uid || !selectedSupplierId || !Number(payAmount)) return
+    setIsSubmittingPay(true)
+    try {
+      const sup = suppliers.find(s => s.id === selectedSupplierId)
+      const supName = sup?.name || "Supplier"
+
+      // 1. Record in SupplierPayment
+      const payRes = await fetch("/api/supplier-payments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-user-id": user.uid },
+        body: JSON.stringify({
+          supplierId: selectedSupplierId,
+          amount: Number(payAmount),
+          paymentMode: payMode,
+          note: payNote,
+        }),
+      })
+      if (!payRes.ok) throw new Error("Failed to record supplier payment")
+      const payData = await payRes.json()
+
+      // 2. Record in Cashbook as Expense
+      await fetch("/api/cashbook", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-user-id": user.uid },
+        body: JSON.stringify({
+          type: "expense",
+          category: "Supplier Payment",
+          description: `Payment to ${supName}`,
+          amount: Number(payAmount),
+          paymentMode: payMode,
+          note: payNote || `Remaining Balance: ₹${(payData.balance || 0).toLocaleString()}`,
+        }),
+      })
+
+      toast({
+        title: "Supplier Payment Recorded",
+        description: `Paid ₹${Number(payAmount).toLocaleString()} to ${supName}. New Balance: ₹${(payData.balance || 0).toLocaleString()}`,
+      })
+
+      // Reset
+      setSupplierPayOpen(false)
+      setSelectedSupplierId("")
+      setPayAmount("")
+      setPayNote("")
+      setSupplierBalance(null)
+    } catch (err: any) {
+      toast({
+        variant: "destructive",
+        title: "Payment Failed",
+        description: err.message,
+      })
+    } finally {
+      setIsSubmittingPay(false)
+    }
+  }
+
   const totalIncome = items.filter(i => i.type === "income").reduce((acc, i) => acc + (Number(i.amount) || 0), 0)
   const totalExpense = items.filter(i => i.type === "expense").reduce((acc, i) => acc + (Number(i.amount) || 0), 0)
   const balance = totalIncome - totalExpense
@@ -342,6 +458,13 @@ export default function CashbookPage() {
           <p className="text-xs sm:text-sm text-muted-foreground">Record income and expenses in one place.</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            className="rounded-xl font-bold uppercase tracking-wider text-[10px] h-8 sm:h-9 border-amber-500/30 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10"
+            onClick={() => setSupplierPayOpen(true)}
+          >
+            <Truck className="w-3.5 h-3.5 mr-1.5" /> Pay Supplier
+          </Button>
           <Button
             variant="outline"
             className="rounded-xl font-bold uppercase tracking-wider text-[10px] h-8 sm:h-9"
@@ -597,6 +720,133 @@ export default function CashbookPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* ── PAY SUPPLIER DIALOG ── */}
+      <Dialog open={supplierPayOpen} onOpenChange={setSupplierPayOpen}>
+        <DialogContent className="sm:max-w-md">
+          <form onSubmit={handleRecordSupplierPayment}>
+            <DialogHeader>
+              <DialogTitle className="text-lg font-bold flex items-center gap-2">
+                <Truck className="w-5 h-5 text-accent" /> Pay Supplier / Clear Due Balance
+              </DialogTitle>
+              <p className="text-xs text-muted-foreground">
+                Select a supplier to inspect their total purchases and outstanding credit balance, then record a payment.
+              </p>
+            </DialogHeader>
+
+            <div className="space-y-4 py-4">
+              {/* Supplier selector */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Select Supplier</Label>
+                <Select value={selectedSupplierId} onValueChange={setSelectedSupplierId}>
+                  <SelectTrigger className="h-10 text-xs">
+                    <SelectValue placeholder="Choose a supplier..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {suppliers.map(s => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.name} {s.phone ? `(${s.phone})` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Balance Summary Card */}
+              {loadingSupplierBalance && (
+                <div className="flex justify-center py-4">
+                  <Loader2 className="w-5 h-5 animate-spin text-accent" />
+                </div>
+              )}
+
+              {supplierBalance && !loadingSupplierBalance && (
+                <div className="rounded-xl p-3.5 bg-secondary/30 border border-border/50 space-y-2">
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="p-2 rounded-lg bg-background">
+                      <p className="text-[9px] uppercase font-bold text-muted-foreground">Total Bills</p>
+                      <p className="text-xs font-bold font-code mt-0.5">₹{supplierBalance.totalPurchased.toLocaleString()}</p>
+                    </div>
+                    <div className="p-2 rounded-lg bg-background">
+                      <p className="text-[9px] uppercase font-bold text-muted-foreground">Already Paid</p>
+                      <p className="text-xs font-bold font-code text-green-600 mt-0.5">₹{supplierBalance.totalPaid.toLocaleString()}</p>
+                    </div>
+                    <div className="p-2 rounded-lg bg-background border border-amber-500/20">
+                      <p className="text-[9px] uppercase font-bold text-amber-500">Balance Due</p>
+                      <p className="text-xs font-bold font-code text-amber-500 mt-0.5">₹{supplierBalance.balance.toLocaleString()}</p>
+                    </div>
+                  </div>
+                  {supplierBalance.balance <= 0 && (
+                    <p className="text-[10px] text-center text-green-600 font-bold">
+                      ✓ All bills for this supplier are fully cleared!
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Amount to pay */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold">Payment Amount (₹) *</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    className="h-10 text-xs font-bold font-code"
+                    placeholder="e.g. 5000"
+                    value={payAmount}
+                    onChange={e => setPayAmount(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold">Payment Mode</Label>
+                  <Select value={payMode} onValueChange={setPayMode}>
+                    <SelectTrigger className="h-10 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PAYMENT_MODES.map(m => (
+                        <SelectItem key={m} value={m}>{m}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {/* Note */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Note / Remarks (Optional)</Label>
+                <Input
+                  className="h-10 text-xs"
+                  placeholder="e.g. Cleared bill INV-102 via UPI"
+                  value={payNote}
+                  onChange={e => setPayNote(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="text-xs"
+                onClick={() => setSupplierPayOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={isSubmittingPay || !selectedSupplierId || !Number(payAmount)}
+                className="bg-accent text-accent-foreground text-xs font-bold"
+              >
+                {isSubmittingPay && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />}
+                Record Payment &amp; Reduce Balance
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
