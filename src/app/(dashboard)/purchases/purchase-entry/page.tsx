@@ -923,128 +923,30 @@ export default function NewPurchasePage() {
             </div>
 
             <CardContent className="p-0">
-
-              {/* ── MOBILE: card-based item list ── */}
-              <div className="block md:hidden">
-                {purchaseItems.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-16 opacity-30 gap-3">
-                    <Package className="w-10 h-10" />
-                    <p className="text-sm font-bold">Terminal Empty</p>
-                    <p className="text-xs text-center px-6">Scan an invoice or select existing products.</p>
-                  </div>
-                ) : (
-                  <div className="divide-y divide-border/30">
-                    {purchaseItems.map((item, index) => (
-                      <div key={item.productId} className="p-4 space-y-3">
-                        <div className="flex justify-between items-start">
-                          <div className="min-w-0">
-                            <p className="font-bold text-sm truncate">{item.productName}</p>
-                            <div className="flex gap-2 items-center text-[10px] text-muted-foreground font-code mt-0.5">
-                              <span>{item.sku}</span>
-                              <span>•</span>
-                              <Badge variant="secondary" className="text-[9px] px-1 py-0 h-4">{item.category}</Badge>
-                              {item.isNewProduct && (
-                                <Badge className="text-[8px] bg-accent text-accent-foreground px-1 py-0 h-4">NEW</Badge>
-                              )}
-                            </div>
-                          </div>
-                          <Button
-                            variant="ghost" size="icon"
-                            className="h-7 w-7 text-destructive/30 hover:text-destructive hover:bg-destructive/10 shrink-0"
-                            onClick={() => removeItem(item.productId)}
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </Button>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-2">
-                          <div className="space-y-1">
-                            <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Qty</p>
-                            <Input
-                              type="number"
-                              min={1}
-                              style={{ color: '#ffffff', backgroundColor: '#1a2232' }}
-                              className="h-9 text-xs border border-slate-600 font-bold text-center rounded-lg shadow-sm focus:border-cyan-400"
-                              value={item.quantity ?? ""}
-                              onChange={e => updateItem(item.productId, "quantity", e.target.value === "" ? "" : Number(e.target.value))}
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Cost (₹)</p>
-                            <Input
-                              type="number"
-                              min={0}
-                              step="any"
-                              style={{ color: '#fbbf24', backgroundColor: '#1a2232' }}
-                              className="h-9 text-xs border border-slate-600 font-bold text-right font-code rounded-lg shadow-sm focus:border-amber-400"
-                              value={item.purchasePrice ?? ""}
-                              onChange={e => updateItem(item.productId, "purchasePrice", e.target.value === "" ? "" : Number(e.target.value))}
-                            />
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-2">
-                          <div className="space-y-1">
-                            <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">MRP / Selling (₹)</p>
-                            <Input
-                              type="number"
-                              min={0}
-                              step="any"
-                              style={{ color: '#34d399', backgroundColor: '#1a2232' }}
-                              className="h-9 text-xs border border-slate-600 font-bold text-right font-code rounded-lg shadow-sm focus:border-emerald-400"
-                              value={item.sellingPrice ?? ""}
-                              onChange={e => updateItem(item.productId, "sellingPrice", e.target.value === "" ? "" : Number(e.target.value))}
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Alert Lvl</p>
-                            <Input
-                              type="number"
-                              min={0}
-                              style={{ color: '#ffffff', backgroundColor: '#1a2232' }}
-                              className="h-9 text-xs border border-slate-600 font-bold text-center rounded-lg shadow-sm focus:border-cyan-400"
-                              value={item.minStock ?? ""}
-                              onChange={e => updateItem(item.productId, "minStock", e.target.value === "" ? "" : Number(e.target.value))}
-                            />
-                          </div>
-                        </div>
-
-                        <div className="flex justify-between items-center pt-1 border-t border-border/20">
-                          <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Subtotal</span>
-                          <span className="font-code font-bold text-foreground">
-                            ₹{((Number(item.quantity) || 0) * (Number(item.purchasePrice) || 0)).toLocaleString()}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* ── DESKTOP: table view ── */}
-              <div className="hidden md:block overflow-x-auto">
-                <Table>
-                  <TableHeader className="bg-secondary/10">
-                    <TableRow className="border-border/50">
-                      <TableHead className="w-10 text-center text-[10px] font-bold uppercase py-3">#</TableHead>
-                      <TableHead className="text-[10px] font-bold uppercase py-3 min-w-[160px]">Item Name</TableHead>
-                      <TableHead className="w-[170px] text-[10px] font-bold uppercase py-3">Category</TableHead>
-                      <TableHead className="w-[90px] text-[10px] font-bold uppercase py-3 text-center">Qty</TableHead>
-                      <TableHead className="w-[110px] text-[10px] font-bold uppercase py-3 text-right">Cost (₹)</TableHead>
-                      <TableHead className="w-[110px] text-[10px] font-bold uppercase py-3 text-right">MRP (₹)</TableHead>
-                      <TableHead className="w-[90px] text-[10px] font-bold uppercase py-3 text-center">Alert Lvl</TableHead>
-                      <TableHead className="w-[120px] text-right text-[10px] font-bold uppercase py-3">Subtotal (₹)</TableHead>
-                      <TableHead className="w-10 py-3" />
+              {/* ── UNIFIED TABLE (Mobile & Desktop) ── */}
+              <div className="w-full overflow-x-auto">
+                <Table className="min-w-[760px] w-full">
+                  <TableHeader className="bg-secondary/20 border-b border-border/50">
+                    <TableRow className="border-border/50 hover:bg-transparent">
+                      <TableHead className="w-10 text-center text-[10px] font-bold uppercase py-3 px-2">#</TableHead>
+                      <TableHead className="text-[10px] font-bold uppercase py-3 px-2 min-w-[160px]">Item Name</TableHead>
+                      <TableHead className="w-[160px] text-[10px] font-bold uppercase py-3 px-2">Category</TableHead>
+                      <TableHead className="w-[85px] text-[10px] font-bold uppercase py-3 px-2 text-center">Qty</TableHead>
+                      <TableHead className="w-[115px] text-[10px] font-bold uppercase py-3 px-2 text-right">Cost (₹)</TableHead>
+                      <TableHead className="w-[115px] text-[10px] font-bold uppercase py-3 px-2 text-right">MRP (₹)</TableHead>
+                      <TableHead className="w-[85px] text-[10px] font-bold uppercase py-3 px-2 text-center">Alert Lvl</TableHead>
+                      <TableHead className="w-[110px] text-right text-[10px] font-bold uppercase py-3 px-2">Subtotal (₹)</TableHead>
+                      <TableHead className="w-10 py-3 px-2" />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {purchaseItems.map((item, index) => (
-                      <TableRow key={item.productId} className="border-border/30 group hover:bg-secondary/5">
-                        <TableCell className="text-center font-code text-xs text-muted-foreground">{index + 1}</TableCell>
-                        <TableCell>
-                          <p className="font-bold text-xs">{item.productName}</p>
+                      <TableRow key={item.productId} className="border-border/30 group hover:bg-secondary/10">
+                        <TableCell className="text-center font-code text-xs text-muted-foreground py-2.5 px-2">{index + 1}</TableCell>
+                        <TableCell className="py-2.5 px-2">
+                          <p className="font-bold text-xs text-foreground">{item.productName}</p>
                           <div className="flex items-center gap-1.5 mt-0.5">
-                            <span className="font-code text-[10px] opacity-70">{item.sku}</span>
+                            <span className="font-code text-[10px] text-muted-foreground">{item.sku}</span>
                             {item.isNewProduct && (
                               <Badge className="text-[8px] bg-accent/20 text-accent hover:bg-accent/30 px-1 py-0 h-3.5">
                                 Auto Add
@@ -1054,13 +956,13 @@ export default function NewPurchasePage() {
                         </TableCell>
 
                         {/* Category with inline selector + create */}
-                        <TableCell>
-                          <div className="flex items-center gap-1">
+                        <TableCell className="py-2.5 px-2">
+                          <div className="flex items-center gap-1 min-w-[140px]">
                             <Select
                               value={item.category}
                               onValueChange={val => updateItem(item.productId, "category", val)}
                             >
-                              <SelectTrigger className="h-8 text-xs bg-secondary/20 border-none flex-1">
+                              <SelectTrigger className="h-9 text-xs bg-[#1a2232] border border-slate-600 text-foreground flex-1 rounded-lg">
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
@@ -1084,68 +986,68 @@ export default function NewPurchasePage() {
                         </TableCell>
 
                         {/* Qty */}
-                        <TableCell>
+                        <TableCell className="py-2.5 px-2 text-center">
                           <Input
                             type="number"
                             min={1}
                             style={{ color: '#ffffff', backgroundColor: '#1a2232' }}
-                            className="h-9 px-2 text-xs border border-slate-600 font-bold text-center rounded-lg shadow-sm focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400"
+                            className="w-16 h-9 px-2 text-xs border border-slate-600 font-bold text-center rounded-lg shadow-sm focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 mx-auto"
                             value={item.quantity ?? ""}
                             onChange={e => updateItem(item.productId, "quantity", e.target.value === "" ? "" : Number(e.target.value))}
                           />
                         </TableCell>
 
                         {/* Purchase Price (Cost) */}
-                        <TableCell>
+                        <TableCell className="py-2.5 px-2 text-right">
                           <Input
                             type="number"
                             min={0}
                             step="any"
                             style={{ color: '#fbbf24', backgroundColor: '#1a2232' }}
-                            className="h-9 px-2 text-xs border border-slate-600 font-bold text-right font-code rounded-lg shadow-sm focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
+                            className="w-24 h-9 px-2 text-xs border border-slate-600 font-bold text-right font-code rounded-lg shadow-sm focus:border-amber-400 focus:ring-1 focus:ring-amber-400 ml-auto"
                             value={item.purchasePrice ?? ""}
                             onChange={e => updateItem(item.productId, "purchasePrice", e.target.value === "" ? "" : Number(e.target.value))}
                           />
                         </TableCell>
 
                         {/* MRP (Selling Price) */}
-                        <TableCell>
+                        <TableCell className="py-2.5 px-2 text-right">
                           <Input
                             type="number"
                             min={0}
                             step="any"
                             style={{ color: '#34d399', backgroundColor: '#1a2232' }}
-                            className="h-9 px-2 text-xs border border-slate-600 font-bold text-right font-code rounded-lg shadow-sm focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400"
+                            className="w-24 h-9 px-2 text-xs border border-slate-600 font-bold text-right font-code rounded-lg shadow-sm focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 ml-auto"
                             value={item.sellingPrice ?? ""}
                             onChange={e => updateItem(item.productId, "sellingPrice", e.target.value === "" ? "" : Number(e.target.value))}
                           />
                         </TableCell>
 
                         {/* Alert Level (minStock) */}
-                        <TableCell>
+                        <TableCell className="py-2.5 px-2 text-center">
                           <Input
                             type="number"
                             min={0}
                             style={{ color: '#ffffff', backgroundColor: '#1a2232' }}
-                            className="h-9 px-2 text-xs border border-slate-600 font-bold text-center rounded-lg shadow-sm focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400"
+                            className="w-16 h-9 px-2 text-xs border border-slate-600 font-bold text-center rounded-lg shadow-sm focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 mx-auto"
                             value={item.minStock ?? ""}
                             onChange={e => updateItem(item.productId, "minStock", e.target.value === "" ? "" : Number(e.target.value))}
                           />
                         </TableCell>
 
                         {/* Subtotal */}
-                        <TableCell className="text-right font-code font-bold text-foreground">
-                          {((Number(item.quantity) || 0) * (Number(item.purchasePrice) || 0)).toLocaleString()}
+                        <TableCell className="py-2.5 px-2 text-right font-code font-bold text-foreground">
+                          ₹{((Number(item.quantity) || 0) * (Number(item.purchasePrice) || 0)).toLocaleString()}
                         </TableCell>
 
                         {/* Remove */}
-                        <TableCell>
+                        <TableCell className="py-2.5 px-2 text-center">
                           <Button
                             variant="ghost" size="icon"
-                            className="h-7 w-7 text-destructive/30 hover:text-destructive hover:bg-destructive/10"
+                            className="h-8 w-8 text-destructive/40 hover:text-destructive hover:bg-destructive/10"
                             onClick={() => removeItem(item.productId)}
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Trash2 className="w-4 h-4" />
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -1153,6 +1055,19 @@ export default function NewPurchasePage() {
                     {purchaseItems.length === 0 && (
                       <TableRow>
                         <TableCell colSpan={9} className="h-72 text-center">
+                          <div className="flex flex-col items-center justify-center opacity-30 gap-3">
+                            <Package className="w-12 h-12" />
+                            <div className="space-y-1">
+                              <p className="text-sm font-bold">Terminal Empty</p>
+                              <p className="text-xs">Scan an invoice with AI or add products manually.</p>
+                            </div>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
                           <div className="flex flex-col items-center justify-center opacity-30 gap-3">
                             <Package className="w-12 h-12" />
                             <div className="space-y-1">
