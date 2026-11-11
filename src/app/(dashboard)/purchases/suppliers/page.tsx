@@ -52,6 +52,9 @@ export default function SuppliersPage() {
   const [purchaseHistory, setPurchaseHistory] = React.useState<any[]>([])
   const [historyLoading, setHistoryLoading] = React.useState(false)
   const [isSubmitting, setIsSubmitting] = React.useState(false)
+  const [editingSupplier, setEditingSupplier] = React.useState<Supplier | null>(null)
+  const [isEditOpen, setIsEditOpen] = React.useState(false)
+  const [isSavingEdit, setIsSavingEdit] = React.useState(false)
 
   React.useEffect(() => {
     if (!user?.uid) return
@@ -161,6 +164,43 @@ export default function SuppliersPage() {
     }
   }
 
+  const handleEdit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    if (!user?.uid || !editingSupplier) return
+    setIsSavingEdit(true)
+    const formData = new FormData(e.currentTarget)
+
+    const updatedData = {
+      name: formData.get("name") as string,
+      contactPerson: formData.get("contactPerson") as string,
+      phone: formData.get("phone") as string,
+      email: formData.get("email") as string,
+      address: formData.get("address") as string,
+    }
+
+    try {
+      const res = await fetch(`/api/suppliers/${editingSupplier.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-id": user.uid,
+        },
+        body: JSON.stringify(updatedData),
+      })
+      if (!res.ok) throw new Error("Failed to update supplier")
+      const saved = await res.json()
+      setSuppliers(prev => prev.map(s => s.id === saved.id ? saved : s))
+      toast({ title: "Supplier Updated", description: `${saved.name} details have been saved.` })
+      setIsEditOpen(false)
+      setEditingSupplier(null)
+    } catch (err: any) {
+      console.error(err)
+      toast({ title: "Update Failed", description: err.message || "Could not update supplier.", variant: "destructive" })
+    } finally {
+      setIsSavingEdit(false)
+    }
+  }
+
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
       {/* Header */}
@@ -233,6 +273,88 @@ export default function SuppliersPage() {
                 </Button>
               </DialogFooter>
             </form>
+          </DialogContent>
+        </Dialog>
+
+        {/* Edit Supplier Dialog */}
+        <Dialog open={isEditOpen} onOpenChange={(open) => {
+          setIsEditOpen(open)
+          if (!open) setEditingSupplier(null)
+        }}>
+          <DialogContent>
+            {editingSupplier && (
+              <form onSubmit={handleEdit}>
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    <Edit2 className="w-4 h-4 text-accent" />
+                    Edit Supplier: {editingSupplier.name}
+                  </DialogTitle>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                  <div className="space-y-1">
+                    <Label>Company Name *</Label>
+                    <Input
+                      name="name"
+                      defaultValue={editingSupplier.name}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Contact Person *</Label>
+                    <Input
+                      name="contactPerson"
+                      defaultValue={editingSupplier.contactPerson}
+                      required
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <Label>Phone *</Label>
+                      <Input
+                        name="phone"
+                        defaultValue={editingSupplier.phone}
+                        required
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Email</Label>
+                      <Input
+                        name="email"
+                        type="email"
+                        defaultValue={editingSupplier.email}
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Address</Label>
+                    <Input
+                      name="address"
+                      defaultValue={editingSupplier.address}
+                    />
+                  </div>
+                </div>
+                <DialogFooter className="gap-2 sm:gap-0">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setIsEditOpen(false)
+                      setEditingSupplier(null)
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    disabled={isSavingEdit}
+                    className="bg-accent text-accent-foreground font-bold"
+                  >
+                    {isSavingEdit && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
+                    {isSavingEdit ? "Saving..." : "Save Changes"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            )}
           </DialogContent>
         </Dialog>
       </div>
@@ -389,8 +511,17 @@ export default function SuppliersPage() {
                       </div>
                     </TableCell>
                     <TableCell className="text-right pr-6">
-                      <Button variant="ghost" size="sm" className="rounded-full hover:bg-secondary">
-                        <Edit2 className="w-3 h-3" />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="rounded-full hover:bg-accent/10 text-accent"
+                        onClick={() => {
+                          setEditingSupplier(s)
+                          setIsEditOpen(true)
+                        }}
+                        title="Edit Supplier"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
                       </Button>
                     </TableCell>
                     <TableCell className="text-right pr-6">

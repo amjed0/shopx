@@ -24,6 +24,7 @@ import {
   UserCheck,
   Sparkles,
   TrendingUp,
+  Edit2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -127,6 +128,17 @@ export default function NewPurchasePage() {
     address: "",
   })
   const [isSavingSupplier, setIsSavingSupplier] = React.useState(false)
+
+  // Edit Selected Supplier Dialog
+  const [isEditSupplierOpen, setIsEditSupplierOpen] = React.useState(false)
+  const [editSupplierForm, setEditSupplierForm] = React.useState({
+    name: "",
+    contactPerson: "",
+    phone: "",
+    email: "",
+    address: "",
+  })
+  const [isUpdatingSupplier, setIsUpdatingSupplier] = React.useState(false)
 
   const generateSKU = () => `SX-${Math.floor(1000 + Math.random() * 9000)}`
 
@@ -440,6 +452,45 @@ export default function NewPurchasePage() {
     }
   }
 
+  // Open edit dialog for currently selected supplier
+  const handleOpenEditSupplier = () => {
+    if (!selectedSupplier) return
+    setEditSupplierForm({
+      name: selectedSupplier.name || "",
+      contactPerson: selectedSupplier.contactPerson || "",
+      phone: selectedSupplier.phone || "",
+      email: selectedSupplier.email || "",
+      address: selectedSupplier.address || "",
+    })
+    setIsEditSupplierOpen(true)
+  }
+
+  // Save updated supplier
+  const handleUpdateSupplier = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!user?.uid || !selectedSupplier || !editSupplierForm.name.trim()) return
+    setIsUpdatingSupplier(true)
+    try {
+      const res = await fetch(`/api/suppliers/${selectedSupplier.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "x-user-id": user.uid },
+        credentials: "include",
+        body: JSON.stringify(editSupplierForm),
+      })
+      if (!res.ok) throw new Error("Failed to update supplier")
+      const updated = await res.json()
+      setSuppliers(prev => prev.map(s => s.id === updated.id ? updated : s))
+      setSelectedSupplier(updated)
+      setIsEditSupplierOpen(false)
+      toast({ title: "Supplier Updated", description: `${updated.name} details saved.` })
+    } catch (err: any) {
+      console.error(err)
+      toast({ variant: "destructive", title: "Update Failed", description: err.message })
+    } finally {
+      setIsUpdatingSupplier(false)
+    }
+  }
+
   // Inline category add
   const handleAddInlineCategory = () => {
     if (!inlineCategoryInput.trim()) return
@@ -668,14 +719,28 @@ export default function NewPurchasePage() {
                       </p>
                     )}
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6 text-destructive/60 hover:text-destructive hover:bg-destructive/10 shrink-0"
-                    onClick={() => setSelectedSupplier(null)}
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </Button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 text-accent/80 hover:text-accent hover:bg-accent/10"
+                      onClick={handleOpenEditSupplier}
+                      title="Edit Supplier Details"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 text-destructive/60 hover:text-destructive hover:bg-destructive/10"
+                      onClick={() => setSelectedSupplier(null)}
+                      title="Unselect Supplier"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
                 </div>
               </div>
             )}
@@ -1317,6 +1382,108 @@ export default function NewPurchasePage() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── EDIT SELECTED SUPPLIER DIALOG ── */}
+      <Dialog open={isEditSupplierOpen} onOpenChange={setIsEditSupplierOpen}>
+        <DialogContent className="sm:max-w-md">
+          {selectedSupplier && (
+            <form onSubmit={handleUpdateSupplier}>
+              <DialogHeader>
+                <DialogTitle className="text-lg font-bold flex items-center gap-2">
+                  <Edit2 className="w-5 h-5 text-accent" /> Edit Supplier Details
+                </DialogTitle>
+                <p className="text-xs text-muted-foreground">
+                  Update vendor contact information and phone number.
+                </p>
+              </DialogHeader>
+
+              <div className="grid gap-3 py-4">
+                <div className="space-y-1">
+                  <Label className="text-xs font-semibold">Vendor / Company Name *</Label>
+                  <Input
+                    className="h-9 text-xs"
+                    value={editSupplierForm.name}
+                    onChange={e => setEditSupplierForm({ ...editSupplierForm, name: e.target.value })}
+                    required
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs font-semibold flex items-center gap-1">
+                      <UserCheck className="w-3 h-3 text-muted-foreground" /> Contact Person
+                    </Label>
+                    <Input
+                      className="h-9 text-xs"
+                      placeholder="Name"
+                      value={editSupplierForm.contactPerson}
+                      onChange={e => setEditSupplierForm({ ...editSupplierForm, contactPerson: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs font-semibold flex items-center gap-1">
+                      <Phone className="w-3 h-3 text-muted-foreground" /> Full Mobile Number *
+                    </Label>
+                    <Input
+                      className="h-9 text-xs font-code font-bold"
+                      placeholder="e.g. 9876543210"
+                      value={editSupplierForm.phone}
+                      onChange={e => setEditSupplierForm({ ...editSupplierForm, phone: e.target.value })}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs font-semibold flex items-center gap-1">
+                    <Mail className="w-3 h-3 text-muted-foreground" /> Email
+                  </Label>
+                  <Input
+                    type="email"
+                    className="h-9 text-xs"
+                    placeholder="vendor@example.com"
+                    value={editSupplierForm.email}
+                    onChange={e => setEditSupplierForm({ ...editSupplierForm, email: e.target.value })}
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs font-semibold flex items-center gap-1">
+                    <MapPin className="w-3 h-3 text-muted-foreground" /> Address
+                  </Label>
+                  <Input
+                    className="h-9 text-xs"
+                    placeholder="Address"
+                    value={editSupplierForm.address}
+                    onChange={e => setEditSupplierForm({ ...editSupplierForm, address: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <DialogFooter className="gap-2 sm:gap-0">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="text-xs"
+                  onClick={() => setIsEditSupplierOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={isUpdatingSupplier || !editSupplierForm.name.trim()}
+                  className="bg-accent text-accent-foreground text-xs font-bold"
+                >
+                  {isUpdatingSupplier && <Loader2 className="w-3 h-3 animate-spin mr-1.5" />}
+                  Save Changes
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
         </DialogContent>
       </Dialog>
 
