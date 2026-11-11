@@ -1065,17 +1065,21 @@ export default function NewPurchasePage() {
                         </TableCell>
                       </TableRow>
                     )}
-                  </TableBody>
-                </Table>
-              </div>
-                          <div className="flex flex-col items-center justify-center opacity-30 gap-3">
-                            <Package className="w-12 h-12" />
-                            <div className="space-y-1">
-                              <p className="text-sm font-bold">Terminal Empty</p>
-                              <p className="text-xs">Scan an invoice with AI or add products manually.</p>
-                            </div>
-                          </div>
+
+                    {/* ── TABLE FOOTER SUMMARY ROW ── */}
+                    {purchaseItems.length > 0 && (
+                      <TableRow className="bg-secondary/30 border-t-2 border-border/70 font-bold hover:bg-secondary/30">
+                        <TableCell colSpan={3} className="py-3 px-3 text-right text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                          Total ({purchaseItems.length} Products):
                         </TableCell>
+                        <TableCell className="py-3 px-2 text-center text-xs font-bold text-foreground">
+                          {purchaseItems.reduce((acc, i) => acc + (Number(i.quantity) || 0), 0)}
+                        </TableCell>
+                        <TableCell colSpan={3} />
+                        <TableCell className="py-3 px-2 text-right font-code font-bold text-base text-accent">
+                          ₹{total.toLocaleString()}
+                        </TableCell>
+                        <TableCell />
                       </TableRow>
                     )}
                   </TableBody>
@@ -1083,13 +1087,67 @@ export default function NewPurchasePage() {
               </div>
             </CardContent>
 
+            {/* ── BOTTOM TOTALS & COMMIT ENTRY BAR ── */}
             {purchaseItems.length > 0 && (
-              <CardContent className="bg-secondary/10 border-t border-border/50 py-3 px-4 md:px-6">
-                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
-                  <span>Billing Date: {billingDate} • Products: {purchaseItems.length}</span>
-                  <span className="flex items-center gap-1.5 text-accent">
-                    <CheckCircle2 className="w-3.5 h-3.5" /> Ready to Commit
-                  </span>
+              <CardContent className="bg-secondary/20 border-t border-border/60 p-4 sm:p-6 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  {/* Left: Bill metadata & credit breakdown */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-foreground">
+                        {selectedSupplier ? selectedSupplier.name : "No Supplier Selected"}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground font-code">
+                        • {billingDate}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      {isCredit ? (
+                        <>
+                          <Badge variant="outline" className="border-amber-500/50 bg-amber-500/10 text-amber-500 font-bold">
+                            Paid: ₹{numPaid.toLocaleString()}
+                          </Badge>
+                          <Badge variant="outline" className="border-amber-500/60 bg-amber-500/20 text-amber-400 font-bold">
+                            Balance Due: ₹{balanceDue.toLocaleString()} (Credit)
+                          </Badge>
+                        </>
+                      ) : (
+                        <Badge variant="outline" className="border-emerald-500/50 bg-emerald-500/10 text-emerald-400 font-bold">
+                          ✓ Fully Paid (₹{numPaid.toLocaleString()})
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Right: Bill Total & Big Commit Entry Button */}
+                  <div className="flex flex-wrap items-center justify-between sm:justify-end gap-4 sm:gap-6 pt-2 sm:pt-0 border-t sm:border-t-0 border-border/30">
+                    <div className="text-left sm:text-right">
+                      <p className="text-[10px] uppercase font-bold tracking-widest text-muted-foreground">Bill Total</p>
+                      <p className="text-2xl sm:text-3xl font-code font-bold text-accent">₹{total.toLocaleString()}</p>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        className="rounded-xl font-bold uppercase tracking-wider text-[10px] h-11 px-4"
+                        onClick={() => setPurchaseItems([])}
+                      >
+                        Clear
+                      </Button>
+                      <Button
+                        onClick={handleComplete}
+                        className="bg-accent text-accent-foreground font-bold px-6 sm:px-8 rounded-xl shadow-lg shadow-accent/25 h-11 text-sm sm:text-base hover:brightness-110 transition-all"
+                        disabled={purchaseItems.length === 0 || !selectedSupplier || isSubmitting}
+                      >
+                        {isSubmitting ? (
+                          <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                        ) : (
+                          <Save className="w-5 h-5 mr-2" />
+                        )}
+                        Commit Entry
+                      </Button>
+                    </div>
+                  </div>
                 </div>
               </CardContent>
             )}
