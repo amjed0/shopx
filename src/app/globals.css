@@ -4,6 +4,7 @@
 
 @layer base {
   :root {
+    color-scheme: dark;
     --background: 226 23% 8%;
     --foreground: 210 40% 98%;
     --card: 226 23% 10%;
@@ -49,6 +50,9 @@
   body {
     @apply bg-background text-foreground;
     font-feature-settings: "rlig" 1, "calt" 1;
+  }
+  input, textarea, select {
+    color: hsl(var(--foreground));
   }
 }
 

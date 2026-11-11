@@ -888,7 +888,8 @@ export default function NewPurchasePage() {
                 <Input
                   type="number"
                   placeholder={`Full amount ₹${total}`}
-                  className="h-8 mt-1 text-xs bg-background border-border/50 font-bold"
+                  style={{ color: '#ffffff', backgroundColor: '#1a2232' }}
+                  className="h-9 mt-1 text-xs border border-slate-600 font-bold rounded-lg"
                   value={paidAmount}
                   onChange={e => setPaidAmount(e.target.value)}
                 />
@@ -962,7 +963,8 @@ export default function NewPurchasePage() {
                             <Input
                               type="number"
                               min={1}
-                              className="h-8 text-xs bg-background border border-border/80 text-foreground font-bold text-center rounded-lg shadow-sm focus:border-accent"
+                              style={{ color: '#ffffff', backgroundColor: '#1a2232' }}
+                              className="h-9 text-xs border border-slate-600 font-bold text-center rounded-lg shadow-sm focus:border-cyan-400"
                               value={item.quantity ?? ""}
                               onChange={e => updateItem(item.productId, "quantity", e.target.value === "" ? "" : Number(e.target.value))}
                             />
@@ -973,7 +975,8 @@ export default function NewPurchasePage() {
                               type="number"
                               min={0}
                               step="any"
-                              className="h-8 text-xs bg-background border border-border/80 text-amber-500 dark:text-amber-400 font-bold text-right font-code rounded-lg shadow-sm focus:border-accent"
+                              style={{ color: '#fbbf24', backgroundColor: '#1a2232' }}
+                              className="h-9 text-xs border border-slate-600 font-bold text-right font-code rounded-lg shadow-sm focus:border-amber-400"
                               value={item.purchasePrice ?? ""}
                               onChange={e => updateItem(item.productId, "purchasePrice", e.target.value === "" ? "" : Number(e.target.value))}
                             />
@@ -987,7 +990,8 @@ export default function NewPurchasePage() {
                               type="number"
                               min={0}
                               step="any"
-                              className="h-8 text-xs bg-background border border-border/80 text-emerald-500 dark:text-emerald-400 font-bold text-right font-code rounded-lg shadow-sm focus:border-emerald-500"
+                              style={{ color: '#34d399', backgroundColor: '#1a2232' }}
+                              className="h-9 text-xs border border-slate-600 font-bold text-right font-code rounded-lg shadow-sm focus:border-emerald-400"
                               value={item.sellingPrice ?? ""}
                               onChange={e => updateItem(item.productId, "sellingPrice", e.target.value === "" ? "" : Number(e.target.value))}
                             />
@@ -997,7 +1001,8 @@ export default function NewPurchasePage() {
                             <Input
                               type="number"
                               min={0}
-                              className="h-8 text-xs bg-background border border-border/80 text-foreground font-bold text-center rounded-lg shadow-sm focus:border-accent"
+                              style={{ color: '#ffffff', backgroundColor: '#1a2232' }}
+                              className="h-9 text-xs border border-slate-600 font-bold text-center rounded-lg shadow-sm focus:border-cyan-400"
                               value={item.minStock ?? ""}
                               onChange={e => updateItem(item.productId, "minStock", e.target.value === "" ? "" : Number(e.target.value))}
                             />
@@ -1083,7 +1088,8 @@ export default function NewPurchasePage() {
                           <Input
                             type="number"
                             min={1}
-                            className="h-8 text-xs bg-background border border-border/80 text-foreground font-bold text-center rounded-lg shadow-sm focus:border-accent focus:ring-1 focus:ring-accent"
+                            style={{ color: '#ffffff', backgroundColor: '#1a2232' }}
+                            className="h-9 px-2 text-xs border border-slate-600 font-bold text-center rounded-lg shadow-sm focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400"
                             value={item.quantity ?? ""}
                             onChange={e => updateItem(item.productId, "quantity", e.target.value === "" ? "" : Number(e.target.value))}
                           />
@@ -1095,7 +1101,8 @@ export default function NewPurchasePage() {
                             type="number"
                             min={0}
                             step="any"
-                            className="h-8 text-xs bg-background border border-border/80 text-amber-500 dark:text-amber-400 font-bold text-right font-code rounded-lg shadow-sm focus:border-accent focus:ring-1 focus:ring-accent"
+                            style={{ color: '#fbbf24', backgroundColor: '#1a2232' }}
+                            className="h-9 px-2 text-xs border border-slate-600 font-bold text-right font-code rounded-lg shadow-sm focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
                             value={item.purchasePrice ?? ""}
                             onChange={e => updateItem(item.productId, "purchasePrice", e.target.value === "" ? "" : Number(e.target.value))}
                           />
@@ -1107,7 +1114,8 @@ export default function NewPurchasePage() {
                             type="number"
                             min={0}
                             step="any"
-                            className="h-8 text-xs bg-background border border-border/80 text-emerald-500 dark:text-emerald-400 font-bold text-right font-code rounded-lg shadow-sm focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                            style={{ color: '#34d399', backgroundColor: '#1a2232' }}
+                            className="h-9 px-2 text-xs border border-slate-600 font-bold text-right font-code rounded-lg shadow-sm focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400"
                             value={item.sellingPrice ?? ""}
                             onChange={e => updateItem(item.productId, "sellingPrice", e.target.value === "" ? "" : Number(e.target.value))}
                           />
@@ -1118,7 +1126,8 @@ export default function NewPurchasePage() {
                           <Input
                             type="number"
                             min={0}
-                            className="h-8 text-xs bg-background border border-border/80 text-foreground font-bold text-center rounded-lg shadow-sm focus:border-accent focus:ring-1 focus:ring-accent"
+                            style={{ color: '#ffffff', backgroundColor: '#1a2232' }}
+                            className="h-9 px-2 text-xs border border-slate-600 font-bold text-center rounded-lg shadow-sm focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400"
                             value={item.minStock ?? ""}
                             onChange={e => updateItem(item.productId, "minStock", e.target.value === "" ? "" : Number(e.target.value))}
                           />
