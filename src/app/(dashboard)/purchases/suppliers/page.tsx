@@ -95,7 +95,12 @@ export default function SuppliersPage() {
         }
 
         const data = await res.json()
-        setPurchaseHistory(data)
+        const sorted = (Array.isArray(data) ? data : []).sort((a: any, b: any) => {
+          const dateA = a.billingDate || a.createdAt || ""
+          const dateB = b.billingDate || b.createdAt || ""
+          return dateB.localeCompare(dateA)
+        })
+        setPurchaseHistory(sorted)
       } catch (err) {
         console.error(err)
         toast({ title: "Error", description: "Could not load purchase history.", variant: "destructive" })

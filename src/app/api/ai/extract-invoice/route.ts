@@ -27,10 +27,11 @@ export async function POST(request: Request) {
 
 For EACH product item found, extract:
 - "name": Product name (as written on the bill)
+- "itemCode": Item Code, SKU, Product Code, HSN code, or Part No if printed on the bill (null if not shown)
 - "quantity": Number of units purchased (default to 1 if not clear)
 - "purchasePrice": Price per unit in INR (if only total is given, divide by quantity)
-- "sellingPrice": MRP or selling price per unit if visible (null if not shown)
-- "category": Best guess category (e.g. "Electronics", "Grocery", "Hardware", "Clothing", "Auto Parts", "Stationery", "Medicine", etc.)
+- "sellingPrice": MRP or retail selling price per unit if visible (null if not shown)
+- "category": Accurate category based on product type (e.g. "Electronics", "Groceries", "Hardware", "Clothing", "Auto Parts", "Stationery", "Medicine", "Retail", "General", etc.)
 
 Also extract these invoice-level details if visible:
 - "supplierName": Name of the supplier/vendor/shop on the bill
@@ -45,19 +46,21 @@ Also extract these invoice-level details if visible:
 IMPORTANT RULES:
 1. Extract ALL line items, even if partially visible
 2. Prices should be numbers only (no currency symbols)
-3. If a field is not readable, use null
-4. For handwritten bills, do your best to read the text
-5. Return valid JSON only, no markdown formatting
+3. If an item code / SKU is present in a code, item no, or HSN column, put it in "itemCode"
+4. If a field is not readable, use null
+5. For handwritten bills, do your best to read the text
+6. Return valid JSON only, no markdown formatting
 
 Return ONLY this JSON structure:
 {
   "items": [
     {
       "name": "Product Name",
+      "itemCode": "ITM-001 or SKU or null",
       "quantity": 1,
       "purchasePrice": 100,
       "sellingPrice": 150,
-      "category": "Category"
+      "category": "Electronics"
     }
   ],
   "supplierName": "Vendor Name or null",

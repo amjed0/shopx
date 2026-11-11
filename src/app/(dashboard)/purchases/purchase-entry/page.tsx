@@ -25,6 +25,7 @@ import {
   Sparkles,
   TrendingUp,
   Edit2,
+  Layers,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -362,35 +363,55 @@ export default function NewPurchasePage() {
       }
     }
 
-    // 3. Process scanned items
+    // 3. Process scanned items with Item Code / SKU matching & category auto-selection
     const newItems: PurchaseItem[] = []
 
     for (const item of result.items) {
-      const existing = products.find(
-        p => p.name.toLowerCase().trim() === item.name.toLowerCase().trim() ||
-             p.name.toLowerCase().includes(item.name.toLowerCase()) ||
-             item.name.toLowerCase().includes(p.name.toLowerCase())
-      )
+      const scannedCode = (item.itemCode || item.sku || item.code || "").trim().toLowerCase()
+      const scannedName = (item.name || "").trim().toLowerCase()
+
+      // Match against existing inventory:
+      // 1. Direct Item Code == Existing SKU match
+      // 2. Exact product name match
+      // 3. Clean alphanumeric string match
+      const existing = products.find(p => {
+        const pSku = (p.sku || "").trim().toLowerCase()
+        const pName = (p.name || "").trim().toLowerCase()
+        if (scannedCode && pSku && scannedCode === pSku) return true
+        if (scannedName && pName && scannedName === pName) return true
+        const cleanP = pName.replace(/[^a-z0-9]/g, "")
+        const cleanS = scannedName.replace(/[^a-z0-9]/g, "")
+        if (cleanP && cleanS && cleanP.length > 3 && cleanS.length > 3 && (cleanP === cleanS || cleanP.includes(cleanS) || cleanS.includes(cleanP))) return true
+        return false
+      })
+
+      // Add auto-detected category to list if present
+      if (item.category && item.category.trim()) {
+        const catClean = item.category.trim()
+        setCustomCategories(prev => Array.from(new Set([...prev, catClean])))
+      }
 
       if (existing) {
+        // USE EXISTING PRODUCT: Keep existing name and existing SKU to prevent duplicates!
         newItems.push({
           productId: existing.id,
           productName: existing.name,
-          sku: existing.sku,
-          quantity: item.quantity,
-          purchasePrice: item.purchasePrice || existing.purchasePrice,
-          sellingPrice: item.sellingPrice || existing.sellingPrice || Math.round((item.purchasePrice || existing.purchasePrice) * 1.25),
+          sku: existing.sku || item.itemCode || generateSKU(),
+          quantity: item.quantity || 1,
+          purchasePrice: item.purchasePrice || existing.purchasePrice || 0,
+          sellingPrice: item.sellingPrice || existing.sellingPrice || Math.round((item.purchasePrice || existing.purchasePrice || 0) * 1.25),
           category: item.category || existing.category || "General",
           minStock: existing.minStock || 2,
           isNewProduct: false,
         })
       } else {
-        const tempSku = generateSKU()
+        // TRULY NEW PRODUCT: Use bill's item code as SKU if present
+        const itemSku = (item.itemCode || "").trim() || generateSKU()
         newItems.push({
           productId: `temp-${Math.random().toString(36).slice(2)}`,
           productName: item.name,
-          sku: tempSku,
-          quantity: item.quantity,
+          sku: itemSku,
+          quantity: item.quantity || 1,
           purchasePrice: item.purchasePrice || 0,
           sellingPrice: item.sellingPrice || Math.round((item.purchasePrice || 0) * 1.25),
           category: item.category || "General",
@@ -404,13 +425,18 @@ export default function NewPurchasePage() {
       setPurchaseItems(prev => {
         const merged = [...prev]
         for (const item of newItems) {
-          const idx = merged.findIndex(m => m.productName.toLowerCase() === item.productName.toLowerCase())
+          const idx = merged.findIndex(m =>
+            m.productId === item.productId ||
+            (m.sku && item.sku && m.sku.toLowerCase() === item.sku.toLowerCase()) ||
+            m.productName.toLowerCase() === item.productName.toLowerCase()
+          )
           if (idx >= 0) {
             merged[idx] = {
               ...merged[idx],
               quantity: Number(merged[idx].quantity || 0) + Number(item.quantity || 1),
               purchasePrice: item.purchasePrice || merged[idx].purchasePrice,
               sellingPrice: item.sellingPrice || merged[idx].sellingPrice,
+              category: item.category || merged[idx].category,
             }
           } else {
             merged.push(item)
@@ -423,6 +449,20 @@ export default function NewPurchasePage() {
         description: `Added ${newItems.length} product(s) to the acquisition sheet.`,
       })
     }
+  }
+
+  // Bulk Category Application: Change all products to a selected category in one click
+  const handleApplyCategoryToAll = (targetCategory?: string) => {
+    const cat = targetCategory || purchaseItems[0]?.category
+    if (!cat) {
+      toast({ variant: "destructive", title: "No Category", description: "Select a category first." })
+      return
+    }
+    setPurchaseItems(prev => prev.map(item => ({ ...item, category: cat })))
+    toast({
+      title: "Category Applied to All ✓",
+      description: `All ${purchaseItems.length} products changed to "${cat}".`,
+    })
   }
 
   // Save new supplier from scanned prompt
@@ -520,8 +560,37 @@ export default function NewPurchasePage() {
       for (const item of purchaseItems) {
         let finalProductId = item.productId
 
-        const existing = products.find(p => p.id === item.productId || p.name.toLowerCase() === item.productName.toLowerCase())
-        if (!existing || item.isNewProduct || item.productId.startsWith("temp-")) {
+        // Strict de-duplication: match by existing ID, or matching SKU / Item Code, or matching product name
+        const itemSku = (item.sku || "").trim().toLowerCase()
+        const itemName = (item.productName || "").trim().toLowerCase()
+
+        const existing = products.find(p => {
+          if (p.id === item.productId) return true
+          const pSku = (p.sku || "").trim().toLowerCase()
+          if (itemSku && pSku && itemSku === pSku) return true
+          const pName = (p.name || "").trim().toLowerCase()
+          if (itemName && pName && itemName === pName) return true
+          return false
+        })
+
+        if (existing) {
+          // EXISTING PRODUCT: Update stock, latest MRP, latest cost, and keep same SKU/title to prevent duplicates!
+          finalProductId = existing.id
+          const patchRes = await fetch(`/api/products/${existing.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json", "x-user-id": user.uid },
+            credentials: "include",
+            body: JSON.stringify({
+              stock: Number(existing.stock || 0) + Number(item.quantity),
+              purchasePrice: Number(item.purchasePrice),
+              sellingPrice: Number(item.sellingPrice), // Update latest MRP
+              category: item.category || existing.category,
+              minStock: Number(item.minStock || existing.minStock || 2),
+            }),
+          })
+          if (!patchRes.ok) throw new Error(`Failed updating ${item.productName}`)
+        } else {
+          // TRULY NEW PRODUCT: Create once in inventory
           const createRes = await fetch("/api/products", {
             method: "POST",
             headers: { "Content-Type": "application/json", "x-user-id": user.uid },
@@ -540,23 +609,9 @@ export default function NewPurchasePage() {
           if (!createRes.ok) throw new Error(`Failed to create product ${item.productName}`)
           const created = await createRes.json()
           finalProductId = created.id || created._id
-        } else {
-          finalProductId = existing.id
-          const patchRes = await fetch(`/api/products/${existing.id}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json", "x-user-id": user.uid },
-            credentials: "include",
-            body: JSON.stringify({
-              stock: Number(existing.stock || 0) + Number(item.quantity),
-              purchasePrice: Number(item.purchasePrice),
-              sellingPrice: Number(item.sellingPrice),
-              category: item.category,
-              minStock: Number(item.minStock || 2),
-            }),
-          })
-          if (!patchRes.ok) throw new Error(`Failed updating ${item.productName}`)
         }
 
+        // Always save the exact purchase price and billing date in Purchase History
         const purchaseRes = await fetch("/api/purchases", {
           method: "POST",
           headers: { "Content-Type": "application/json", "x-user-id": user.uid },
@@ -566,7 +621,7 @@ export default function NewPurchasePage() {
             productId: finalProductId,
             productName: item.productName,
             quantity: Number(item.quantity),
-            purchasePrice: Number(item.purchasePrice),
+            purchasePrice: Number(item.purchasePrice), // Exactly preserved historical purchase cost
             billingDate,
           }),
         })
@@ -1023,7 +1078,23 @@ export default function NewPurchasePage() {
                 <TableRow className="border-border/50 hover:bg-transparent">
                   <TableHead className="w-10 text-center text-[10px] font-bold uppercase py-3 px-2">#</TableHead>
                   <TableHead className="text-[10px] font-bold uppercase py-3 px-2 min-w-[180px]">Item Name</TableHead>
-                  <TableHead className="w-[160px] text-[10px] font-bold uppercase py-3 px-2">Category</TableHead>
+                  <TableHead className="w-[190px] text-[10px] font-bold uppercase py-3 px-2">
+                    <div className="flex items-center justify-between">
+                      <span>Category</span>
+                      {purchaseItems.length > 0 && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-5 px-1.5 text-[9px] text-accent font-bold hover:bg-accent/10 tracking-normal"
+                          onClick={() => handleApplyCategoryToAll(purchaseItems[0]?.category)}
+                          title="Apply 1st item's category to all products"
+                        >
+                          <Layers className="w-2.5 h-2.5 mr-1" /> Apply 1st to All
+                        </Button>
+                      )}
+                    </div>
+                  </TableHead>
                   <TableHead className="w-[85px] text-[10px] font-bold uppercase py-3 px-2 text-center">Qty</TableHead>
                   <TableHead className="w-[115px] text-[10px] font-bold uppercase py-3 px-2 text-right">Cost (₹)</TableHead>
                   <TableHead className="w-[115px] text-[10px] font-bold uppercase py-3 px-2 text-right">MRP (₹)</TableHead>
@@ -1062,6 +1133,16 @@ export default function NewPurchasePage() {
                             {categories.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                           </SelectContent>
                         </Select>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 shrink-0 hover:bg-accent/10 text-muted-foreground hover:text-accent"
+                          onClick={() => handleApplyCategoryToAll(item.category)}
+                          title={`Apply category "${item.category}" to all items`}
+                        >
+                          <Layers className="w-3.5 h-3.5" />
+                        </Button>
                         <Button
                           type="button"
                           variant="ghost"

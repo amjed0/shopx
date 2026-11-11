@@ -18,7 +18,7 @@ export async function GET(request: Request) {
     const query: any = { userId };
     if (supplierId) query.supplierId = supplierId;
 
-    const purchases = await Purchase.find(query).sort({ createdAt: -1 });
+    const purchases = await Purchase.find(query).sort({ billingDate: -1, createdAt: -1 });
 
     const result = purchases.map((p: any) => {
       const obj = p.toObject() as any;
