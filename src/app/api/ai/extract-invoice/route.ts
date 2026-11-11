@@ -60,8 +60,9 @@ Return ONLY this JSON structure:
   "totalAmount": 1500
 }`;
 
-    // Call Gemini API directly via REST
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+    // Call Gemini API directly via REST with gemini-3.8-flash
+    const model = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
     const geminiBody = {
       contents: [
