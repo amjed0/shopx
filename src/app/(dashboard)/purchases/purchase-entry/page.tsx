@@ -14,7 +14,8 @@ import {
   CheckCircle2,
   PlusCircle,
   RefreshCw,
-  X
+  X,
+  Sparkles
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -40,6 +41,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { useUser } from "@/app/auth/use-user"
+import { InvoiceScanner, ScanResult } from "@/components/purchases/invoice-scanner"
 
 interface Supplier {
   id: string
@@ -209,6 +211,101 @@ export default function NewPurchasePage() {
     }
   }
 
+  const handleScanComplete = async (result: ScanResult) => {
+    if (!user?.uid) return
+
+    // 1. If supplier detected and none selected, try to match existing supplier
+    if (result.supplierName && !selectedSupplier) {
+      const match = suppliers.find(
+        s => s.name.toLowerCase().includes(result.supplierName!.toLowerCase()) ||
+             result.supplierName!.toLowerCase().includes(s.name.toLowerCase())
+      )
+      if (match) {
+        setSelectedSupplier(match)
+        toast({ title: "Supplier Matched", description: `Selected ${match.name}` })
+      }
+    }
+
+    // 2. Process each scanned item
+    const newItems: PurchaseItem[] = []
+
+    for (const item of result.items) {
+      // Check if product already exists in products list
+      const existing = products.find(
+        p => p.name.toLowerCase().trim() === item.name.toLowerCase().trim() ||
+             p.name.toLowerCase().includes(item.name.toLowerCase()) ||
+             item.name.toLowerCase().includes(p.name.toLowerCase())
+      )
+
+      if (existing) {
+        // Use existing product
+        newItems.push({
+          productId: existing.id,
+          productName: existing.name,
+          sku: existing.sku,
+          quantity: item.quantity,
+          purchasePrice: item.purchasePrice || existing.purchasePrice,
+        })
+      } else {
+        // Auto-create product so it can be added to purchase
+        try {
+          const productData = {
+            name: item.name,
+            sku: generateSKU(),
+            category: item.category || "General",
+            purchasePrice: item.purchasePrice,
+            sellingPrice: Math.round(item.purchasePrice * 1.25), // 25% default markup
+            stock: 0,
+            minStock: 5,
+          }
+          const res = await fetch("/api/products", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-user-id": user.uid },
+            credentials: "include",
+            body: JSON.stringify(productData),
+          })
+          if (res.ok) {
+            const created = await res.json()
+            setProducts(prev => [created, ...prev])
+            newItems.push({
+              productId: created.id || created._id,
+              productName: created.name,
+              sku: created.sku,
+              quantity: item.quantity,
+              purchasePrice: item.purchasePrice,
+            })
+          }
+        } catch (err) {
+          console.error("Auto-create product failed:", err)
+        }
+      }
+    }
+
+    if (newItems.length > 0) {
+      // Merge with existing items or set
+      setPurchaseItems(prev => {
+        const merged = [...prev]
+        for (const item of newItems) {
+          const idx = merged.findIndex(m => m.productId === item.productId)
+          if (idx >= 0) {
+            merged[idx] = {
+              ...merged[idx],
+              quantity: merged[idx].quantity + item.quantity,
+              purchasePrice: item.purchasePrice || merged[idx].purchasePrice,
+            }
+          } else {
+            merged.push(item)
+          }
+        }
+        return merged
+      })
+      toast({
+        title: "Products Added ✨",
+        description: `Added ${newItems.length} product(s) to the acquisition sheet.`,
+      })
+    }
+  }
+
   const total = purchaseItems.reduce((acc, i) => acc + i.quantity * i.purchasePrice, 0)
 
   const handleComplete = async () => {
@@ -353,6 +450,9 @@ export default function NewPurchasePage() {
               )}
             </CardContent>
           </Card>
+
+          {/* AI Invoice Scanner */}
+          <InvoiceScanner onScanComplete={handleScanComplete} disabled={isSubmitting} />
 
           {/* Product Fast Add */}
           <Card className="border-none bg-card shadow-sm">
