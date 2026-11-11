@@ -17,6 +17,9 @@ export async function GET(
     }
     const obj = shop.toObject();
     obj.id = obj.userId;
+    if (!obj.businessCategory) {
+      obj.businessCategory = 'retail';
+    }
     return NextResponse.json(obj);
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -32,34 +35,45 @@ export async function POST(
     const { id } = await params;
     const data = await request.json();
 
-    // Validate required fields
-    if (!data.ownerName || !data.companyName) {
+    const existingShop = await Shop.findOne({ userId: id });
+
+    // Validate required fields only if creating a brand new profile
+    if (!existingShop && (!data.ownerName || !data.companyName)) {
       return NextResponse.json(
         { error: 'ownerName and companyName are required' },
         { status: 400 }
       );
     }
 
+    const updateFields: Record<string, any> = { userId: id };
+    if (data.ownerName !== undefined) updateFields.ownerName = data.ownerName;
+    if (data.companyName !== undefined) updateFields.companyName = data.companyName;
+    if (data.location !== undefined) updateFields.location = data.location;
+    if (data.phone !== undefined) updateFields.phone = data.phone;
+    if (data.email !== undefined) updateFields.email = data.email;
+    if (data.businessCategory !== undefined) updateFields.businessCategory = data.businessCategory;
+
     const shop = await Shop.findOneAndUpdate(
       { userId: id },
-      {
-        $set: {
-          userId:      id,
-          ownerName:   data.ownerName   || '',
-          companyName: data.companyName || '',
-          location:    data.location    || '',
-          phone:       data.phone       || '',
-          email:       data.email       || '',
-        },
-      },
+      { $set: updateFields },
       { new: true, upsert: true, runValidators: true }
     );
 
     const obj = shop.toObject();
     obj.id = obj.userId;
+    if (!obj.businessCategory) {
+      obj.businessCategory = 'retail';
+    }
     return NextResponse.json(obj);
   } catch (error: any) {
-    console.error('[shop_profile PUT]', error);
+    console.error('[shop_profile POST]', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+}
+
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  return POST(request, { params });
 }

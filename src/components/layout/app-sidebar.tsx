@@ -36,27 +36,7 @@ import { usePathname, useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import * as VisuallyHidden from "@radix-ui/react-visually-hidden"
 import { useSession, signOut } from "next-auth/react"
-
-interface ShopData {
-  ownerName?: string
-  companyName?: string
-}
-
-function useShop(userId: string | null): { data: ShopData | null; loading: boolean } {
-  const [data, setData] = React.useState<ShopData | null>(null)
-  const [loading, setLoading] = React.useState(true)
-
-  React.useEffect(() => {
-    if (!userId) { setLoading(false); return }
-    fetch(`/api/shop_profiles/${userId}`)
-      .then((r) => r.ok ? r.json() : null)
-      .then((json) => setData(json ?? null))
-      .catch(() => setData(null))
-      .finally(() => setLoading(false))
-  }, [userId])
-
-  return { data, loading }
-}
+import { useShop } from "@/hooks/useShop"
 
 const navigation = [
   {
@@ -128,7 +108,7 @@ export function AppSidebar() {
   const { data: session, status } = useSession()
 
   const userId = session?.user?.id ?? null
-  const { data: shopData, loading: shopLoading } = useShop(userId)
+  const { data: shopData, loading: shopLoading, isVehicleDealer } = useShop(userId)
 
   const isLoading = status === "loading" || shopLoading
 
@@ -250,9 +230,16 @@ export function AppSidebar() {
                     <span className="truncate font-bold text-foreground">
                       {shopData?.ownerName || ""}
                     </span>
-                    <span className="truncate text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
-                      {shopData?.companyName || ""}
-                    </span>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="truncate text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
+                        {shopData?.companyName || ""}
+                      </span>
+                      {isVehicleDealer && (
+                        <span className="text-[9px] px-1 py-0 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold shrink-0">
+                          Dealer
+                        </span>
+                      )}
+                    </div>
                   </>
                 )}
               </div>

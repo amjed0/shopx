@@ -16,6 +16,8 @@ import {
   Pencil,
   Loader2,
   Trash2,
+  FileText,
+  StickyNote,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -50,6 +52,18 @@ import {
 import { cn } from "@/lib/utils"
 import { useUser } from "@/app/auth/use-user"
 import { useSocket } from "@/hooks/useSocket"
+import { useShop } from "@/hooks/useShop"
+import { ProductNotesDialog } from "@/components/inventory/product-notes-dialog"
+
+export interface ProductNote {
+  id: string;
+  title: string;
+  content: string;
+  category?: string;
+  dueDate?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
 
 export interface Product {
   id: string;
@@ -62,10 +76,13 @@ export interface Product {
   minStock: number;
   supplierId?: string;
   supplierName?: string;
+  notes?: ProductNote[];
+  remarks?: string;
 }
 
 export default function InventoryPage() {
   const { user } = useUser()
+  const { isVehicleDealer } = useShop(user?.uid)
 
   // ── PRODUCTS STATE (from MongoDB API) ──
   const [products, setProducts] = React.useState<Product[]>([])
@@ -148,6 +165,20 @@ export default function InventoryPage() {
   const [isRenameDialogOpen, setIsRenameDialogOpen] = React.useState(false)
   const [categoryToRename, setCategoryToRename] = React.useState("")
   const [newCategoryName, setNewCategoryName] = React.useState("")
+
+  // Product Notes Dialog State
+  const [isNotesDialogOpen, setIsNotesDialogOpen] = React.useState(false)
+  const [productForNotes, setProductForNotes] = React.useState<Product | null>(null)
+
+  const handleOpenNotes = (product: Product) => {
+    setProductForNotes(product)
+    setIsNotesDialogOpen(true)
+  }
+
+  const handleProductUpdatedFromNotes = (updatedProduct: Product) => {
+    setProductForNotes(updatedProduct)
+    setProducts(prev => prev.map(p => p.id === updatedProduct.id ? updatedProduct : p))
+  }
 
   // ── SUPPLIER STATES ──
   const [suppliers, setSuppliers] = React.useState<{ id: string; name: string }[]>([])
@@ -651,7 +682,24 @@ export default function InventoryPage() {
                               </div>
                             </TableCell>
                             <TableCell className="text-right">
-                              <div className="flex justify-end gap-2">
+                              <div className="flex justify-end items-center gap-1.5">
+                                {isVehicleDealer && (
+                                  <Button 
+                                    variant="ghost" 
+                                    size="sm" 
+                                    className="rounded-full hover:bg-amber-500/10 hover:text-amber-600 gap-1.5 text-xs text-muted-foreground"
+                                    onClick={() => handleOpenNotes(p)}
+                                    title="View & Edit Notes"
+                                  >
+                                    <FileText className="w-3.5 h-3.5 text-amber-500" />
+                                    <span>Notes</span>
+                                    {p.notes && p.notes.length > 0 && (
+                                      <Badge variant="secondary" className="px-1.5 py-0 h-4 text-[10px] bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 font-bold">
+                                        {p.notes.length}
+                                      </Badge>
+                                    )}
+                                  </Button>
+                                )}
                                 <Button 
                                   variant="ghost" 
                                   size="sm" 
@@ -720,7 +768,12 @@ export default function InventoryPage() {
         <DialogContent className="sm:max-w-[425px]">
           {productToEdit && (
             <form onSubmit={handleEditProduct}>
-              <DialogHeader><DialogTitle>Edit Product: {productToEdit.name}</DialogTitle></DialogHeader>
+              <DialogHeader>
+                <DialogTitle>Edit Product: {productToEdit.name}</DialogTitle>
+                <DialogDescription className="sr-only">
+                  Update inventory details for {productToEdit.name}
+                </DialogDescription>
+              </DialogHeader>
               <div className="grid gap-4 py-4">
                 <div className="space-y-1">
                   <Label>Product Name</Label>
@@ -815,6 +868,17 @@ export default function InventoryPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Product Details & Notes Dialog (Only for Vehicle Dealers) */}
+      {isVehicleDealer && (
+        <ProductNotesDialog
+          open={isNotesDialogOpen}
+          onOpenChange={setIsNotesDialogOpen}
+          product={productForNotes}
+          userId={user?.uid}
+          onProductUpdate={handleProductUpdatedFromNotes}
+        />
+      )}
     </div>
   )
 }

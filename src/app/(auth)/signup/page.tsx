@@ -3,19 +3,29 @@
 import * as React from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { ShieldCheck, User, Building, MapPin, Mail, Lock, Phone, Key, ArrowRight, AlertCircle } from "lucide-react"
+import { ShieldCheck, User, Building, MapPin, Mail, Lock, Phone, Key, ArrowRight, AlertCircle, Car, Eye, EyeOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { toast } from "@/hooks/use-toast"
+import { cn } from "@/lib/utils"
 
-const SECURITY_CODE = "Shopx.shop@2026/2003#"
+const PRIMARY_SECURITY_CODE = "AmjedShopxsecretkey@2026"
+
+const VALID_SECURITY_CODES = [
+  process.env.NEXT_PUBLIC_SECURITY_CODE,
+  PRIMARY_SECURITY_CODE,
+  "Shopx.shop@2026/2003#",
+]
+  .filter(Boolean)
+  .map((c) => c!.trim())
 
 export default function SignupPage() {
   const router = useRouter()
   const [isLoading, setIsLoading] = React.useState(false)
   const [securityCode, setSecurityCode] = React.useState("")
+  const [showSecurityCode, setShowSecurityCode] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
 
   const [formData, setFormData] = React.useState({
@@ -25,6 +35,7 @@ export default function SignupPage() {
     email: "",
     phone: "",
     password: "",
+    businessCategory: "retail",
   })
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -53,7 +64,10 @@ export default function SignupPage() {
       return
     }
 
-    if (securityCode !== SECURITY_CODE) {
+    const enteredCode = securityCode.trim()
+    const isCodeValid = VALID_SECURITY_CODES.includes(enteredCode)
+
+    if (!isCodeValid) {
       setError("Invalid security authorization code.")
       toast({
         variant: "destructive",
@@ -102,6 +116,7 @@ export default function SignupPage() {
           location: formData.shopPlace,
           phone: formData.phone,
           email: formData.email,
+          businessCategory: formData.businessCategory,
         }),
       })
 
@@ -184,6 +199,44 @@ export default function SignupPage() {
                     value={formData.companyName}
                     onChange={handleInputChange}
                   />
+                </div>
+              </div>
+
+              {/* Business Category Selection */}
+              <div className="space-y-2 sm:col-span-2">
+                <Label className="text-[10px] font-bold uppercase tracking-wider opacity-70">
+                  Business Category
+                </Label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setFormData((prev) => ({ ...prev, businessCategory: "retail" }))}
+                    className={cn(
+                      "flex flex-col items-center justify-center p-3 rounded-xl border-2 text-center transition-all gap-1 cursor-pointer",
+                      formData.businessCategory === "retail"
+                        ? "border-primary bg-primary/10 text-primary font-bold shadow-sm"
+                        : "border-border/60 bg-secondary/20 text-muted-foreground hover:border-border hover:text-foreground"
+                    )}
+                  >
+                    <Building className="w-5 h-5 mb-0.5" />
+                    <span className="text-sm font-semibold">Retail Shop</span>
+                    <span className="text-[10px] opacity-70 font-normal">Supermarket, Grocery & Retail</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setFormData((prev) => ({ ...prev, businessCategory: "vehicle_dealer" }))}
+                    className={cn(
+                      "flex flex-col items-center justify-center p-3 rounded-xl border-2 text-center transition-all gap-1 cursor-pointer",
+                      formData.businessCategory === "vehicle_dealer"
+                        ? "border-amber-500 bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold shadow-sm"
+                        : "border-border/60 bg-secondary/20 text-muted-foreground hover:border-border hover:text-foreground"
+                    )}
+                  >
+                    <Car className="w-5 h-5 mb-0.5" />
+                    <span className="text-sm font-semibold">Vehicle Dealers</span>
+                    <span className="text-[10px] opacity-70 font-normal">Bikes, Cars & Renewals</span>
+                  </button>
                 </div>
               </div>
 
@@ -292,13 +345,26 @@ export default function SignupPage() {
                   <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-accent" />
                   <Input
                     id="securityCode"
-                    type="password"
+                    type={showSecurityCode ? "text" : "password"}
                     placeholder="Enter Private Code"
-                    className="pl-10 h-11 bg-accent/10 border-none rounded-xl text-sm border border-accent/20 focus-visible:ring-accent"
+                    className="pl-10 pr-10 h-11 bg-accent/10 border-none rounded-xl text-sm border border-accent/20 focus-visible:ring-accent"
                     required
                     value={securityCode}
                     onChange={(e) => setSecurityCode(e.target.value)}
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowSecurityCode(!showSecurityCode)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-1 transition-colors"
+                    tabIndex={-1}
+                    title={showSecurityCode ? "Hide code" : "Show code"}
+                  >
+                    {showSecurityCode ? (
+                      <EyeOff className="w-4 h-4" />
+                    ) : (
+                      <Eye className="w-4 h-4" />
+                    )}
+                  </button>
                 </div>
               </div>
             </div>
