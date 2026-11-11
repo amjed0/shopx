@@ -68,8 +68,9 @@ export default function NewBillPage() {
 
   const [products, setProducts] = React.useState<Product[]>([])
   const [customers, setCustomers] = React.useState<Customer[]>([])
+  const [productSalesCount, setProductSalesCount] = React.useState<Record<string, number>>({})
 
-  // Fetch products and customers from MongoDB API
+  // Fetch products, customers and sales history for top-5 ranking
   React.useEffect(() => {
     if (!user?.uid) return
 
@@ -82,6 +83,26 @@ export default function NewBillPage() {
       .then(res => res.ok ? res.json() : [])
       .then((data: Customer[]) => setCustomers(Array.isArray(data) ? data : []))
       .catch(() => setCustomers([]))
+
+    fetch("/api/sales", { headers: { "x-user-id": user.uid } })
+      .then(res => res.ok ? res.json() : [])
+      .then((salesData: any[]) => {
+        if (Array.isArray(salesData)) {
+          const counts: Record<string, number> = {}
+          salesData.forEach(sale => {
+            if (Array.isArray(sale.items)) {
+              sale.items.forEach((item: any) => {
+                const pId = item.productId || item.product?.id
+                if (pId) {
+                  counts[pId] = (counts[pId] || 0) + (Number(item.quantity) || 1)
+                }
+              })
+            }
+          })
+          setProductSalesCount(counts)
+        }
+      })
+      .catch(() => setProductSalesCount({}))
   }, [user?.uid])
 
   useSocket((data) => {
@@ -103,9 +124,17 @@ export default function NewBillPage() {
     ? customers.filter(c => c.name.toLowerCase().includes(customerSearch.toLowerCase()) || c.phone.includes(customerSearch))
     : []
 
-  const displayProducts = productSearch.length > 0
-    ? products.filter(p => p.name.toLowerCase().includes(productSearch.toLowerCase()) || p.sku.toLowerCase().includes(productSearch.toLowerCase()))
-    : products
+  const displayProducts = React.useMemo(() => {
+    const q = productSearch.trim().toLowerCase()
+    if (q) {
+      return products
+        .filter(p => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q))
+        .slice(0, 5)
+    }
+    // No search query: pick top 5 best selling products (or fallback to any 5 products)
+    const sorted = [...products].sort((a, b) => (productSalesCount[b.id] || 0) - (productSalesCount[a.id] || 0))
+    return sorted.slice(0, 5)
+  }, [productSearch, products, productSalesCount])
 
   const addItem = (product: Product) => {
     const existing = billItems.find(item => item.product.id === product.id)
@@ -340,10 +369,17 @@ export default function NewBillPage() {
 
         {/* Product Search - larger square */}
         <Card className="lg:col-span-2 border-none shadow-sm">
-          <CardHeader className="pb-4">
+          <CardHeader className="pb-3 space-y-2">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input placeholder="Search inventory by name or SKU..." className="pl-9 bg-secondary/30 border-none rounded-xl h-11" value={productSearch} onChange={e => setProductSearch(e.target.value)} />
+            </div>
+            <div className="flex items-center justify-between text-xs text-muted-foreground px-1">
+              <span className="font-semibold uppercase tracking-wider text-[11px] text-accent flex items-center gap-1.5">
+                <Zap className="w-3.5 h-3.5" />
+                {productSearch ? "Search Results (Top 5)" : "🔥 Top 5 Best Selling Products"}
+              </span>
+              <span className="text-[10px] font-code">{displayProducts.length} items</span>
             </div>
           </CardHeader>
           <CardContent className="grid gap-3 sm:grid-cols-2 max-h-[320px] overflow-y-auto">

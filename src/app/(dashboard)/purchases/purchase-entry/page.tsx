@@ -21,7 +21,9 @@ import {
   Phone,
   Mail,
   MapPin,
-  UserCheck
+  UserCheck,
+  Sparkles,
+  TrendingUp,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -88,6 +90,7 @@ export default function NewPurchasePage() {
 
   const [suppliers, setSuppliers] = React.useState<Supplier[]>([])
   const [products, setProducts] = React.useState<Product[]>([])
+  const [productSalesCount, setProductSalesCount] = React.useState<Record<string, number>>({})
   const [selectedSupplier, setSelectedSupplier] = React.useState<Supplier | null>(null)
   const [supplierSearch, setSupplierSearch] = React.useState("")
   const [productSearch, setProductSearch] = React.useState("")
@@ -142,12 +145,32 @@ export default function NewPurchasePage() {
     const fetchAll = async () => {
       try {
         setLoadingData(true)
-        const [suppliersRes, productsRes] = await Promise.all([
+        const [suppliersRes, productsRes, salesRes] = await Promise.all([
           fetch("/api/suppliers", { headers, credentials: "include" }),
           fetch("/api/products", { headers, credentials: "include" }),
+          fetch("/api/sales", { headers, credentials: "include" }).catch(() => null),
         ])
         if (suppliersRes.ok) setSuppliers(await suppliersRes.json())
         if (productsRes.ok) setProducts(await productsRes.json())
+
+        // Calculate sales count per product to rank top sellers
+        if (salesRes && salesRes.ok) {
+          const salesData = await salesRes.json()
+          const counts: Record<string, number> = {}
+          if (Array.isArray(salesData)) {
+            salesData.forEach((s: any) => {
+              if (Array.isArray(s.items)) {
+                s.items.forEach((it: any) => {
+                  const pid = it.productId || it.product?.id
+                  if (pid) {
+                    counts[pid] = (counts[pid] || 0) + (Number(it.quantity) || 1)
+                  }
+                })
+              }
+            })
+          }
+          setProductSalesCount(counts)
+        }
       } catch (err) {
         console.error(err)
         toast({ variant: "destructive", title: "Failed to load data" })
@@ -163,6 +186,21 @@ export default function NewPurchasePage() {
     return list.length > 0 ? list : ["General", "Retail", "Electronics", "Groceries", "Spare Parts"]
   }, [products, customCategories])
 
+  // Fast Add Display Products: Exactly 5 items (Best Selling or Search Results)
+  const fastAddDisplayProducts = React.useMemo(() => {
+    const q = productSearch.trim().toLowerCase()
+    if (q) {
+      return products
+        .filter(p => !purchaseItems.some(i => i.productId === p.id))
+        .filter(p => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q))
+        .slice(0, 5)
+    }
+    // No search query: prioritize top selling products
+    const available = products.filter(p => !purchaseItems.some(i => i.productId === p.id))
+    const sorted = [...available].sort((a, b) => (productSalesCount[b.id] || 0) - (productSalesCount[a.id] || 0))
+    return sorted.slice(0, 5)
+  }, [productSearch, products, purchaseItems, productSalesCount])
+
   const quickSelectProducts = React.useMemo(() => {
     const q = quickSelectSearch.toLowerCase()
     if (!q) return []
@@ -172,13 +210,8 @@ export default function NewPurchasePage() {
   }, [products, quickSelectSearch])
 
   const filteredSuppliers = suppliers.filter(s =>
-    s.name.toLowerCase().includes(supplierSearch.toLowerCase())
-  )
-
-  const filteredProducts = products.filter(p =>
-    !purchaseItems.find(item => item.productId === p.id) &&
-    (p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
-     p.sku.toLowerCase().includes(productSearch.toLowerCase()))
+    s.name.toLowerCase().includes(supplierSearch.toLowerCase()) ||
+    (s.phone && s.phone.includes(supplierSearch))
   )
 
   const addItem = (product: {
@@ -235,7 +268,7 @@ export default function NewPurchasePage() {
       purchasePrice: Number(newProductForm.purchasePrice),
       sellingPrice: Number(newProductForm.sellingPrice),
       stock: Number(newProductForm.stock),
-      minStock: Number(newProductForm.minStock),
+      minStock: Number(newProductForm.minStock || 2),
     }
     try {
       const res = await fetch("/api/products", {
@@ -263,7 +296,7 @@ export default function NewPurchasePage() {
     }
   }
 
-  // Handle scanned AI invoice result
+  // Handle scanned AI invoice result with Smart Auto-Supplier Matching
   const handleScanComplete = async (result: ScanResult) => {
     if (!user?.uid) return
 
@@ -272,17 +305,40 @@ export default function NewPurchasePage() {
       setBillingDate(result.invoiceDate)
     }
 
-    // 2. Supplier Matching / Registration Prompt
+    // 2. Smart Supplier Matching: Normalize and match existing vendor
     if (result.supplierName && !selectedSupplier) {
-      const match = suppliers.find(
-        s => s.name.toLowerCase().includes(result.supplierName!.toLowerCase()) ||
-             result.supplierName!.toLowerCase().includes(s.name.toLowerCase())
-      )
+      const normalize = (str: string) =>
+        str
+          .toLowerCase()
+          .replace(/\b(ltd|limited|pvt|private|co|company|enterprises|enterprise|stores|store|traders|trader|agency|distributors|distributor|shop|corp|corporation)\b/g, "")
+          .replace(/[^a-z0-9]/g, "")
+          .trim()
+
+      const scannedNorm = normalize(result.supplierName)
+      const cleanPhone = (p?: string | null) => (p || "").replace(/\D/g, "").slice(-10)
+      const scannedPhone = cleanPhone(result.supplierPhone)
+
+      const match = suppliers.find(s => {
+        // Match by last 10 digits of mobile number if phone was extracted
+        if (scannedPhone && cleanPhone(s.phone) && scannedPhone === cleanPhone(s.phone)) {
+          return true
+        }
+        // Match by exact or normalized name
+        const sNorm = normalize(s.name)
+        if (sNorm && scannedNorm && (sNorm === scannedNorm || sNorm.includes(scannedNorm) || scannedNorm.includes(sNorm))) {
+          return true
+        }
+        return false
+      })
+
       if (match) {
         setSelectedSupplier(match)
-        toast({ title: "Supplier Matched", description: `Selected ${match.name}` })
+        toast({ 
+          title: "Supplier Auto-Selected ✓", 
+          description: `Matched existing vendor: ${match.name} (${match.phone})` 
+        })
       } else {
-        // Prompt to register new supplier with extracted details
+        // Only prompt to register new supplier if not matched in existing list
         setScannedSupplierForm({
           name: result.supplierName || "",
           contactPerson: result.supplierContactPerson || "",
@@ -298,7 +354,6 @@ export default function NewPurchasePage() {
     const newItems: PurchaseItem[] = []
 
     for (const item of result.items) {
-      // Check if product exists
       const existing = products.find(
         p => p.name.toLowerCase().trim() === item.name.toLowerCase().trim() ||
              p.name.toLowerCase().includes(item.name.toLowerCase()) ||
@@ -318,7 +373,6 @@ export default function NewPurchasePage() {
           isNewProduct: false,
         })
       } else {
-        // Will be registered as a new product in the sheet
         const tempSku = generateSKU()
         newItems.push({
           productId: `temp-${Math.random().toString(36).slice(2)}`,
@@ -412,11 +466,9 @@ export default function NewPurchasePage() {
     try {
       const supplierId = (selectedSupplier as any)._id || selectedSupplier.id
 
-      // 1. Process each item: create new product if needed, then update stock/prices & save purchase
       for (const item of purchaseItems) {
         let finalProductId = item.productId
 
-        // If product was temp/new or not found in DB, create it first
         const existing = products.find(p => p.id === item.productId || p.name.toLowerCase() === item.productName.toLowerCase())
         if (!existing || item.isNewProduct || item.productId.startsWith("temp-")) {
           const createRes = await fetch("/api/products", {
@@ -438,7 +490,6 @@ export default function NewPurchasePage() {
           const created = await createRes.json()
           finalProductId = created.id || created._id
         } else {
-          // Existing product: update stock, purchase price, selling price (MRP), category, minStock
           finalProductId = existing.id
           const patchRes = await fetch(`/api/products/${existing.id}`, {
             method: "PATCH",
@@ -449,13 +500,12 @@ export default function NewPurchasePage() {
               purchasePrice: Number(item.purchasePrice),
               sellingPrice: Number(item.sellingPrice),
               category: item.category,
-              minStock: Number(item.minStock),
+              minStock: Number(item.minStock || 2),
             }),
           })
           if (!patchRes.ok) throw new Error(`Failed updating ${item.productName}`)
         }
 
-        // Save Purchase Record (per product line item)
         const purchaseRes = await fetch("/api/purchases", {
           method: "POST",
           headers: { "Content-Type": "application/json", "x-user-id": user.uid },
@@ -474,7 +524,7 @@ export default function NewPurchasePage() {
         }
       }
 
-      // 2. If an upfront payment was made, record it to Supplier Payments & Cashbook
+      // Record upfront payment to SupplierPayments & Cashbook
       if (numPaid > 0) {
         try {
           await fetch("/api/supplier-payments", {
@@ -489,7 +539,6 @@ export default function NewPurchasePage() {
             }),
           })
 
-          // Also record cashbook expense entry
           await fetch("/api/cashbook", {
             method: "POST",
             headers: { "Content-Type": "application/json", "x-user-id": user.uid },
@@ -509,7 +558,7 @@ export default function NewPurchasePage() {
       }
 
       toast({ 
-        title: "Purchase Completed", 
+        title: "Purchase Completed ✓", 
         description: `Successfully processed ${purchaseItems.length} products.${isCredit ? ` Balance Due: ₹${balanceDue.toLocaleString()}` : ""}` 
       })
       router.push("/purchases/purchase-history")
@@ -522,638 +571,620 @@ export default function NewPurchasePage() {
   }
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
+    <div className="space-y-6 w-full max-w-full pb-10 animate-in fade-in duration-500">
 
-      {/* ── HEADER ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => router.back()} className="rounded-full shrink-0">
-            <ArrowLeft className="w-5 h-5" />
-          </Button>
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-headline font-bold">
-              Inward <span className="text-accent">Bulk Terminal</span>
-            </h1>
-            <p className="text-xs sm:text-sm text-muted-foreground">High-speed procurement sheet with AI scanning & credit tracking.</p>
-          </div>
-        </div>
-        <div className="flex gap-2 ml-11 sm:ml-0 shrink-0">
-          <Button
-            variant="outline"
-            className="rounded-xl font-bold uppercase tracking-wider text-[10px] h-8 sm:h-9"
-            onClick={() => setPurchaseItems([])}
-            disabled={purchaseItems.length === 0}
-          >
-            Clear
-          </Button>
-          <Button
-            onClick={handleComplete}
-            className="bg-accent text-accent-foreground font-bold px-4 sm:px-8 rounded-xl shadow-lg shadow-accent/20 h-8 sm:h-9 text-xs sm:text-sm"
-            disabled={purchaseItems.length === 0 || !selectedSupplier || isSubmitting}
-          >
-            {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
-            Commit Entry
-          </Button>
+      {/* ── 1. HEADER (Top buttons removed per user request) ── */}
+      <div className="flex items-center gap-3">
+        <Button variant="ghost" size="icon" onClick={() => router.back()} className="rounded-full shrink-0">
+          <ArrowLeft className="w-5 h-5" />
+        </Button>
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-headline font-bold">
+            Inward <span className="text-accent">Bulk Terminal</span>
+          </h1>
+          <p className="text-xs sm:text-sm text-muted-foreground">Sheet interface for procurement with AI scanning & credit tracking.</p>
         </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-4">
+      {/* ── 2. TOP CONTROLS ROW: 4 Responsive Cards Above the Acquisition Sheet ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 w-full">
 
-        {/* ── LEFT PANEL ── */}
-        <div className="lg:col-span-1 grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
+        {/* Card 1: Billing Date */}
+        <Card className="border-none bg-card shadow-sm flex flex-col justify-between">
+          <CardHeader className="pb-2 pt-4 px-4">
+            <CardTitle className="text-xs font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
+              <Calendar className="w-3.5 h-3.5 text-accent" /> Billing Date
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="px-4 pb-4 flex-1 flex flex-col justify-center">
+            <Input
+              type="date"
+              style={{ color: '#ffffff', backgroundColor: '#182030' }}
+              className="h-10 text-xs border border-slate-600 rounded-lg font-bold font-code"
+              value={billingDate}
+              onChange={e => setBillingDate(e.target.value)}
+            />
+          </CardContent>
+        </Card>
 
-          {/* Billing Date Card */}
-          <Card className="border-none bg-card shadow-sm">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-xs font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-                <Calendar className="w-4 h-4" /> Billing Date
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Input
-                type="date"
-                className="h-9 bg-secondary/30 border-none text-xs rounded-lg font-bold"
-                value={billingDate}
-                onChange={e => setBillingDate(e.target.value)}
-              />
-            </CardContent>
-          </Card>
-
-          {/* Supplier Selector */}
-          <Card className="border-none bg-card shadow-sm">
-            <CardHeader className="pb-3 flex flex-row items-center justify-between">
-              <CardTitle className="text-xs font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-                <Truck className="w-4 h-4" /> Supplier
-              </CardTitle>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 text-[10px] font-bold text-accent uppercase tracking-widest hover:bg-accent/10 px-1.5"
-                onClick={() => {
-                  setScannedSupplierForm({ name: "", contactPerson: "", phone: "", email: "", address: "" })
-                  setScannedSupplierOpen(true)
-                }}
-              >
-                <PlusCircle className="w-3 h-3 mr-1" /> New
-              </Button>
-            </CardHeader>
-            <CardContent>
-              {!selectedSupplier ? (
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                  <Input
-                    placeholder="Search vendor..."
-                    className="pl-9 h-9 bg-secondary/30 border-none text-xs rounded-lg"
-                    value={supplierSearch}
-                    onChange={e => setSupplierSearch(e.target.value)}
-                  />
-                  {supplierSearch && filteredSuppliers.length > 0 && (
-                    <div className="absolute top-full w-full bg-card border rounded-lg mt-2 z-50 shadow-2xl overflow-hidden max-h-48 overflow-y-auto">
-                      {filteredSuppliers.map(s => (
-                        <button
-                          key={s.id}
-                          className="w-full p-2.5 text-left hover:bg-secondary flex flex-col"
-                          onClick={() => { setSelectedSupplier(s); setSupplierSearch("") }}
-                        >
-                          <span className="font-bold text-xs">{s.name}</span>
-                          <span className="text-[10px] text-muted-foreground">{s.contactPerson} • {s.phone}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="p-3 bg-accent/10 rounded-lg border border-accent/20 group">
-                  <div className="flex justify-between items-start">
-                    <div className="min-w-0">
-                      <p className="font-bold text-sm truncate">{selectedSupplier.name}</p>
-                      <p className="text-[10px] text-muted-foreground">{selectedSupplier.phone || selectedSupplier.contactPerson}</p>
-                    </div>
-                    <Button
-                      variant="ghost" size="icon"
-                      className="h-6 w-6 text-destructive/50 hover:text-destructive shrink-0"
-                      onClick={() => setSelectedSupplier(null)}
-                    >
-                      <X className="w-3 h-3" />
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* AI Invoice Scanner */}
-          <InvoiceScanner onScanComplete={handleScanComplete} disabled={isSubmitting} />
-
-          {/* Product Fast Add */}
-          <Card className="border-none bg-card shadow-sm">
-            <CardHeader className="pb-3 flex flex-row items-center justify-between">
-              <CardTitle className="text-xs font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-                <Plus className="w-4 h-4" /> Fast Add
-              </CardTitle>
-              <Dialog open={isAddProductOpen} onOpenChange={(open) => {
-                setIsAddProductOpen(open)
-                if (!open) setQuickSelectSearch("")
-              }}>
-                <DialogTrigger asChild>
-                  <Button variant="ghost" size="sm" className="h-7 text-[10px] font-bold text-accent uppercase tracking-widest hover:bg-accent/10">
-                    <PlusCircle className="w-3 h-3 mr-1" /> New
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
-                  <form onSubmit={handleCreateNewProduct}>
-                    <DialogHeader>
-                      <DialogTitle className="text-xl font-bold">New Product Entry</DialogTitle>
-                    </DialogHeader>
-
-                    <div className="mt-4 mb-5 space-y-2">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Quick Select Existing</p>
-                      <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                        <Input
-                          placeholder="Search for common items..."
-                          className="pl-10 h-11 bg-secondary/30 border border-primary/30 rounded-xl focus:border-primary"
-                          value={quickSelectSearch}
-                          onChange={e => setQuickSelectSearch(e.target.value)}
-                        />
-                      </div>
-                      {quickSelectProducts.length > 0 && (
-                        <div className="rounded-xl border border-border/50 overflow-hidden">
-                          {quickSelectProducts.map(p => (
-                            <button
-                              key={p.id}
-                              type="button"
-                              className="w-full p-2.5 text-left hover:bg-secondary/50 flex justify-between items-center border-b border-border/30 last:border-0 transition-colors"
-                              onClick={() => handleQuickSelect(p)}
-                            >
-                              <div className="min-w-0">
-                                <p className="font-bold text-xs truncate">{p.name}</p>
-                                <p className="text-[10px] text-muted-foreground font-code">{p.sku}</p>
-                              </div>
-                              <Badge variant="outline" className="text-[9px] font-code shrink-0 ml-2">₹{p.purchasePrice}</Badge>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="h-px bg-border/50 mb-5" />
-
-                    <div className="grid gap-4">
-                      <div className="grid grid-cols-4 items-center gap-3">
-                        <Label className="text-right font-semibold text-sm">Name</Label>
-                        <Input
-                          className="col-span-3 h-10 bg-secondary/20 border-none rounded-lg"
-                          value={newProductForm.name}
-                          onChange={e => setNewProductForm({ ...newProductForm, name: e.target.value })}
-                          required
-                        />
-                      </div>
-                      <div className="grid grid-cols-4 items-center gap-3">
-                        <Label className="text-right font-semibold text-sm">SKU</Label>
-                        <div className="col-span-3 flex gap-2">
-                          <Input
-                            className="h-10 bg-secondary/20 border-none rounded-lg flex-1"
-                            value={newProductForm.sku}
-                            onChange={e => setNewProductForm({ ...newProductForm, sku: e.target.value })}
-                            required
-                          />
-                          <Button
-                            type="button" variant="outline" size="icon"
-                            className="h-10 w-10 rounded-lg border-border/50 shrink-0"
-                            onClick={() => setNewProductForm({ ...newProductForm, sku: generateSKU() })}
-                          >
-                            <RefreshCw className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-4 items-center gap-3">
-                        <Label className="text-right font-semibold text-sm">Category</Label>
-                        <div className="col-span-3 flex gap-2">
-                          {isNewCategoryMode ? (
-                            <Input
-                              placeholder="Category name"
-                              className="h-10 bg-secondary/20 border-none rounded-lg flex-1"
-                              value={newCategoryNameInput}
-                              onChange={e => setNewCategoryNameInput(e.target.value)}
-                              required
-                            />
-                          ) : (
-                            <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-                              <SelectTrigger className="h-10 bg-secondary/20 border-none rounded-lg flex-1">
-                                <SelectValue placeholder="Select" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {categories.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                              </SelectContent>
-                            </Select>
-                          )}
-                          <Button
-                            type="button" variant="outline" size="icon"
-                            className="h-10 w-10 rounded-lg border-border/50 shrink-0"
-                            onClick={() => setIsNewCategoryMode(!isNewCategoryMode)}
-                          >
-                            {isNewCategoryMode ? <X className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
-                          </Button>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4 mt-1">
-                        <div className="space-y-1.5">
-                          <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Purchase ₹</p>
-                          <Input
-                            type="number" placeholder="Cost"
-                            className="h-11 bg-secondary/20 border-none rounded-xl"
-                            value={newProductForm.purchasePrice}
-                            onChange={e => setNewProductForm({ ...newProductForm, purchasePrice: e.target.value })}
-                            required
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Selling ₹ (MRP)</p>
-                          <Input
-                            type="number" placeholder="Price"
-                            className="h-11 bg-secondary/20 border-none rounded-xl"
-                            value={newProductForm.sellingPrice}
-                            onChange={e => setNewProductForm({ ...newProductForm, sellingPrice: e.target.value })}
-                            required
-                          />
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-1.5">
-                          <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Stock QTY</p>
-                          <Input
-                            type="number" placeholder="Stock"
-                            className="h-11 bg-secondary/20 border-none rounded-xl"
-                            value={newProductForm.stock}
-                            onChange={e => setNewProductForm({ ...newProductForm, stock: e.target.value })}
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Alert Level</p>
-                          <Input
-                            type="number" placeholder="Min"
-                            className="h-11 bg-secondary/20 border-none rounded-xl"
-                            value={newProductForm.minStock}
-                            onChange={e => setNewProductForm({ ...newProductForm, minStock: e.target.value })}
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    <DialogFooter className="mt-6">
-                      <Button
-                        type="submit" disabled={isCreatingProduct}
-                        className="w-full h-12 rounded-full bg-primary text-primary-foreground font-bold text-base shadow-lg shadow-primary/20"
-                      >
-                        {isCreatingProduct && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
-                        Initialize Product
-                      </Button>
-                    </DialogFooter>
-                  </form>
-                </DialogContent>
-              </Dialog>
-            </CardHeader>
-            <CardContent className="space-y-4">
+        {/* Card 2: Supplier Selector */}
+        <Card className="border-none bg-card shadow-sm flex flex-col">
+          <CardHeader className="pb-2 pt-4 px-4 flex flex-row items-center justify-between">
+            <CardTitle className="text-xs font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
+              <Truck className="w-3.5 h-3.5 text-accent" /> Supplier
+            </CardTitle>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 text-[10px] font-bold text-accent uppercase tracking-widest hover:bg-accent/10 px-1.5"
+              onClick={() => {
+                setScannedSupplierForm({ name: "", contactPerson: "", phone: "", email: "", address: "" })
+                setScannedSupplierOpen(true)
+              }}
+            >
+              <PlusCircle className="w-3 h-3 mr-1" /> New
+            </Button>
+          </CardHeader>
+          <CardContent className="px-4 pb-4 flex-1 flex flex-col justify-center">
+            {!selectedSupplier ? (
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                 <Input
-                  placeholder="Find existing product..."
-                  className="pl-9 h-9 bg-secondary/30 border-none text-xs rounded-lg"
-                  value={productSearch}
-                  onChange={e => setProductSearch(e.target.value)}
+                  placeholder="Search vendor / phone..."
+                  className="pl-9 h-10 bg-secondary/30 border-none text-xs rounded-lg font-bold"
+                  value={supplierSearch}
+                  onChange={e => setSupplierSearch(e.target.value)}
                 />
+                {supplierSearch && filteredSuppliers.length > 0 && (
+                  <div className="absolute top-full left-0 right-0 bg-card border border-border/80 rounded-xl mt-2 z-50 shadow-2xl overflow-hidden max-h-48 overflow-y-auto">
+                    {filteredSuppliers.map(s => (
+                      <button
+                        key={s.id}
+                        type="button"
+                        className="w-full p-2.5 text-left hover:bg-secondary/60 flex flex-col border-b border-border/20 last:border-0 transition-colors"
+                        onClick={() => { setSelectedSupplier(s); setSupplierSearch("") }}
+                      >
+                        <span className="font-bold text-xs text-foreground">{s.name}</span>
+                        <span className="text-[11px] text-accent font-semibold mt-0.5">📞 {s.phone || "No phone"}</span>
+                        {s.contactPerson && (
+                          <span className="text-[10px] text-muted-foreground">{s.contactPerson}</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
-              {loadingData ? (
-                <div className="flex justify-center py-8">
-                  <Loader2 className="w-5 h-5 animate-spin text-accent opacity-50" />
+            ) : (
+              <div className="p-2.5 bg-accent/10 rounded-lg border border-accent/25">
+                <div className="flex justify-between items-start gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-bold text-xs text-foreground truncate">{selectedSupplier.name}</p>
+                    <p className="text-[11px] text-accent font-semibold mt-0.5">
+                      📞 {selectedSupplier.phone || "No phone added"}
+                    </p>
+                    {selectedSupplier.contactPerson && (
+                      <p className="text-[10px] text-muted-foreground truncate">
+                        Contact: {selectedSupplier.contactPerson}
+                      </p>
+                    )}
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 text-destructive/60 hover:text-destructive hover:bg-destructive/10 shrink-0"
+                    onClick={() => setSelectedSupplier(null)}
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </Button>
                 </div>
-              ) : (
-                <div className="space-y-1 max-h-[280px] lg:max-h-[350px] overflow-y-auto pr-1">
-                  {filteredProducts.map(p => (
-                    <button
-                      key={p.id}
-                      onClick={() => addItem(p)}
-                      className="w-full p-2 rounded-lg border border-transparent hover:border-accent/30 hover:bg-accent/5 flex justify-between items-center group transition-all"
-                    >
-                      <div className="text-left min-w-0">
-                        <p className="font-bold text-[11px] group-hover:text-accent truncate max-w-[140px]">{p.name}</p>
-                        <p className="text-[9px] text-muted-foreground font-code">{p.sku} • {p.category}</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Card 3: AI Invoice Scanner */}
+        <InvoiceScanner onScanComplete={handleScanComplete} disabled={isSubmitting} />
+
+        {/* Card 4: Fast Add Products (Only 5 Best Selling / Search Results) */}
+        <Card className="border-none bg-card shadow-sm flex flex-col">
+          <CardHeader className="pb-2 pt-4 px-4 flex flex-row items-center justify-between">
+            <CardTitle className="text-xs font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
+              <TrendingUp className="w-3.5 h-3.5 text-emerald-500" /> Fast Add (Top 5)
+            </CardTitle>
+            <Dialog open={isAddProductOpen} onOpenChange={(open) => {
+              setIsAddProductOpen(open)
+              if (!open) setQuickSelectSearch("")
+            }}>
+              <DialogTrigger asChild>
+                <Button variant="ghost" size="sm" className="h-6 text-[10px] font-bold text-accent uppercase tracking-widest hover:bg-accent/10 px-1.5">
+                  <PlusCircle className="w-3 h-3 mr-1" /> New
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
+                <form onSubmit={handleCreateNewProduct}>
+                  <DialogHeader>
+                    <DialogTitle className="text-xl font-bold">New Product Entry</DialogTitle>
+                  </DialogHeader>
+
+                  <div className="mt-4 mb-5 space-y-2">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Quick Select Existing</p>
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                      <Input
+                        placeholder="Search for common items..."
+                        className="pl-10 h-11 bg-secondary/30 border border-primary/30 rounded-xl focus:border-primary"
+                        value={quickSelectSearch}
+                        onChange={e => setQuickSelectSearch(e.target.value)}
+                      />
+                    </div>
+                    {quickSelectProducts.length > 0 && (
+                      <div className="rounded-xl border border-border/50 overflow-hidden">
+                        {quickSelectProducts.map(p => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            className="w-full p-2.5 text-left hover:bg-secondary/50 flex justify-between items-center border-b border-border/30 last:border-0 transition-colors"
+                            onClick={() => handleQuickSelect(p)}
+                          >
+                            <div className="min-w-0">
+                              <p className="font-bold text-xs truncate">{p.name}</p>
+                              <p className="text-[10px] text-muted-foreground font-code">{p.sku}</p>
+                            </div>
+                            <Badge variant="outline" className="text-[9px] font-code shrink-0 ml-2">₹{p.purchasePrice}</Badge>
+                          </button>
+                        ))}
                       </div>
-                      <Badge variant="outline" className="text-[8px] h-4 px-1 py-0 opacity-50 font-code shrink-0">₹{p.purchasePrice}</Badge>
-                    </button>
-                  ))}
-                  {productSearch && filteredProducts.length === 0 && (
-                    <p className="text-[10px] text-center py-4 text-muted-foreground italic">No products matched</p>
+                    )}
+                  </div>
+
+                  <div className="h-px bg-border/50 mb-5" />
+
+                  <div className="grid gap-4">
+                    <div className="grid grid-cols-4 items-center gap-3">
+                      <Label className="text-right font-semibold text-sm">Name</Label>
+                      <Input
+                        className="col-span-3 h-10 bg-secondary/20 border-none rounded-lg"
+                        value={newProductForm.name}
+                        onChange={e => setNewProductForm({ ...newProductForm, name: e.target.value })}
+                        required
+                      />
+                    </div>
+                    <div className="grid grid-cols-4 items-center gap-3">
+                      <Label className="text-right font-semibold text-sm">SKU</Label>
+                      <div className="col-span-3 flex gap-2">
+                        <Input
+                          className="h-10 bg-secondary/20 border-none rounded-lg flex-1"
+                          value={newProductForm.sku}
+                          onChange={e => setNewProductForm({ ...newProductForm, sku: e.target.value })}
+                          required
+                        />
+                        <Button
+                          type="button" variant="outline" size="icon"
+                          className="h-10 w-10 rounded-lg border-border/50 shrink-0"
+                          onClick={() => setNewProductForm({ ...newProductForm, sku: generateSKU() })}
+                        >
+                          <RefreshCw className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-4 items-center gap-3">
+                      <Label className="text-right font-semibold text-sm">Category</Label>
+                      <div className="col-span-3 flex gap-2">
+                        {isNewCategoryMode ? (
+                          <Input
+                            placeholder="Category name"
+                            className="h-10 bg-secondary/20 border-none rounded-lg flex-1"
+                            value={newCategoryNameInput}
+                            onChange={e => setNewCategoryNameInput(e.target.value)}
+                            required
+                          />
+                        ) : (
+                          <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+                            <SelectTrigger className="h-10 bg-secondary/20 border-none rounded-lg flex-1">
+                              <SelectValue placeholder="Select" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {categories.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                        )}
+                        <Button
+                          type="button" variant="outline" size="icon"
+                          className="h-10 w-10 rounded-lg border-border/50 shrink-0"
+                          onClick={() => setIsNewCategoryMode(!isNewCategoryMode)}
+                        >
+                          {isNewCategoryMode ? <X className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4 mt-1">
+                      <div className="space-y-1.5">
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Purchase ₹</p>
+                        <Input
+                          type="number" placeholder="Cost"
+                          className="h-11 bg-secondary/20 border-none rounded-xl"
+                          value={newProductForm.purchasePrice}
+                          onChange={e => setNewProductForm({ ...newProductForm, purchasePrice: e.target.value })}
+                          required
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Selling ₹ (MRP)</p>
+                        <Input
+                          type="number" placeholder="Price"
+                          className="h-11 bg-secondary/20 border-none rounded-xl"
+                          value={newProductForm.sellingPrice}
+                          onChange={e => setNewProductForm({ ...newProductForm, sellingPrice: e.target.value })}
+                          required
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Stock QTY</p>
+                        <Input
+                          type="number" placeholder="Stock"
+                          className="h-11 bg-secondary/20 border-none rounded-xl"
+                          value={newProductForm.stock}
+                          onChange={e => setNewProductForm({ ...newProductForm, stock: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Alert Level</p>
+                        <Input
+                          type="number" placeholder="Min"
+                          className="h-11 bg-secondary/20 border-none rounded-xl"
+                          value={newProductForm.minStock}
+                          onChange={e => setNewProductForm({ ...newProductForm, minStock: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <DialogFooter className="mt-6">
+                    <Button
+                      type="submit" disabled={isCreatingProduct}
+                      className="w-full h-12 rounded-full bg-primary text-primary-foreground font-bold text-base shadow-lg shadow-primary/20"
+                    >
+                      {isCreatingProduct && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
+                      Initialize Product
+                    </Button>
+                  </DialogFooter>
+                </form>
+              </DialogContent>
+            </Dialog>
+          </CardHeader>
+          <CardContent className="px-4 pb-4 space-y-2 flex-1 flex flex-col justify-between">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <Input
+                placeholder="Search or pick top 5..."
+                className="pl-8 h-8 bg-secondary/30 border-none text-xs rounded-lg"
+                value={productSearch}
+                onChange={e => setProductSearch(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1 max-h-[145px] overflow-y-auto pr-0.5">
+              {fastAddDisplayProducts.map(p => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => addItem(p)}
+                  className="w-full px-2 py-1.5 rounded-lg border border-transparent hover:border-accent/30 hover:bg-accent/5 flex justify-between items-center group transition-all text-left"
+                >
+                  <div className="min-w-0 pr-2">
+                    <p className="font-bold text-[11px] group-hover:text-accent truncate">{p.name}</p>
+                    <p className="text-[9px] text-muted-foreground font-code">{p.sku} • {p.category}</p>
+                  </div>
+                  <Badge variant="outline" className="text-[9px] font-code h-4 px-1 py-0 shrink-0">₹{p.purchasePrice}</Badge>
+                </button>
+              ))}
+              {fastAddDisplayProducts.length === 0 && (
+                <p className="text-[10px] text-center py-2 text-muted-foreground italic">No products available</p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+      </div>
+
+      {/* ── 3. ACQUISITION SHEET (FULL WIDTH under the top controls) ── */}
+      <Card className="border-none bg-card shadow-xl overflow-hidden w-full">
+        <CardHeader className="bg-secondary/20 border-b border-border/50 py-3 px-4 md:px-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2 md:gap-3 min-w-0">
+            <Calculator className="w-5 h-5 text-accent shrink-0" />
+            <div className="min-w-0">
+              <CardTitle className="text-base md:text-lg">Acquisition Sheet</CardTitle>
+              <CardDescription className="text-[10px] uppercase font-bold tracking-widest text-muted-foreground">
+                Bulk Editor with Category, MRP & Alert Level
+              </CardDescription>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <Badge variant="secondary" className="font-code text-xs py-1 px-3">
+              {purchaseItems.length} Product{purchaseItems.length === 1 ? "" : "s"}
+            </Badge>
+          </div>
+        </CardHeader>
+
+        {/* Credit / Payment Bar */}
+        <div className="bg-secondary/10 border-b border-border/30 px-4 py-3 grid grid-cols-1 sm:grid-cols-3 gap-3 items-center">
+          <div>
+            <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+              <CreditCard className="w-3.5 h-3.5" /> Amount Paid Now (₹)
+            </Label>
+            <Input
+              type="number"
+              placeholder={`Full amount ₹${total}`}
+              style={{ color: '#ffffff', backgroundColor: '#182030' }}
+              className="h-9 mt-1 text-xs border border-slate-600 font-bold rounded-lg font-code"
+              value={paidAmount}
+              onChange={e => setPaidAmount(e.target.value)}
+            />
+          </div>
+          <div>
+            <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Payment Mode</Label>
+            <Select value={paymentMode} onValueChange={setPaymentMode}>
+              <SelectTrigger className="h-9 mt-1 text-xs bg-background border-border/50">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Cash">Cash</SelectItem>
+                <SelectItem value="UPI">UPI</SelectItem>
+                <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
+                <SelectItem value="Card">Card</SelectItem>
+                <SelectItem value="Cheque">Cheque</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-end justify-start sm:justify-end gap-2 pt-1 sm:pt-0">
+            {isCredit ? (
+              <Badge variant="outline" className="border-amber-500/50 bg-amber-500/10 text-amber-400 font-bold py-1.5 px-3 text-xs">
+                Credit Bill • Balance: ₹{balanceDue.toLocaleString()}
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="border-emerald-500/50 bg-emerald-500/10 text-emerald-400 font-bold py-1.5 px-3 text-xs">
+                ✓ Fully Paid
+              </Badge>
+            )}
+          </div>
+        </div>
+
+        {/* ── Table (Unified Mobile & Desktop) ── */}
+        <CardContent className="p-0">
+          <div className="w-full overflow-x-auto">
+            <Table className="min-w-[780px] w-full">
+              <TableHeader className="bg-secondary/20 border-b border-border/50">
+                <TableRow className="border-border/50 hover:bg-transparent">
+                  <TableHead className="w-10 text-center text-[10px] font-bold uppercase py-3 px-2">#</TableHead>
+                  <TableHead className="text-[10px] font-bold uppercase py-3 px-2 min-w-[180px]">Item Name</TableHead>
+                  <TableHead className="w-[160px] text-[10px] font-bold uppercase py-3 px-2">Category</TableHead>
+                  <TableHead className="w-[85px] text-[10px] font-bold uppercase py-3 px-2 text-center">Qty</TableHead>
+                  <TableHead className="w-[115px] text-[10px] font-bold uppercase py-3 px-2 text-right">Cost (₹)</TableHead>
+                  <TableHead className="w-[115px] text-[10px] font-bold uppercase py-3 px-2 text-right">MRP (₹)</TableHead>
+                  <TableHead className="w-[85px] text-[10px] font-bold uppercase py-3 px-2 text-center">Alert Lvl</TableHead>
+                  <TableHead className="w-[110px] text-right text-[10px] font-bold uppercase py-3 px-2">Subtotal (₹)</TableHead>
+                  <TableHead className="w-10 py-3 px-2" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {purchaseItems.map((item, index) => (
+                  <TableRow key={item.productId} className="border-border/30 group hover:bg-secondary/10">
+                    <TableCell className="text-center font-code text-xs text-muted-foreground py-2.5 px-2">{index + 1}</TableCell>
+                    <TableCell className="py-2.5 px-2">
+                      <p className="font-bold text-xs text-foreground">{item.productName}</p>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className="font-code text-[10px] text-muted-foreground">{item.sku}</span>
+                        {item.isNewProduct && (
+                          <Badge className="text-[8px] bg-accent/20 text-accent hover:bg-accent/30 px-1 py-0 h-3.5">
+                            Auto Add
+                          </Badge>
+                        )}
+                      </div>
+                    </TableCell>
+
+                    {/* Category with inline selector + create */}
+                    <TableCell className="py-2.5 px-2">
+                      <div className="flex items-center gap-1 min-w-[140px]">
+                        <Select
+                          value={item.category}
+                          onValueChange={val => updateItem(item.productId, "category", val)}
+                        >
+                          <SelectTrigger className="h-9 text-xs bg-[#182030] border border-slate-600 text-foreground flex-1 rounded-lg">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {categories.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 shrink-0 hover:bg-accent/10 text-accent"
+                          onClick={() => {
+                            setInlineNewCategoryItemIndex(index)
+                            setInlineNewCategoryOpen(true)
+                          }}
+                          title="Create New Category"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    </TableCell>
+
+                    {/* Qty */}
+                    <TableCell className="py-2.5 px-2 text-center">
+                      <Input
+                        type="number"
+                        min={1}
+                        style={{ color: '#ffffff', backgroundColor: '#182030' }}
+                        className="w-16 h-9 px-2 text-xs border border-slate-600 font-bold text-center rounded-lg shadow-sm focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 mx-auto"
+                        value={item.quantity ?? ""}
+                        onChange={e => updateItem(item.productId, "quantity", e.target.value === "" ? "" : Number(e.target.value))}
+                      />
+                    </TableCell>
+
+                    {/* Purchase Price (Cost) */}
+                    <TableCell className="py-2.5 px-2 text-right">
+                      <Input
+                        type="number"
+                        min={0}
+                        step="any"
+                        style={{ color: '#fbbf24', backgroundColor: '#182030' }}
+                        className="w-24 h-9 px-2 text-xs border border-slate-600 font-bold text-right font-code rounded-lg shadow-sm focus:border-amber-400 focus:ring-1 focus:ring-amber-400 ml-auto"
+                        value={item.purchasePrice ?? ""}
+                        onChange={e => updateItem(item.productId, "purchasePrice", e.target.value === "" ? "" : Number(e.target.value))}
+                      />
+                    </TableCell>
+
+                    {/* MRP (Selling Price) */}
+                    <TableCell className="py-2.5 px-2 text-right">
+                      <Input
+                        type="number"
+                        min={0}
+                        step="any"
+                        style={{ color: '#34d399', backgroundColor: '#182030' }}
+                        className="w-24 h-9 px-2 text-xs border border-slate-600 font-bold text-right font-code rounded-lg shadow-sm focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 ml-auto"
+                        value={item.sellingPrice ?? ""}
+                        onChange={e => updateItem(item.productId, "sellingPrice", e.target.value === "" ? "" : Number(e.target.value))}
+                      />
+                    </TableCell>
+
+                    {/* Alert Level (minStock) */}
+                    <TableCell className="py-2.5 px-2 text-center">
+                      <Input
+                        type="number"
+                        min={0}
+                        style={{ color: '#ffffff', backgroundColor: '#182030' }}
+                        className="w-16 h-9 px-2 text-xs border border-slate-600 font-bold text-center rounded-lg shadow-sm focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 mx-auto"
+                        value={item.minStock ?? ""}
+                        onChange={e => updateItem(item.productId, "minStock", e.target.value === "" ? "" : Number(e.target.value))}
+                      />
+                    </TableCell>
+
+                    {/* Subtotal */}
+                    <TableCell className="py-2.5 px-2 text-right font-code font-bold text-foreground">
+                      ₹{((Number(item.quantity) || 0) * (Number(item.purchasePrice) || 0)).toLocaleString()}
+                    </TableCell>
+
+                    {/* Remove */}
+                    <TableCell className="py-2.5 px-2 text-center">
+                      <Button
+                        variant="ghost" size="icon"
+                        className="h-8 w-8 text-destructive/40 hover:text-destructive hover:bg-destructive/10"
+                        onClick={() => removeItem(item.productId)}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {purchaseItems.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={9} className="h-72 text-center">
+                      <div className="flex flex-col items-center justify-center opacity-30 gap-3">
+                        <Package className="w-12 h-12" />
+                        <div className="space-y-1">
+                          <p className="text-sm font-bold">Terminal Empty</p>
+                          <p className="text-xs">Scan an invoice with AI or pick from Fast Add.</p>
+                        </div>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )}
+
+                {/* Table Summary Row */}
+                {purchaseItems.length > 0 && (
+                  <TableRow className="bg-secondary/30 border-t-2 border-border/70 font-bold hover:bg-secondary/30">
+                    <TableCell colSpan={3} className="py-3 px-3 text-right text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                      Sheet Total ({purchaseItems.length} Products):
+                    </TableCell>
+                    <TableCell className="py-3 px-2 text-center text-xs font-bold text-foreground">
+                      {purchaseItems.reduce((acc, i) => acc + (Number(i.quantity) || 0), 0)}
+                    </TableCell>
+                    <TableCell colSpan={3} />
+                    <TableCell className="py-3 px-2 text-right font-code font-bold text-base text-accent">
+                      ₹{total.toLocaleString()}
+                    </TableCell>
+                    <TableCell />
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+
+        {/* ── 4. BOTTOM TOTALS & COMMIT ENTRY BAR ── */}
+        {purchaseItems.length > 0 && (
+          <CardContent className="bg-secondary/20 border-t border-border/60 p-4 sm:p-6 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              {/* Left: Supplier info & phone */}
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-bold text-foreground">
+                    {selectedSupplier ? selectedSupplier.name : "No Supplier Selected"}
+                  </span>
+                  {selectedSupplier?.phone && (
+                    <span className="text-xs text-accent font-semibold font-code">
+                      • 📞 {selectedSupplier.phone}
+                    </span>
+                  )}
+                  <span className="text-[10px] text-muted-foreground font-code">
+                    • {billingDate}
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  {isCredit ? (
+                    <>
+                      <Badge variant="outline" className="border-amber-500/50 bg-amber-500/10 text-amber-500 font-bold">
+                        Paid: ₹{numPaid.toLocaleString()}
+                      </Badge>
+                      <Badge variant="outline" className="border-amber-500/60 bg-amber-500/20 text-amber-400 font-bold">
+                        Balance Due: ₹{balanceDue.toLocaleString()} (Credit)
+                      </Badge>
+                    </>
+                  ) : (
+                    <Badge variant="outline" className="border-emerald-500/50 bg-emerald-500/10 text-emerald-400 font-bold">
+                      ✓ Fully Paid (₹{numPaid.toLocaleString()})
+                    </Badge>
                   )}
                 </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+              </div>
 
-        {/* ── RIGHT PANEL: Acquisition Sheet ── */}
-        <div className="lg:col-span-3 space-y-6">
-          <Card className="border-none bg-card shadow-xl overflow-hidden min-h-[300px]">
-            <CardHeader className="bg-secondary/20 border-b border-border/50 py-3 md:py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-2 md:gap-3 min-w-0">
-                <Calculator className="w-4 h-4 md:w-5 md:h-5 text-accent shrink-0" />
-                <div className="min-w-0">
-                  <CardTitle className="text-base md:text-lg">Acquisition Sheet</CardTitle>
-                  <CardDescription className="text-[10px] uppercase font-bold tracking-widest text-muted-foreground">
-                    Bulk Editor with Category, MRP & Alert Level
-                  </CardDescription>
+              {/* Right: Bill Total & Big Bottom Commit Entry Button */}
+              <div className="flex flex-wrap items-center justify-between sm:justify-end gap-4 sm:gap-6 pt-3 sm:pt-0 border-t sm:border-t-0 border-border/30">
+                <div className="text-left sm:text-right">
+                  <p className="text-[10px] uppercase font-bold tracking-widest text-muted-foreground">Bill Total</p>
+                  <p className="text-2xl sm:text-3xl font-code font-bold text-accent">₹{total.toLocaleString()}</p>
                 </div>
-              </div>
-              <div className="flex items-center gap-4 text-right">
-                <div>
-                  <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider mb-0.5">Bill Total</p>
-                  <p className="text-xl md:text-2xl font-code font-bold text-accent">₹{total.toLocaleString()}</p>
-                </div>
-                {isCredit && (
-                  <div className="pl-4 border-l border-border/50">
-                    <p className="text-[9px] font-bold text-amber-500 uppercase tracking-wider mb-0.5">Balance Due</p>
-                    <p className="text-xl md:text-2xl font-code font-bold text-amber-500">₹{balanceDue.toLocaleString()}</p>
-                  </div>
-                )}
-              </div>
-            </CardHeader>
 
-            {/* Credit / Payment Bar */}
-            <div className="bg-secondary/10 border-b border-border/30 px-4 py-3 grid grid-cols-1 sm:grid-cols-3 gap-3 items-center">
-              <div>
-                <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                  <CreditCard className="w-3.5 h-3.5" /> Amount Paid Now (₹)
-                </Label>
-                <Input
-                  type="number"
-                  placeholder={`Full amount ₹${total}`}
-                  style={{ color: '#ffffff', backgroundColor: '#1a2232' }}
-                  className="h-9 mt-1 text-xs border border-slate-600 font-bold rounded-lg"
-                  value={paidAmount}
-                  onChange={e => setPaidAmount(e.target.value)}
-                />
-              </div>
-              <div>
-                <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Payment Mode</Label>
-                <Select value={paymentMode} onValueChange={setPaymentMode}>
-                  <SelectTrigger className="h-8 mt-1 text-xs bg-background border-border/50">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Cash">Cash</SelectItem>
-                    <SelectItem value="UPI">UPI</SelectItem>
-                    <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
-                    <SelectItem value="Card">Card</SelectItem>
-                    <SelectItem value="Cheque">Cheque</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex items-end justify-start sm:justify-end gap-2 pt-1 sm:pt-0">
-                {isCredit ? (
-                  <Badge variant="outline" className="border-amber-500/50 bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold py-1 px-2.5 text-xs">
-                    Credit Bill • Balance: ₹{balanceDue.toLocaleString()}
-                  </Badge>
-                ) : (
-                  <Badge variant="outline" className="border-emerald-500/50 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold py-1 px-2.5 text-xs">
-                    Fully Paid
-                  </Badge>
-                )}
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="rounded-xl font-bold uppercase tracking-wider text-[10px] h-11 px-4"
+                    onClick={() => setPurchaseItems([])}
+                  >
+                    Clear
+                  </Button>
+                  <Button
+                    onClick={handleComplete}
+                    className="bg-accent text-accent-foreground font-bold px-6 sm:px-8 rounded-xl shadow-lg shadow-accent/25 h-11 text-sm sm:text-base hover:brightness-110 transition-all"
+                    disabled={purchaseItems.length === 0 || !selectedSupplier || isSubmitting}
+                  >
+                    {isSubmitting ? (
+                      <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                    ) : (
+                      <Save className="w-5 h-5 mr-2" />
+                    )}
+                    Commit Entry
+                  </Button>
+                </div>
               </div>
             </div>
-
-            <CardContent className="p-0">
-              {/* ── UNIFIED TABLE (Mobile & Desktop) ── */}
-              <div className="w-full overflow-x-auto">
-                <Table className="min-w-[760px] w-full">
-                  <TableHeader className="bg-secondary/20 border-b border-border/50">
-                    <TableRow className="border-border/50 hover:bg-transparent">
-                      <TableHead className="w-10 text-center text-[10px] font-bold uppercase py-3 px-2">#</TableHead>
-                      <TableHead className="text-[10px] font-bold uppercase py-3 px-2 min-w-[160px]">Item Name</TableHead>
-                      <TableHead className="w-[160px] text-[10px] font-bold uppercase py-3 px-2">Category</TableHead>
-                      <TableHead className="w-[85px] text-[10px] font-bold uppercase py-3 px-2 text-center">Qty</TableHead>
-                      <TableHead className="w-[115px] text-[10px] font-bold uppercase py-3 px-2 text-right">Cost (₹)</TableHead>
-                      <TableHead className="w-[115px] text-[10px] font-bold uppercase py-3 px-2 text-right">MRP (₹)</TableHead>
-                      <TableHead className="w-[85px] text-[10px] font-bold uppercase py-3 px-2 text-center">Alert Lvl</TableHead>
-                      <TableHead className="w-[110px] text-right text-[10px] font-bold uppercase py-3 px-2">Subtotal (₹)</TableHead>
-                      <TableHead className="w-10 py-3 px-2" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {purchaseItems.map((item, index) => (
-                      <TableRow key={item.productId} className="border-border/30 group hover:bg-secondary/10">
-                        <TableCell className="text-center font-code text-xs text-muted-foreground py-2.5 px-2">{index + 1}</TableCell>
-                        <TableCell className="py-2.5 px-2">
-                          <p className="font-bold text-xs text-foreground">{item.productName}</p>
-                          <div className="flex items-center gap-1.5 mt-0.5">
-                            <span className="font-code text-[10px] text-muted-foreground">{item.sku}</span>
-                            {item.isNewProduct && (
-                              <Badge className="text-[8px] bg-accent/20 text-accent hover:bg-accent/30 px-1 py-0 h-3.5">
-                                Auto Add
-                              </Badge>
-                            )}
-                          </div>
-                        </TableCell>
-
-                        {/* Category with inline selector + create */}
-                        <TableCell className="py-2.5 px-2">
-                          <div className="flex items-center gap-1 min-w-[140px]">
-                            <Select
-                              value={item.category}
-                              onValueChange={val => updateItem(item.productId, "category", val)}
-                            >
-                              <SelectTrigger className="h-9 text-xs bg-[#1a2232] border border-slate-600 text-foreground flex-1 rounded-lg">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {categories.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                              </SelectContent>
-                            </Select>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 shrink-0 hover:bg-accent/10 text-accent"
-                              onClick={() => {
-                                setInlineNewCategoryItemIndex(index)
-                                setInlineNewCategoryOpen(true)
-                              }}
-                              title="Create New Category"
-                            >
-                              <Plus className="w-3.5 h-3.5" />
-                            </Button>
-                          </div>
-                        </TableCell>
-
-                        {/* Qty */}
-                        <TableCell className="py-2.5 px-2 text-center">
-                          <Input
-                            type="number"
-                            min={1}
-                            style={{ color: '#ffffff', backgroundColor: '#1a2232' }}
-                            className="w-16 h-9 px-2 text-xs border border-slate-600 font-bold text-center rounded-lg shadow-sm focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 mx-auto"
-                            value={item.quantity ?? ""}
-                            onChange={e => updateItem(item.productId, "quantity", e.target.value === "" ? "" : Number(e.target.value))}
-                          />
-                        </TableCell>
-
-                        {/* Purchase Price (Cost) */}
-                        <TableCell className="py-2.5 px-2 text-right">
-                          <Input
-                            type="number"
-                            min={0}
-                            step="any"
-                            style={{ color: '#fbbf24', backgroundColor: '#1a2232' }}
-                            className="w-24 h-9 px-2 text-xs border border-slate-600 font-bold text-right font-code rounded-lg shadow-sm focus:border-amber-400 focus:ring-1 focus:ring-amber-400 ml-auto"
-                            value={item.purchasePrice ?? ""}
-                            onChange={e => updateItem(item.productId, "purchasePrice", e.target.value === "" ? "" : Number(e.target.value))}
-                          />
-                        </TableCell>
-
-                        {/* MRP (Selling Price) */}
-                        <TableCell className="py-2.5 px-2 text-right">
-                          <Input
-                            type="number"
-                            min={0}
-                            step="any"
-                            style={{ color: '#34d399', backgroundColor: '#1a2232' }}
-                            className="w-24 h-9 px-2 text-xs border border-slate-600 font-bold text-right font-code rounded-lg shadow-sm focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 ml-auto"
-                            value={item.sellingPrice ?? ""}
-                            onChange={e => updateItem(item.productId, "sellingPrice", e.target.value === "" ? "" : Number(e.target.value))}
-                          />
-                        </TableCell>
-
-                        {/* Alert Level (minStock) */}
-                        <TableCell className="py-2.5 px-2 text-center">
-                          <Input
-                            type="number"
-                            min={0}
-                            style={{ color: '#ffffff', backgroundColor: '#1a2232' }}
-                            className="w-16 h-9 px-2 text-xs border border-slate-600 font-bold text-center rounded-lg shadow-sm focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 mx-auto"
-                            value={item.minStock ?? ""}
-                            onChange={e => updateItem(item.productId, "minStock", e.target.value === "" ? "" : Number(e.target.value))}
-                          />
-                        </TableCell>
-
-                        {/* Subtotal */}
-                        <TableCell className="py-2.5 px-2 text-right font-code font-bold text-foreground">
-                          ₹{((Number(item.quantity) || 0) * (Number(item.purchasePrice) || 0)).toLocaleString()}
-                        </TableCell>
-
-                        {/* Remove */}
-                        <TableCell className="py-2.5 px-2 text-center">
-                          <Button
-                            variant="ghost" size="icon"
-                            className="h-8 w-8 text-destructive/40 hover:text-destructive hover:bg-destructive/10"
-                            onClick={() => removeItem(item.productId)}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {purchaseItems.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={9} className="h-72 text-center">
-                          <div className="flex flex-col items-center justify-center opacity-30 gap-3">
-                            <Package className="w-12 h-12" />
-                            <div className="space-y-1">
-                              <p className="text-sm font-bold">Terminal Empty</p>
-                              <p className="text-xs">Scan an invoice with AI or add products manually.</p>
-                            </div>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    )}
-
-                    {/* ── TABLE FOOTER SUMMARY ROW ── */}
-                    {purchaseItems.length > 0 && (
-                      <TableRow className="bg-secondary/30 border-t-2 border-border/70 font-bold hover:bg-secondary/30">
-                        <TableCell colSpan={3} className="py-3 px-3 text-right text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                          Total ({purchaseItems.length} Products):
-                        </TableCell>
-                        <TableCell className="py-3 px-2 text-center text-xs font-bold text-foreground">
-                          {purchaseItems.reduce((acc, i) => acc + (Number(i.quantity) || 0), 0)}
-                        </TableCell>
-                        <TableCell colSpan={3} />
-                        <TableCell className="py-3 px-2 text-right font-code font-bold text-base text-accent">
-                          ₹{total.toLocaleString()}
-                        </TableCell>
-                        <TableCell />
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
-            </CardContent>
-
-            {/* ── BOTTOM TOTALS & COMMIT ENTRY BAR ── */}
-            {purchaseItems.length > 0 && (
-              <CardContent className="bg-secondary/20 border-t border-border/60 p-4 sm:p-6 space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  {/* Left: Bill metadata & credit breakdown */}
-                  <div className="space-y-1.5">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-foreground">
-                        {selectedSupplier ? selectedSupplier.name : "No Supplier Selected"}
-                      </span>
-                      <span className="text-[10px] text-muted-foreground font-code">
-                        • {billingDate}
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2 text-xs">
-                      {isCredit ? (
-                        <>
-                          <Badge variant="outline" className="border-amber-500/50 bg-amber-500/10 text-amber-500 font-bold">
-                            Paid: ₹{numPaid.toLocaleString()}
-                          </Badge>
-                          <Badge variant="outline" className="border-amber-500/60 bg-amber-500/20 text-amber-400 font-bold">
-                            Balance Due: ₹{balanceDue.toLocaleString()} (Credit)
-                          </Badge>
-                        </>
-                      ) : (
-                        <Badge variant="outline" className="border-emerald-500/50 bg-emerald-500/10 text-emerald-400 font-bold">
-                          ✓ Fully Paid (₹{numPaid.toLocaleString()})
-                        </Badge>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Right: Bill Total & Big Commit Entry Button */}
-                  <div className="flex flex-wrap items-center justify-between sm:justify-end gap-4 sm:gap-6 pt-2 sm:pt-0 border-t sm:border-t-0 border-border/30">
-                    <div className="text-left sm:text-right">
-                      <p className="text-[10px] uppercase font-bold tracking-widest text-muted-foreground">Bill Total</p>
-                      <p className="text-2xl sm:text-3xl font-code font-bold text-accent">₹{total.toLocaleString()}</p>
-                    </div>
-
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        className="rounded-xl font-bold uppercase tracking-wider text-[10px] h-11 px-4"
-                        onClick={() => setPurchaseItems([])}
-                      >
-                        Clear
-                      </Button>
-                      <Button
-                        onClick={handleComplete}
-                        className="bg-accent text-accent-foreground font-bold px-6 sm:px-8 rounded-xl shadow-lg shadow-accent/25 h-11 text-sm sm:text-base hover:brightness-110 transition-all"
-                        disabled={purchaseItems.length === 0 || !selectedSupplier || isSubmitting}
-                      >
-                        {isSubmitting ? (
-                          <Loader2 className="w-5 h-5 animate-spin mr-2" />
-                        ) : (
-                          <Save className="w-5 h-5 mr-2" />
-                        )}
-                        Commit Entry
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            )}
-          </Card>
-        </div>
-      </div>
+          </CardContent>
+        )}
+      </Card>
 
       {/* ── INLINE NEW CATEGORY DIALOG ── */}
       <Dialog open={inlineNewCategoryOpen} onOpenChange={setInlineNewCategoryOpen}>
@@ -1189,7 +1220,7 @@ export default function NewPurchasePage() {
         </DialogContent>
       </Dialog>
 
-      {/* ── SCANNED NEW SUPPLIER CONFIRMATION / REGISTRATION DIALOG ── */}
+      {/* ── SCANNED NEW SUPPLIER REGISTRATION DIALOG ── */}
       <Dialog open={scannedSupplierOpen} onOpenChange={setScannedSupplierOpen}>
         <DialogContent className="sm:max-w-md">
           <form onSubmit={handleSaveScannedSupplier}>
@@ -1227,13 +1258,14 @@ export default function NewPurchasePage() {
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs font-semibold flex items-center gap-1">
-                    <Phone className="w-3 h-3 text-muted-foreground" /> Phone
+                    <Phone className="w-3 h-3 text-muted-foreground" /> Full Mobile Number *
                   </Label>
                   <Input
-                    className="h-9 text-xs"
-                    placeholder="Phone"
+                    className="h-9 text-xs font-code font-bold"
+                    placeholder="e.g. 9876543210"
                     value={scannedSupplierForm.phone}
                     onChange={e => setScannedSupplierForm({ ...scannedSupplierForm, phone: e.target.value })}
+                    required
                   />
                 </div>
               </div>
@@ -1281,7 +1313,7 @@ export default function NewPurchasePage() {
                 className="bg-accent text-accent-foreground text-xs font-bold"
               >
                 {isSavingSupplier && <Loader2 className="w-3 h-3 animate-spin mr-1.5" />}
-                Save & Select Supplier
+                Save &amp; Select Supplier
               </Button>
             </DialogFooter>
           </form>
