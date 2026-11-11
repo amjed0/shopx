@@ -13,13 +13,13 @@ import {
   BadgeDollarSign,
   Calendar,
   Search,
-  Layers,
+  IndianRupee,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useRouter } from "next/navigation"
 import { useUser } from "@/app/auth/use-user"
 import { toast } from "@/hooks/use-toast"
@@ -43,13 +43,30 @@ interface Supplier {
   contactPerson: string
 }
 
-interface GroupedPurchase {
-  supplier: Supplier | null
-  supplierId: string
+interface DateGroup {
+  date: string            // e.g. "2026-11-12"
+  displayDate: string     // e.g. "Today" / "Yesterday" / "12 Nov 2026"
   purchases: Purchase[]
-  totalProducts: number
+  totalQty: number
   totalAmount: number
-  latestDate: string
+  productCount: number    // unique product count
+  supplierNames: string[] // distinct supplier names on that day
+}
+
+function formatDisplayDate(dateStr: string): string {
+  const today = new Date().toISOString().split("T")[0]
+  const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0]
+  if (dateStr === today) return "Today"
+  if (dateStr === yesterday) return "Yesterday"
+  try {
+    return new Date(dateStr).toLocaleDateString("en-IN", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    })
+  } catch {
+    return dateStr
+  }
 }
 
 export default function PurchaseHistoryPage() {
@@ -58,8 +75,7 @@ export default function PurchaseHistoryPage() {
   const [purchases, setPurchases] = React.useState<Purchase[]>([])
   const [suppliers, setSuppliers] = React.useState<Supplier[]>([])
   const [loading, setLoading] = React.useState(true)
-  const [expandedRow, setExpandedRow] = React.useState<string | null>(null)
-  const [viewMode, setViewMode] = React.useState<"date-wise" | "by-supplier">("date-wise")
+  const [expandedDates, setExpandedDates] = React.useState<Set<string>>(new Set())
   const [searchQuery, setSearchQuery] = React.useState("")
 
   React.useEffect(() => {
@@ -71,8 +87,14 @@ export default function PurchaseHistoryPage() {
           fetch("/api/purchases", { headers: { "x-user-id": user.uid } }),
           fetch("/api/suppliers", { headers: { "x-user-id": user.uid } }),
         ])
-        if (purchasesRes.ok) setPurchases(await purchasesRes.json())
-        if (suppliersRes.ok) setSuppliers(await suppliersRes.json())
+        if (purchasesRes.ok) {
+          const data = await purchasesRes.json()
+          setPurchases(Array.isArray(data) ? data : [])
+        }
+        if (suppliersRes.ok) {
+          const data = await suppliersRes.json()
+          setSuppliers(Array.isArray(data) ? data : [])
+        }
       } catch (err) {
         console.error(err)
         toast({ title: "Error", description: "Could not load purchase history.", variant: "destructive" })
@@ -83,420 +105,371 @@ export default function PurchaseHistoryPage() {
     fetchAll()
   }, [user?.uid])
 
-  // Helper map for fast supplier lookup
+  // Auto-expand today's date on first load
+  React.useEffect(() => {
+    const today = new Date().toISOString().split("T")[0]
+    setExpandedDates(new Set([today]))
+  }, [])
+
   const supplierMap = React.useMemo(() => {
     const map = new Map<string, Supplier>()
     suppliers.forEach(s => map.set(s.id, s))
     return map
   }, [suppliers])
 
-  // 1. DATE-WISE SORTED PURCHASES (Latest on top)
-  const chronologicalPurchases = React.useMemo(() => {
-    const list = [...purchases].sort((a, b) => {
-      const dateA = a.billingDate || a.createdAt || ""
-      const dateB = b.billingDate || b.createdAt || ""
-      return dateB.localeCompare(dateA)
-    })
-
-    const q = searchQuery.trim().toLowerCase()
-    if (!q) return list
-
-    return list.filter(p => {
-      const sup = supplierMap.get(p.supplierId)
-      return (
-        p.productName.toLowerCase().includes(q) ||
-        (sup && sup.name.toLowerCase().includes(q)) ||
-        (p.billingDate && p.billingDate.includes(q))
-      )
-    })
-  }, [purchases, searchQuery, supplierMap])
-
-  // 2. GROUPED BY SUPPLIER (Each group's purchases also sorted latest on top)
-  const grouped = React.useMemo(() => {
-    const map: Record<string, GroupedPurchase> = {}
+  // Group by billing date, latest on top
+  const dateGroups = React.useMemo((): DateGroup[] => {
+    const map: Record<string, DateGroup> = {}
 
     purchases.forEach(p => {
-      if (!map[p.supplierId]) {
-        const supplier = supplierMap.get(p.supplierId) ?? null
-        map[p.supplierId] = {
-          supplier,
-          supplierId: p.supplierId,
+      const date = p.billingDate || (p.createdAt ? p.createdAt.split("T")[0] : "Unknown")
+      if (!map[date]) {
+        map[date] = {
+          date,
+          displayDate: formatDisplayDate(date),
           purchases: [],
-          totalProducts: 0,
+          totalQty: 0,
           totalAmount: 0,
-          latestDate: p.billingDate || p.createdAt || "",
+          productCount: 0,
+          supplierNames: [],
         }
       }
-      map[p.supplierId].purchases.push(p)
-      map[p.supplierId].totalProducts += p.quantity
-      map[p.supplierId].totalAmount += p.quantity * p.purchasePrice
-      const pDate = p.billingDate || p.createdAt || ""
-      if (pDate > map[p.supplierId].latestDate) {
-        map[p.supplierId].latestDate = pDate
-      }
+      map[date].purchases.push(p)
+      map[date].totalQty += Number(p.quantity) || 0
+      map[date].totalAmount += (Number(p.quantity) || 0) * (Number(p.purchasePrice) || 0)
     })
 
-    // Sort each group's purchases strictly by date descending (latest first)
+    // Count unique products per date, collect unique supplier names
     Object.values(map).forEach(g => {
-      g.purchases.sort((a, b) => {
-        const dateA = a.billingDate || a.createdAt || ""
-        const dateB = b.billingDate || b.createdAt || ""
-        return dateB.localeCompare(dateA)
-      })
+      const productIds = new Set(g.purchases.map(p => p.productId))
+      g.productCount = productIds.size
+
+      const supIds = new Set(g.purchases.map(p => p.supplierId))
+      g.supplierNames = Array.from(supIds)
+        .map(id => supplierMap.get(id)?.name ?? "Unknown")
+        .filter(Boolean)
+        .slice(0, 3)
     })
 
-    const sortedGroups = Object.values(map).sort((a, b) => b.latestDate.localeCompare(a.latestDate))
+    // Sort groups: latest date first
+    return Object.values(map).sort((a, b) => b.date.localeCompare(a.date))
+  }, [purchases, supplierMap])
 
+  // Apply search filter across date groups
+  const filteredGroups = React.useMemo((): DateGroup[] => {
     const q = searchQuery.trim().toLowerCase()
-    if (!q) return sortedGroups
+    if (!q) return dateGroups
 
-    return sortedGroups.filter(g =>
-      (g.supplier && g.supplier.name.toLowerCase().includes(q)) ||
-      (g.supplier && g.supplier.contactPerson && g.supplier.contactPerson.toLowerCase().includes(q)) ||
-      g.purchases.some(p => p.productName.toLowerCase().includes(q))
-    )
-  }, [purchases, supplierMap, searchQuery])
+    return dateGroups
+      .map(g => ({
+        ...g,
+        purchases: g.purchases.filter(p => {
+          const sup = supplierMap.get(p.supplierId)
+          return (
+            p.productName.toLowerCase().includes(q) ||
+            (sup && sup.name.toLowerCase().includes(q)) ||
+            g.date.includes(q)
+          )
+        }),
+      }))
+      .filter(g => g.purchases.length > 0)
+      .map(g => ({
+        ...g,
+        totalQty: g.purchases.reduce((s, p) => s + (Number(p.quantity) || 0), 0),
+        totalAmount: g.purchases.reduce((s, p) => s + (Number(p.quantity) || 0) * (Number(p.purchasePrice) || 0), 0),
+        productCount: new Set(g.purchases.map(p => p.productId)).size,
+        supplierNames: Array.from(new Set(g.purchases.map(p => supplierMap.get(p.supplierId)?.name ?? "Unknown"))).slice(0, 3),
+      }))
+  }, [dateGroups, searchQuery, supplierMap])
+
+  const toggleDate = (date: string) => {
+    setExpandedDates(prev => {
+      const next = new Set(prev)
+      if (next.has(date)) next.delete(date)
+      else next.add(date)
+      return next
+    })
+  }
 
   const totalSpent = React.useMemo(() =>
-    purchases.reduce((acc, p) => acc + p.quantity * p.purchasePrice, 0),
+    purchases.reduce((acc, p) => acc + (Number(p.quantity) || 0) * (Number(p.purchasePrice) || 0), 0),
   [purchases])
 
   const totalItems = React.useMemo(() =>
-    purchases.reduce((acc, p) => acc + p.quantity, 0),
+    purchases.reduce((acc, p) => acc + (Number(p.quantity) || 0), 0),
   [purchases])
 
+  const todayTotal = React.useMemo(() => {
+    const today = new Date().toISOString().split("T")[0]
+    const todayGroup = dateGroups.find(g => g.date === today)
+    return todayGroup?.totalAmount ?? 0
+  }, [dateGroups])
+
   return (
-    <div className="space-y-8 animate-in fade-in duration-500 pb-12">
+    <div className="space-y-6 animate-in fade-in duration-500 pb-16">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-4">
           <Button
             variant="ghost"
             size="icon"
-            className="rounded-full hover:bg-secondary"
+            className="rounded-full hover:bg-secondary shrink-0"
             onClick={() => router.back()}
           >
             <ArrowLeft className="w-5 h-5" />
           </Button>
           <div>
-            <h1 className="text-4xl font-headline font-bold text-foreground">
+            <h1 className="text-3xl font-headline font-bold text-foreground">
               Purchase <span className="text-accent">History</span>
             </h1>
-            <p className="text-muted-foreground">Inward procurement logs sorted chronologically with preserved purchase costs.</p>
+            <p className="text-muted-foreground text-sm">All inward purchases grouped by billing date — latest first.</p>
           </div>
-        </div>
-
-        {/* View Switcher Tabs */}
-        <div className="flex items-center gap-1.5 p-1 bg-secondary/30 rounded-xl border border-border/50 self-start md:self-auto">
-          <Button
-            variant={viewMode === "date-wise" ? "default" : "ghost"}
-            size="sm"
-            onClick={() => setViewMode("date-wise")}
-            className="rounded-lg text-xs font-semibold gap-1.5"
-          >
-            <Calendar className="w-3.5 h-3.5" /> Date-Wise (Latest First)
-          </Button>
-          <Button
-            variant={viewMode === "by-supplier" ? "default" : "ghost"}
-            size="sm"
-            onClick={() => setViewMode("by-supplier")}
-            className="rounded-lg text-xs font-semibold gap-1.5"
-          >
-            <Layers className="w-3.5 h-3.5" /> Grouped by Supplier
-          </Button>
         </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid gap-4 sm:grid-cols-3 max-w-3xl">
+      {/* Stats Cards */}
+      <div className="grid gap-4 grid-cols-2 sm:grid-cols-4">
         <Card className="border-none bg-card shadow-sm p-4">
-          <div className="flex items-center gap-4">
-            <div className="bg-accent/10 p-3 rounded-xl">
-              <Receipt className="w-6 h-6 text-accent" />
+          <div className="flex items-center gap-3">
+            <div className="bg-accent/10 p-2.5 rounded-xl">
+              <Calendar className="w-5 h-5 text-accent" />
             </div>
             <div>
-              <p className="text-xs text-muted-foreground uppercase font-bold tracking-wider">Total Purchases</p>
-              <p className="text-2xl font-bold font-headline">{purchases.length}</p>
+              <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Today's Purchases</p>
+              <p className="text-xl font-bold font-headline text-accent">₹{todayTotal.toLocaleString()}</p>
             </div>
           </div>
         </Card>
         <Card className="border-none bg-card shadow-sm p-4">
-          <div className="flex items-center gap-4">
-            <div className="bg-primary/10 p-3 rounded-xl">
-              <ShoppingCart className="w-6 h-6 text-primary" />
+          <div className="flex items-center gap-3">
+            <div className="bg-primary/10 p-2.5 rounded-xl">
+              <Receipt className="w-5 h-5 text-primary" />
             </div>
             <div>
-              <p className="text-xs text-muted-foreground uppercase font-bold tracking-wider">Total Units</p>
-              <p className="text-2xl font-bold font-headline">{totalItems}</p>
+              <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Total Bills</p>
+              <p className="text-xl font-bold font-headline">{purchases.length}</p>
             </div>
           </div>
         </Card>
         <Card className="border-none bg-card shadow-sm p-4">
-          <div className="flex items-center gap-4">
-            <div className="bg-emerald-500/10 p-3 rounded-xl">
-              <BadgeDollarSign className="w-6 h-6 text-emerald-500" />
+          <div className="flex items-center gap-3">
+            <div className="bg-blue-500/10 p-2.5 rounded-xl">
+              <ShoppingCart className="w-5 h-5 text-blue-400" />
             </div>
             <div>
-              <p className="text-xs text-muted-foreground uppercase font-bold tracking-wider">Total Spent</p>
-              <p className="text-2xl font-bold font-headline text-emerald-400">₹{totalSpent.toLocaleString()}</p>
+              <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Total Units</p>
+              <p className="text-xl font-bold font-headline">{totalItems}</p>
+            </div>
+          </div>
+        </Card>
+        <Card className="border-none bg-card shadow-sm p-4">
+          <div className="flex items-center gap-3">
+            <div className="bg-emerald-500/10 p-2.5 rounded-xl">
+              <BadgeDollarSign className="w-5 h-5 text-emerald-500" />
+            </div>
+            <div>
+              <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Total Spent</p>
+              <p className="text-xl font-bold font-headline text-emerald-400">₹{totalSpent.toLocaleString()}</p>
             </div>
           </div>
         </Card>
       </div>
 
-      {/* Search & Filter Bar */}
-      <div className="flex items-center justify-between gap-4">
+      {/* Search */}
+      <div className="flex items-center gap-4">
         <div className="relative w-full max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
-            placeholder="Search by product, vendor or date..."
+            placeholder="Search product, supplier, date..."
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            className="pl-9 h-10 bg-secondary/30 border-none rounded-xl text-xs font-semibold"
+            className="pl-9 h-10 bg-secondary/30 border-none rounded-xl text-sm"
           />
         </div>
-        <p className="text-xs text-muted-foreground font-code hidden sm:block">
-          Showing {viewMode === "date-wise" ? chronologicalPurchases.length : grouped.length} entries
+        <p className="text-xs text-muted-foreground font-code hidden sm:block shrink-0">
+          {filteredGroups.length} date{filteredGroups.length !== 1 ? "s" : ""}
         </p>
       </div>
 
-      {/* ── MAIN CONTENT TABLE ── */}
+      {/* Date Groups */}
       {loading ? (
-        <div className="flex justify-center py-20">
+        <div className="flex justify-center py-24">
           <Loader2 className="w-10 h-10 animate-spin text-accent opacity-50" />
         </div>
-      ) : viewMode === "date-wise" ? (
-        /* ══════════ VIEW 1: DATE-WISE (LATEST PURCHASES ON TOP) ══════════ */
-        <Card className="border-none bg-card shadow-sm overflow-hidden">
-          <CardHeader className="bg-secondary/20 border-b border-border/50 py-3 px-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="font-headline text-lg flex items-center gap-2">
-                  <Calendar className="w-4 h-4 text-accent" />
-                  Chronological Purchase History
-                </CardTitle>
-                <CardDescription className="text-xs">
-                  All purchase bills sorted strictly by billing date (latest entries on top).
-                </CardDescription>
-              </div>
-              <Badge variant="outline" className="text-xs font-code">
-                {chronologicalPurchases.length} Items
-              </Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="p-0 overflow-x-auto">
-            <Table className="min-w-[700px]">
-              <TableHeader className="bg-secondary/10">
-                <TableRow className="border-none hover:bg-transparent">
-                  <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3.5 pl-6 w-[120px]">Billing Date</TableHead>
-                  <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3.5">Product Name</TableHead>
-                  <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3.5">Supplier / Vendor</TableHead>
-                  <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3.5 text-center w-[90px]">Qty</TableHead>
-                  <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3.5 text-right w-[130px]">Purchase Cost</TableHead>
-                  <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3.5 text-right pr-6 w-[130px]">Subtotal</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {chronologicalPurchases.length > 0 ? (
-                  chronologicalPurchases.map(p => {
-                    const sup = supplierMap.get(p.supplierId)
-                    return (
-                      <TableRow key={p.id} className="border-border/40 hover:bg-secondary/10 transition-colors">
-                        <TableCell className="pl-6 py-3.5 text-xs font-code font-bold text-accent">
-                          {p.billingDate || (p.createdAt ? new Date(p.createdAt).toISOString().split("T")[0] : "—")}
-                        </TableCell>
-                        <TableCell className="py-3.5">
-                          <div className="flex items-center gap-2">
-                            <Package className="w-4 h-4 text-muted-foreground shrink-0" />
-                            <span className="font-bold text-sm text-foreground">{p.productName}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="py-3.5">
-                          <div>
-                            <p className="font-bold text-xs text-foreground">{sup?.name || "Unknown Supplier"}</p>
-                            {sup?.phone && (
-                              <p className="text-[10px] text-muted-foreground font-code">📞 {sup.phone}</p>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell className="py-3.5 text-center font-bold font-code text-sm">
-                          {p.quantity}
-                        </TableCell>
-                        <TableCell className="py-3.5 text-right font-code text-amber-400 font-bold">
-                          ₹{p.purchasePrice.toLocaleString()}
-                        </TableCell>
-                        <TableCell className="py-3.5 text-right pr-6 font-code font-bold text-emerald-400">
-                          ₹{(p.quantity * p.purchasePrice).toLocaleString()}
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })
-                ) : (
-                  <TableRow>
-                    <TableCell colSpan={6} className="text-center py-16 text-muted-foreground">
-                      <div className="flex flex-col items-center gap-3 opacity-40">
-                        <Package className="w-10 h-10" />
-                        <p className="font-medium">No purchase transactions found.</p>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </CardContent>
+      ) : filteredGroups.length === 0 ? (
+        <Card className="border-none bg-card shadow-sm">
+          <div className="flex flex-col items-center gap-3 py-24 opacity-30">
+            <Package className="w-12 h-12" />
+            <p className="font-semibold">No purchase history found.</p>
+          </div>
         </Card>
       ) : (
-        /* ══════════ VIEW 2: GROUPED BY SUPPLIER (WITH LATEST FIRST BREAKDOWN) ══════════ */
-        <Card className="border-none bg-card shadow-sm overflow-hidden">
-          <CardHeader className="bg-secondary/20 border-b border-border/50 py-3 px-6">
-            <CardTitle className="font-headline text-lg">Purchases by Supplier</CardTitle>
-            <CardDescription className="text-xs">Click View to inspect full purchases sorted with latest on top.</CardDescription>
-          </CardHeader>
-          <CardContent className="p-0 overflow-x-auto">
-            <Table className="min-w-[700px]">
-              <TableHeader className="bg-secondary/10">
-                <TableRow className="border-none hover:bg-transparent">
-                  <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3.5 pl-6">Supplier</TableHead>
-                  <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3.5">Contact</TableHead>
-                  <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3.5">Latest Purchase</TableHead>
-                  <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3.5 text-center">Total Units</TableHead>
-                  <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3.5 text-right">Total Amount</TableHead>
-                  <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3.5 text-right pr-6">Action</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {grouped.length > 0 ? grouped.map(group => (
-                  <React.Fragment key={group.supplierId}>
-                    {/* SUPPLIER ROW */}
-                    <TableRow className="border-border/50 hover:bg-secondary/10 transition-colors">
-                      <TableCell className="pl-6 py-4">
-                        <div className="flex items-center gap-3">
-                          <div className="bg-accent/10 p-2 rounded-lg">
-                            <Truck className="w-4 h-4 text-accent" />
-                          </div>
-                          <div>
-                            <p className="font-bold text-accent">
-                              {group.supplier?.name ?? "Unknown Supplier"}
-                            </p>
-                            <p className="text-[10px] text-muted-foreground">
-                              {group.supplier?.contactPerson ?? "—"}
-                            </p>
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground font-code">
-                        {group.supplier?.phone ? `📞 ${group.supplier.phone}` : group.supplier?.email || "—"}
-                      </TableCell>
-                      <TableCell className="text-xs font-code font-bold text-accent">
-                        {group.latestDate ? group.latestDate.split("T")[0] : "—"}
-                      </TableCell>
-                      <TableCell className="text-center font-bold">
-                        {group.totalProducts}
-                      </TableCell>
-                      <TableCell className="text-right font-bold font-code text-accent">
-                        ₹{group.totalAmount.toLocaleString()}
-                      </TableCell>
-                      <TableCell className="text-right pr-6">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-8 text-xs font-bold rounded-lg"
-                          onClick={() => setExpandedRow(
-                            expandedRow === group.supplierId ? null : group.supplierId
-                          )}
-                        >
-                          {expandedRow === group.supplierId ? (
-                            <><ChevronUp className="w-3.5 h-3.5 mr-1" /> Hide</>
-                          ) : (
-                            <><ChevronDown className="w-3.5 h-3.5 mr-1" /> View Full History</>
-                          )}
-                        </Button>
-                      </TableCell>
-                    </TableRow>
+        <div className="space-y-3">
+          {filteredGroups.map(group => {
+            const isExpanded = expandedDates.has(group.date)
+            const isToday = group.date === new Date().toISOString().split("T")[0]
 
-                    {/* EXPANDED BREAKDOWN (SORTED LATEST PURCHASE AT THE TOP) */}
-                    {expandedRow === group.supplierId && (
-                      <TableRow className="bg-secondary/5 hover:bg-secondary/5">
-                        <TableCell colSpan={6} className="p-0">
-                          <div className="px-6 py-4 border-t border-b border-border/40 bg-secondary/10">
-                            <div className="flex items-center justify-between mb-3">
-                              <p className="text-[11px] font-bold uppercase tracking-wider text-accent flex items-center gap-1.5">
-                                <Calendar className="w-3.5 h-3.5" />
-                                Full Purchase History for {group.supplier?.name} (Sorted: Latest on Top)
-                              </p>
-                              <Badge variant="outline" className="text-[10px] font-code">
-                                {group.purchases.length} Records
-                              </Badge>
-                            </div>
-                            <Table>
-                              <TableHeader>
-                                <TableRow className="border-border/30 hover:bg-transparent">
-                                  <TableHead className="font-bold uppercase text-[10px] tracking-widest py-2 pl-2">Billing Date</TableHead>
-                                  <TableHead className="font-bold uppercase text-[10px] tracking-widest py-2">Product Name</TableHead>
-                                  <TableHead className="font-bold uppercase text-[10px] tracking-widest py-2 text-center">Quantity</TableHead>
-                                  <TableHead className="font-bold uppercase text-[10px] tracking-widest py-2 text-right">Purchase Price (Cost)</TableHead>
-                                  <TableHead className="font-bold uppercase text-[10px] tracking-widest py-2 text-right pr-2">Subtotal</TableHead>
-                                </TableRow>
-                              </TableHeader>
-                              <TableBody>
-                                {group.purchases.map((p, i) => (
-                                  <TableRow key={p.id || i} className="border-border/20 hover:bg-secondary/20">
-                                    <TableCell className="text-xs font-code font-bold text-accent py-2.5 pl-2">
-                                      {p.billingDate || (p.createdAt ? new Date(p.createdAt).toISOString().split("T")[0] : "—")}
-                                    </TableCell>
-                                    <TableCell className="py-2.5">
-                                      <div className="flex items-center gap-2">
-                                        <Package className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                                        <span className="font-bold text-xs text-foreground">{p.productName}</span>
-                                      </div>
-                                    </TableCell>
-                                    <TableCell className="py-2.5 text-center font-bold font-code text-xs">
-                                      {p.quantity}
-                                    </TableCell>
-                                    <TableCell className="py-2.5 text-right font-code text-amber-400 font-bold text-xs">
-                                      ₹{p.purchasePrice.toLocaleString()}
-                                    </TableCell>
-                                    <TableCell className="text-right py-2.5 pr-2 font-code font-bold text-emerald-400 text-xs">
-                                      ₹{(p.quantity * p.purchasePrice).toLocaleString()}
-                                    </TableCell>
-                                  </TableRow>
-                                ))}
-                                {/* TOTAL ROW */}
-                                <TableRow className="border-t-2 border-border/60 hover:bg-transparent font-bold">
-                                  <TableCell colSpan={2} className="py-3 pl-2 text-xs uppercase tracking-wider text-muted-foreground">
-                                    Total for {group.supplier?.name}
-                                  </TableCell>
-                                  <TableCell className="py-3 text-center text-sm font-code">
-                                    {group.totalProducts} units
-                                  </TableCell>
-                                  <TableCell className="py-3 text-right text-xs text-muted-foreground">
-                                    Total Inward:
-                                  </TableCell>
-                                  <TableCell className="py-3 pr-2 text-right text-base text-accent font-code">
-                                    ₹{group.totalAmount.toLocaleString()}
-                                  </TableCell>
-                                </TableRow>
-                              </TableBody>
-                            </Table>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </React.Fragment>
-                )) : (
-                  <TableRow>
-                    <TableCell colSpan={6} className="text-center py-16 text-muted-foreground">
-                      <div className="flex flex-col items-center gap-3 opacity-40">
-                        <Truck className="w-10 h-10" />
-                        <p className="font-medium">No supplier purchase records found.</p>
+            return (
+              <Card
+                key={group.date}
+                className={`border-none shadow-md overflow-hidden transition-all ${isToday ? "ring-1 ring-accent/40" : ""}`}
+              >
+                {/* ── ACCORDION HEADER (always visible) ── */}
+                <button
+                  type="button"
+                  onClick={() => toggleDate(group.date)}
+                  className="w-full text-left"
+                >
+                  <div className={`flex items-center justify-between gap-3 px-4 sm:px-6 py-4 transition-colors hover:bg-secondary/20 ${isExpanded ? "bg-secondary/20 border-b border-border/50" : "bg-card"}`}>
+                    
+                    {/* Left: Date + badge */}
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className={`p-2.5 rounded-xl shrink-0 ${isToday ? "bg-accent/20" : "bg-secondary/40"}`}>
+                        <Calendar className={`w-4 h-4 ${isToday ? "text-accent" : "text-muted-foreground"}`} />
                       </div>
-                    </TableCell>
-                  </TableRow>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className={`font-bold text-base sm:text-lg ${isToday ? "text-accent" : "text-foreground"}`}>
+                            {group.displayDate}
+                          </span>
+                          {isToday && (
+                            <Badge className="text-[9px] bg-accent/20 text-accent hover:bg-accent/30 px-2 py-0.5 h-5">
+                              Today
+                            </Badge>
+                          )}
+                          <span className="text-xs text-muted-foreground font-code hidden sm:inline">
+                            {group.date}
+                          </span>
+                        </div>
+                        {/* Supplier names preview */}
+                        <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                          {group.supplierNames.length > 0
+                            ? group.supplierNames.join(" · ")
+                            : "No supplier recorded"}
+                          {group.supplierNames.length >= 3 && " ···"}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Right: Summary stats + toggle icon */}
+                    <div className="flex items-center gap-3 sm:gap-5 shrink-0">
+                      {/* Total Qty */}
+                      <div className="text-center hidden sm:block">
+                        <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Qty</p>
+                        <p className="font-bold text-sm font-code">{group.totalQty}</p>
+                      </div>
+                      {/* Product count */}
+                      <div className="text-center hidden sm:block">
+                        <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Products</p>
+                        <p className="font-bold text-sm font-code">{group.purchases.length}</p>
+                      </div>
+                      {/* Total Amount — always visible */}
+                      <div className="text-right">
+                        <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Day Total</p>
+                        <p className={`font-bold text-base sm:text-lg font-code ${isToday ? "text-accent" : "text-emerald-400"}`}>
+                          ₹{group.totalAmount.toLocaleString()}
+                        </p>
+                      </div>
+                      {/* Toggle icon */}
+                      <div className={`p-1.5 rounded-lg transition-colors ${isExpanded ? "bg-accent/20 text-accent" : "bg-secondary/40 text-muted-foreground"}`}>
+                        {isExpanded ? (
+                          <ChevronUp className="w-4 h-4" />
+                        ) : (
+                          <ChevronDown className="w-4 h-4" />
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </button>
+
+                {/* ── EXPANDED PURCHASE DETAIL TABLE ── */}
+                {isExpanded && (
+                  <CardContent className="p-0">
+                    {/* Mobile qty / product count strip (shows on small screens only) */}
+                    <div className="sm:hidden px-4 py-2.5 bg-secondary/10 border-b border-border/30 flex items-center gap-4 text-xs text-muted-foreground">
+                      <span><span className="font-bold text-foreground">{group.purchases.length}</span> purchases</span>
+                      <span><span className="font-bold text-foreground">{group.totalQty}</span> total qty</span>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <Table className="min-w-[640px]">
+                        <TableHeader className="bg-secondary/10">
+                          <TableRow className="border-border/30 hover:bg-transparent">
+                            <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3 pl-5">#</TableHead>
+                            <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3">Product Name</TableHead>
+                            <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3">Supplier / Vendor</TableHead>
+                            <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3 text-center w-[80px]">Qty</TableHead>
+                            <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3 text-right w-[120px]">Purchase Cost</TableHead>
+                            <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3 text-right pr-5 w-[120px]">Subtotal</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {group.purchases.map((p, i) => {
+                            const sup = supplierMap.get(p.supplierId)
+                            return (
+                              <TableRow
+                                key={p.id || i}
+                                className="border-border/20 hover:bg-secondary/10 transition-colors"
+                              >
+                                <TableCell className="py-3 pl-5 text-xs text-muted-foreground font-code">
+                                  {i + 1}
+                                </TableCell>
+                                <TableCell className="py-3">
+                                  <div className="flex items-center gap-2">
+                                    <Package className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                                    <span className="font-bold text-sm text-foreground">{p.productName}</span>
+                                  </div>
+                                </TableCell>
+                                <TableCell className="py-3">
+                                  <div>
+                                    <p className="text-xs font-bold text-foreground">{sup?.name ?? "Unknown"}</p>
+                                    {sup?.phone && (
+                                      <p className="text-[10px] text-muted-foreground font-code">📞 {sup.phone}</p>
+                                    )}
+                                  </div>
+                                </TableCell>
+                                <TableCell className="py-3 text-center font-bold font-code">
+                                  {p.quantity}
+                                </TableCell>
+                                <TableCell className="py-3 text-right font-code text-amber-400 font-bold text-sm">
+                                  ₹{Number(p.purchasePrice).toLocaleString()}
+                                </TableCell>
+                                <TableCell className="py-3 text-right pr-5 font-code font-bold text-emerald-400 text-sm">
+                                  ₹{((Number(p.quantity) || 0) * (Number(p.purchasePrice) || 0)).toLocaleString()}
+                                </TableCell>
+                              </TableRow>
+                            )
+                          })}
+
+                          {/* Day Total Row */}
+                          <TableRow className="bg-secondary/20 border-t-2 border-border/60 hover:bg-secondary/20">
+                            <TableCell colSpan={3} className="py-3 pl-5">
+                              <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                                Day Total — {group.displayDate}
+                              </span>
+                            </TableCell>
+                            <TableCell className="py-3 text-center">
+                              <span className="font-bold font-code text-sm">{group.totalQty}</span>
+                              <span className="text-[10px] text-muted-foreground ml-1">units</span>
+                            </TableCell>
+                            <TableCell className="py-3 text-right text-xs text-muted-foreground">
+                              {group.purchases.length} items
+                            </TableCell>
+                            <TableCell className="py-3 text-right pr-5">
+                              <span className={`font-bold font-code text-lg ${isToday ? "text-accent" : "text-emerald-400"}`}>
+                                ₹{group.totalAmount.toLocaleString()}
+                              </span>
+                            </TableCell>
+                          </TableRow>
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </CardContent>
                 )}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
+              </Card>
+            )
+          })}
+        </div>
       )}
     </div>
   )
