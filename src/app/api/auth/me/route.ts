@@ -10,6 +10,7 @@ export async function GET() {
     }
     return NextResponse.json({ user: { uid: session.user.id, email: session.user.email } });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("Auth me session error:", error);
+    return NextResponse.json({ user: null }, { status: 401 });
   }
 }
