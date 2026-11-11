@@ -74,11 +74,11 @@ interface PurchaseItem {
   productId: string
   productName: string
   sku: string
-  quantity: number
-  purchasePrice: number
-  sellingPrice: number    // MRP
+  quantity: number | string
+  purchasePrice: number | string
+  sellingPrice: number | string    // MRP
   category: string
-  minStock: number        // Alert Level
+  minStock: number | string        // Alert Level
   isNewProduct?: boolean
 }
 
@@ -133,7 +133,7 @@ export default function NewPurchasePage() {
     purchasePrice: "",
     sellingPrice: "",
     stock: "0",
-    minStock: "5"
+    minStock: "2"
   })
 
   React.useEffect(() => {
@@ -200,7 +200,7 @@ export default function NewPurchasePage() {
         purchasePrice: product.purchasePrice || 0,
         sellingPrice: product.sellingPrice || Math.round((product.purchasePrice || 0) * 1.25),
         category: product.category || "General",
-        minStock: product.minStock || 5,
+        minStock: product.minStock || 2,
         isNewProduct: false,
       }
     ])
@@ -250,7 +250,7 @@ export default function NewPurchasePage() {
       toast({ title: "Product Initialized", description: `${productData.name} ready for purchase.` })
       addItem(newProduct)
       setIsAddProductOpen(false)
-      setNewProductForm({ name: "", sku: generateSKU(), purchasePrice: "", sellingPrice: "", stock: "0", minStock: "5" })
+      setNewProductForm({ name: "", sku: generateSKU(), purchasePrice: "", sellingPrice: "", stock: "0", minStock: "2" })
       setSelectedCategory("")
       setNewCategoryNameInput("")
       setIsNewCategoryMode(false)
@@ -314,7 +314,7 @@ export default function NewPurchasePage() {
           purchasePrice: item.purchasePrice || existing.purchasePrice,
           sellingPrice: item.sellingPrice || existing.sellingPrice || Math.round((item.purchasePrice || existing.purchasePrice) * 1.25),
           category: item.category || existing.category || "General",
-          minStock: existing.minStock || 5,
+          minStock: existing.minStock || 2,
           isNewProduct: false,
         })
       } else {
@@ -328,7 +328,7 @@ export default function NewPurchasePage() {
           purchasePrice: item.purchasePrice || 0,
           sellingPrice: item.sellingPrice || Math.round((item.purchasePrice || 0) * 1.25),
           category: item.category || "General",
-          minStock: 5,
+          minStock: 2,
           isNewProduct: true,
         })
       }
@@ -342,7 +342,7 @@ export default function NewPurchasePage() {
           if (idx >= 0) {
             merged[idx] = {
               ...merged[idx],
-              quantity: merged[idx].quantity + item.quantity,
+              quantity: Number(merged[idx].quantity || 0) + Number(item.quantity || 1),
               purchasePrice: item.purchasePrice || merged[idx].purchasePrice,
               sellingPrice: item.sellingPrice || merged[idx].sellingPrice,
             }
@@ -430,7 +430,7 @@ export default function NewPurchasePage() {
               purchasePrice: Number(item.purchasePrice),
               sellingPrice: Number(item.sellingPrice),
               stock: Number(item.quantity),
-              minStock: Number(item.minStock || 5),
+              minStock: Number(item.minStock || 2),
               supplierId,
             }),
           })
@@ -960,19 +960,22 @@ export default function NewPurchasePage() {
                           <div className="space-y-1">
                             <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Qty</p>
                             <Input
-                              type="number" min={1}
-                              className="h-8 text-xs bg-secondary/20 border-none font-bold text-center"
-                              value={item.quantity}
-                              onChange={e => updateItem(item.productId, "quantity", Number(e.target.value))}
+                              type="number"
+                              min={1}
+                              className="h-8 text-xs bg-background border border-border/80 text-foreground font-bold text-center rounded-lg shadow-sm focus:border-accent"
+                              value={item.quantity ?? ""}
+                              onChange={e => updateItem(item.productId, "quantity", e.target.value === "" ? "" : Number(e.target.value))}
                             />
                           </div>
                           <div className="space-y-1">
                             <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Cost (₹)</p>
                             <Input
                               type="number"
-                              className="h-8 text-xs bg-secondary/20 border-none font-bold text-right"
-                              value={item.purchasePrice}
-                              onChange={e => updateItem(item.productId, "purchasePrice", Number(e.target.value))}
+                              min={0}
+                              step="any"
+                              className="h-8 text-xs bg-background border border-border/80 text-amber-500 dark:text-amber-400 font-bold text-right font-code rounded-lg shadow-sm focus:border-accent"
+                              value={item.purchasePrice ?? ""}
+                              onChange={e => updateItem(item.productId, "purchasePrice", e.target.value === "" ? "" : Number(e.target.value))}
                             />
                           </div>
                         </div>
@@ -982,18 +985,21 @@ export default function NewPurchasePage() {
                             <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">MRP / Selling (₹)</p>
                             <Input
                               type="number"
-                              className="h-8 text-xs bg-secondary/20 border-none font-bold text-right"
-                              value={item.sellingPrice}
-                              onChange={e => updateItem(item.productId, "sellingPrice", Number(e.target.value))}
+                              min={0}
+                              step="any"
+                              className="h-8 text-xs bg-background border border-border/80 text-emerald-500 dark:text-emerald-400 font-bold text-right font-code rounded-lg shadow-sm focus:border-emerald-500"
+                              value={item.sellingPrice ?? ""}
+                              onChange={e => updateItem(item.productId, "sellingPrice", e.target.value === "" ? "" : Number(e.target.value))}
                             />
                           </div>
                           <div className="space-y-1">
                             <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Alert Lvl</p>
                             <Input
                               type="number"
-                              className="h-8 text-xs bg-secondary/20 border-none font-bold text-center"
-                              value={item.minStock}
-                              onChange={e => updateItem(item.productId, "minStock", Number(e.target.value))}
+                              min={0}
+                              className="h-8 text-xs bg-background border border-border/80 text-foreground font-bold text-center rounded-lg shadow-sm focus:border-accent"
+                              value={item.minStock ?? ""}
+                              onChange={e => updateItem(item.productId, "minStock", e.target.value === "" ? "" : Number(e.target.value))}
                             />
                           </div>
                         </div>
@@ -1077,9 +1083,9 @@ export default function NewPurchasePage() {
                           <Input
                             type="number"
                             min={1}
-                            className="h-8 text-xs bg-secondary/20 border-none font-bold text-center"
-                            value={item.quantity}
-                            onChange={e => updateItem(item.productId, "quantity", Number(e.target.value))}
+                            className="h-8 text-xs bg-background border border-border/80 text-foreground font-bold text-center rounded-lg shadow-sm focus:border-accent focus:ring-1 focus:ring-accent"
+                            value={item.quantity ?? ""}
+                            onChange={e => updateItem(item.productId, "quantity", e.target.value === "" ? "" : Number(e.target.value))}
                           />
                         </TableCell>
 
@@ -1087,9 +1093,11 @@ export default function NewPurchasePage() {
                         <TableCell>
                           <Input
                             type="number"
-                            className="h-8 text-xs bg-secondary/20 border-none font-bold text-right"
-                            value={item.purchasePrice}
-                            onChange={e => updateItem(item.productId, "purchasePrice", Number(e.target.value))}
+                            min={0}
+                            step="any"
+                            className="h-8 text-xs bg-background border border-border/80 text-amber-500 dark:text-amber-400 font-bold text-right font-code rounded-lg shadow-sm focus:border-accent focus:ring-1 focus:ring-accent"
+                            value={item.purchasePrice ?? ""}
+                            onChange={e => updateItem(item.productId, "purchasePrice", e.target.value === "" ? "" : Number(e.target.value))}
                           />
                         </TableCell>
 
@@ -1097,9 +1105,11 @@ export default function NewPurchasePage() {
                         <TableCell>
                           <Input
                             type="number"
-                            className="h-8 text-xs bg-secondary/20 border-none font-bold text-right text-emerald-600 dark:text-emerald-400"
-                            value={item.sellingPrice}
-                            onChange={e => updateItem(item.productId, "sellingPrice", Number(e.target.value))}
+                            min={0}
+                            step="any"
+                            className="h-8 text-xs bg-background border border-border/80 text-emerald-500 dark:text-emerald-400 font-bold text-right font-code rounded-lg shadow-sm focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                            value={item.sellingPrice ?? ""}
+                            onChange={e => updateItem(item.productId, "sellingPrice", e.target.value === "" ? "" : Number(e.target.value))}
                           />
                         </TableCell>
 
@@ -1108,9 +1118,9 @@ export default function NewPurchasePage() {
                           <Input
                             type="number"
                             min={0}
-                            className="h-8 text-xs bg-secondary/20 border-none font-bold text-center"
-                            value={item.minStock}
-                            onChange={e => updateItem(item.productId, "minStock", Number(e.target.value))}
+                            className="h-8 text-xs bg-background border border-border/80 text-foreground font-bold text-center rounded-lg shadow-sm focus:border-accent focus:ring-1 focus:ring-accent"
+                            value={item.minStock ?? ""}
+                            onChange={e => updateItem(item.productId, "minStock", e.target.value === "" ? "" : Number(e.target.value))}
                           />
                         </TableCell>
 
