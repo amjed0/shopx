@@ -147,6 +147,7 @@ export default function NewBillPage() {
   // ── Invoice Dialog & WhatsApp ──
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = React.useState(false)
   const [generatedInvoiceData, setGeneratedInvoiceData] = React.useState<any>(null)
+  const [wasSaleCompleted, setWasSaleCompleted] = React.useState(false)
 
   // ── Data lists ──
   const [products, setProducts] = React.useState<Product[]>([])
@@ -461,9 +462,33 @@ export default function NewBillPage() {
     setSelectedCustomer(null)
     setManualCustomerName("")
     setManualCustomerPhone("")
+    setCustomerSearch("")
+    setProductSearch("")
     setBillingDate(new Date().toISOString().split("T")[0])
     setDiscountValue(0)
+    setDiscountType("flat")
+    setPaymentMethod("upi")
     toast({ title: "New Bill Entry", description: "Terminal cleared for new sale." })
+  }
+
+  // Handle closing the invoice modal (clears sheet automatically if a sale was just completed)
+  const handleCloseInvoiceModal = () => {
+    setIsInvoiceModalOpen(false)
+    if (wasSaleCompleted) {
+      setCurrentBillIndex(-1)
+      setBillItems([])
+      setSelectedCustomer(null)
+      setManualCustomerName("")
+      setManualCustomerPhone("")
+      setCustomerSearch("")
+      setProductSearch("")
+      setBillingDate(new Date().toISOString().split("T")[0])
+      setDiscountValue(0)
+      setDiscountType("flat")
+      setPaymentMethod("upi")
+      setWasSaleCompleted(false)
+      toast({ title: "Sales Sheet Cleared ✓", description: "Terminal ready for fresh bill entry." })
+    }
   }
 
   const handlePrevDate = () => {
@@ -616,6 +641,7 @@ export default function NewBillPage() {
       paymentMethod,
     }
 
+    setWasSaleCompleted(false)
     setGeneratedInvoiceData(invoiceData)
     setIsInvoiceModalOpen(true)
   }
@@ -730,6 +756,7 @@ export default function NewBillPage() {
         netPayable: totalWithPreviousDue,
         paymentMethod,
       })
+      setWasSaleCompleted(true)
       setIsInvoiceModalOpen(true)
 
       // Refresh data
@@ -1431,7 +1458,16 @@ export default function NewBillPage() {
       </Card>
 
       {/* ── 5. COMPLETE BILL GENERATION & INVOICE SUMMARY MODAL ── */}
-      <Dialog open={isInvoiceModalOpen} onOpenChange={setIsInvoiceModalOpen}>
+      <Dialog
+        open={isInvoiceModalOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            handleCloseInvoiceModal()
+          } else {
+            setIsInvoiceModalOpen(true)
+          }
+        }}
+      >
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto p-4 sm:p-6 rounded-2xl">
           {generatedInvoiceData && (
             <div className="space-y-4">
@@ -1616,7 +1652,7 @@ export default function NewBillPage() {
                   variant="secondary"
                   size="sm"
                   className="rounded-xl text-xs"
-                  onClick={() => setIsInvoiceModalOpen(false)}
+                  onClick={handleCloseInvoiceModal}
                 >
                   Close
                 </Button>
