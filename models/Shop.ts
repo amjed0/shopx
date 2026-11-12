@@ -8,6 +8,7 @@ const ShopSchema = new Schema(
     location: { type: String },
     phone: { type: String },
     email: { type: String },
+    gstNumber: { type: String },
     businessCategory: { type: String, default: 'retail' },
     createdAt: { type: Date, default: Date.now },
   },

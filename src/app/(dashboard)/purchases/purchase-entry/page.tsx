@@ -66,6 +66,7 @@ interface Supplier {
   phone: string
   email: string
   address: string
+  gstNumber?: string
 }
 
 interface Product {
@@ -88,6 +89,8 @@ interface PurchaseItem {
   sellingPrice: number | string    // MRP
   category: string
   minStock: number | string        // Alert Level
+  taxRate?: number | string        // GST %
+  taxAmount?: number | string      // GST ₹
   isNewProduct?: boolean
 }
 
@@ -102,6 +105,8 @@ interface BillGroup {
     sku?: string
     quantity: number
     purchasePrice: number
+    taxRate?: number
+    taxAmount?: number
     category?: string
   }>
   totalAmount: number
@@ -197,6 +202,8 @@ export default function NewPurchasePage() {
   const [customCategories, setCustomCategories] = React.useState<string[]>([])
 
   // Scanned Supplier Confirmation Dialog
+  const [detectedGstForSupplier, setDetectedGstForSupplier] = React.useState<string | null>(null)
+  const [isUpdatingSupplierGst, setIsUpdatingSupplierGst] = React.useState(false)
   const [scannedSupplierOpen, setScannedSupplierOpen] = React.useState(false)
   const [scannedSupplierForm, setScannedSupplierForm] = React.useState({
     name: "",
@@ -204,6 +211,7 @@ export default function NewPurchasePage() {
     phone: "",
     email: "",
     address: "",
+    gstNumber: "",
   })
   const [isSavingSupplier, setIsSavingSupplier] = React.useState(false)
 
@@ -215,6 +223,7 @@ export default function NewPurchasePage() {
     phone: "",
     email: "",
     address: "",
+    gstNumber: "",
   })
   const [isUpdatingSupplier, setIsUpdatingSupplier] = React.useState(false)
 
@@ -298,13 +307,18 @@ export default function NewPurchasePage() {
             }
             const qty = Number(p.quantity) || 1
             const price = Number(p.purchasePrice) || 0
+            const taxRate = Number(p.taxRate) || 0
+            const taxAmount = Number(p.taxAmount) || 0
             groups[key].items.push({
               productName: p.productName || "Product",
+              sku: p.itemCode || "",
               quantity: qty,
               purchasePrice: price,
+              taxRate,
+              taxAmount,
             })
             groups[key].totalQty += qty
-            groups[key].totalAmount += qty * price
+            groups[key].totalAmount += (qty * price) + taxAmount
           })
 
           const billList = Object.values(groups).map((bg, idx) => ({
@@ -336,6 +350,7 @@ export default function NewPurchasePage() {
       contactPerson: "",
       email: "",
       address: "",
+      gstNumber: (bill as any).supplierGst || "",
     })
 
     setPurchaseItems(bill.items.map(it => {
@@ -349,6 +364,8 @@ export default function NewPurchasePage() {
         sku: it.sku || prod?.sku || "",
         quantity: it.quantity,
         purchasePrice: it.purchasePrice,
+        taxRate: it.taxRate || 0,
+        taxAmount: it.taxAmount || 0,
         sellingPrice: prod?.sellingPrice || Math.round(it.purchasePrice * 1.25),
         category: it.category || prod?.category || "General",
         minStock: prod?.minStock || 2,
@@ -445,6 +462,7 @@ export default function NewPurchasePage() {
     setCurrentBillIndex(-1)
     setPurchaseItems([])
     setSelectedSupplier(null)
+    setDetectedGstForSupplier(null)
     setBillingDate(new Date().toISOString().split("T")[0])
     setPaidAmount("")
     setScannerKey(k => k + 1)
@@ -528,6 +546,8 @@ export default function NewPurchasePage() {
           sellingPrice: product.sellingPrice || Math.round((product.purchasePrice || 0) * 1.25),
           category: product.category || "General",
           minStock: product.minStock || 2,
+          taxRate: 0,
+          taxAmount: 0,
           isNewProduct: false,
         }
       ]
@@ -538,8 +558,31 @@ export default function NewPurchasePage() {
   const removeItem = (id: string) =>
     setPurchaseItems(prev => prev.filter(i => i.productId !== id))
 
-  const updateItem = (id: string, field: keyof PurchaseItem, value: any) =>
-    setPurchaseItems(prev => prev.map(i => i.productId === id ? { ...i, [field]: value } : i))
+  const updateItem = (id: string, field: keyof PurchaseItem, value: any) => {
+    setPurchaseItems(prev => prev.map(i => {
+      if (i.productId !== id) return i
+      const updated = { ...i, [field]: value }
+      const qty = Number(updated.quantity) || 0
+      const cost = Number(updated.purchasePrice) || 0
+
+      if (field === "taxRate") {
+        const rate = Number(value) || 0
+        updated.taxAmount = rate > 0 ? Number(((qty * cost * rate) / 100).toFixed(2)) : 0
+      } else if (field === "taxAmount") {
+        const tAmt = Number(value) || 0
+        const base = qty * cost
+        if (base > 0 && tAmt > 0) {
+          updated.taxRate = Number(((tAmt / base) * 100).toFixed(1))
+        }
+      } else if (field === "quantity" || field === "purchasePrice") {
+        const rate = Number(updated.taxRate) || 0
+        if (rate > 0) {
+          updated.taxAmount = Number(((qty * cost * rate) / 100).toFixed(2))
+        }
+      }
+      return updated
+    }))
+  }
 
   const handleQuickSelect = (product: Product) => {
     addItem(product)
@@ -604,7 +647,12 @@ export default function NewPurchasePage() {
       })
     }
 
-    // 2. Smart Supplier Matching: Normalize and match existing vendor
+    // 2. Extract and preserve Supplier GSTIN if scanned
+    if (result.supplierGst) {
+      setDetectedGstForSupplier(result.supplierGst)
+    }
+
+    // 3. Smart Supplier Matching: Normalize and match existing vendor
     if (result.supplierName && !selectedSupplier) {
       const normalize = (str: string) =>
         str
@@ -644,6 +692,7 @@ export default function NewPurchasePage() {
           phone: result.supplierPhone || "",
           email: result.supplierEmail || "",
           address: result.supplierAddress || "",
+          gstNumber: result.supplierGst || "",
         })
         setScannedSupplierOpen(true)
       }
@@ -698,17 +747,27 @@ export default function NewPurchasePage() {
         setCustomCategories(prev => Array.from(new Set([...prev, matchedCat])))
       }
 
+      const itemQty = item.quantity || 1
+      const itemCost = item.purchasePrice || (existing?.purchasePrice || 0)
+      const itemTaxRate = item.taxRate !== undefined && item.taxRate !== null ? Number(item.taxRate) : 0
+      let itemTaxAmount = item.taxAmount !== undefined && item.taxAmount !== null ? Number(item.taxAmount) : 0
+      if (itemTaxRate > 0 && itemTaxAmount === 0) {
+        itemTaxAmount = Number(((itemQty * itemCost * itemTaxRate) / 100).toFixed(2))
+      }
+
       if (existing) {
         // USE EXISTING PRODUCT: Keep existing name and existing SKU to prevent duplicates!
         newItems.push({
           productId: existing.id,
           productName: existing.name,
           sku: existing.sku || item.itemCode || generateSKU(),
-          quantity: item.quantity || 1,
-          purchasePrice: item.purchasePrice || existing.purchasePrice || 0,
-          sellingPrice: item.sellingPrice || existing.sellingPrice || Math.round((item.purchasePrice || existing.purchasePrice || 0) * 1.25),
+          quantity: itemQty,
+          purchasePrice: itemCost,
+          sellingPrice: item.sellingPrice || existing.sellingPrice || Math.round(itemCost * 1.25),
           category: matchedCat,
           minStock: existing.minStock || 2,
+          taxRate: itemTaxRate,
+          taxAmount: itemTaxAmount,
           isNewProduct: false,
         })
       } else {
@@ -718,11 +777,13 @@ export default function NewPurchasePage() {
           productId: `temp-${Math.random().toString(36).slice(2)}`,
           productName: item.name,
           sku: itemSku,
-          quantity: item.quantity || 1,
-          purchasePrice: item.purchasePrice || 0,
-          sellingPrice: item.sellingPrice || Math.round((item.purchasePrice || 0) * 1.25),
+          quantity: itemQty,
+          purchasePrice: itemCost,
+          sellingPrice: item.sellingPrice || Math.round(itemCost * 1.25),
           category: matchedCat,
           minStock: 2,
+          taxRate: itemTaxRate,
+          taxAmount: itemTaxAmount,
           isNewProduct: true,
         })
       }
@@ -790,8 +851,35 @@ export default function NewPurchasePage() {
       phone: selectedSupplier.phone || "",
       email: selectedSupplier.email || "",
       address: selectedSupplier.address || "",
+      gstNumber: selectedSupplier.gstNumber || "",
     })
     setIsEditSupplierOpen(true)
+  }
+
+  // Quick update supplier GST from bill
+  const handleUpdateSupplierGst = async () => {
+    if (!user?.uid || !selectedSupplier || !detectedGstForSupplier) return
+    setIsUpdatingSupplierGst(true)
+    try {
+      const res = await fetch(`/api/suppliers/${selectedSupplier.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "x-user-id": user.uid },
+        credentials: "include",
+        body: JSON.stringify({ gstNumber: detectedGstForSupplier }),
+      })
+      if (!res.ok) throw new Error("Failed to update supplier GST")
+      const updated = await res.json()
+      setSuppliers(prev => prev.map(s => s.id === updated.id ? updated : s))
+      setSelectedSupplier(updated)
+      toast({
+        title: "Supplier GSTIN Updated ✓",
+        description: `Saved GSTIN ${detectedGstForSupplier} for ${updated.name}`,
+      })
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Update Failed", description: err.message })
+    } finally {
+      setIsUpdatingSupplierGst(false)
+    }
   }
 
   // Save updated supplier
@@ -834,7 +922,12 @@ export default function NewPurchasePage() {
     setInlineNewCategoryItemIndex(null)
   }
 
-  const total = purchaseItems.reduce((acc, i) => acc + (Number(i.quantity) || 0) * (Number(i.purchasePrice) || 0), 0)
+  const totalTax = purchaseItems.reduce((acc, i) => acc + (Number(i.taxAmount) || 0), 0)
+  const total = purchaseItems.reduce((acc, i) => {
+    const base = (Number(i.quantity) || 0) * (Number(i.purchasePrice) || 0)
+    const tax = Number(i.taxAmount) || 0
+    return acc + base + tax
+  }, 0)
   const numPaid = paidAmount === "" ? total : Number(paidAmount) || 0
   const balanceDue = Math.max(0, total - numPaid)
   const isCredit = balanceDue > 0
@@ -913,6 +1006,8 @@ export default function NewPurchasePage() {
             itemCode: item.sku || "",
             quantity: Number(item.quantity),
             purchasePrice: Number(item.purchasePrice), // Exactly preserved historical purchase cost
+            taxRate: Number(item.taxRate) || 0,
+            taxAmount: Number(item.taxAmount) || 0,
             billingDate,
           }),
         })
@@ -1212,6 +1307,12 @@ export default function NewPurchasePage() {
                         Contact: {selectedSupplier.contactPerson}
                       </p>
                     )}
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-tight">GSTIN:</span>
+                      <span className="text-[10px] font-code font-bold text-foreground">
+                        {selectedSupplier.gstNumber || "Not recorded"}
+                      </span>
+                    </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
                     <Button
@@ -1236,6 +1337,26 @@ export default function NewPurchasePage() {
                     </Button>
                   </div>
                 </div>
+
+                {/* Auto-detected Bill GST Update Banner */}
+                {detectedGstForSupplier && selectedSupplier.gstNumber !== detectedGstForSupplier && (
+                  <div className="mt-2 p-2 bg-amber-500/15 border border-amber-500/40 rounded-lg flex flex-col gap-1.5 animate-in fade-in">
+                    <div className="flex items-center justify-between text-[10px]">
+                      <span className="text-amber-400 font-bold">New Bill GST Found:</span>
+                      <span className="font-code font-bold text-amber-300">{detectedGstForSupplier}</span>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="h-6 text-[10px] font-bold bg-amber-500 hover:bg-amber-600 text-slate-950 px-2 rounded w-full shadow-sm"
+                      onClick={handleUpdateSupplierGst}
+                      disabled={isUpdatingSupplierGst}
+                    >
+                      {isUpdatingSupplierGst ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
+                      Update Supplier GSTIN
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
           </CardContent>
@@ -1512,12 +1633,12 @@ export default function NewPurchasePage() {
         {/* ── Table (Unified Mobile & Desktop) ── */}
         <CardContent className="p-0">
           <div className="w-full overflow-x-auto">
-            <Table className="min-w-[780px] w-full">
+            <Table className="min-w-[940px] w-full">
               <TableHeader className="bg-secondary/20 border-b border-border/50">
                 <TableRow className="border-border/50 hover:bg-transparent">
                   <TableHead className="w-10 text-center text-[10px] font-bold uppercase py-3 px-2">#</TableHead>
-                  <TableHead className="text-[10px] font-bold uppercase py-3 px-2 min-w-[180px]">Item Name</TableHead>
-                  <TableHead className="w-[190px] text-[10px] font-bold uppercase py-3 px-2">
+                  <TableHead className="text-[10px] font-bold uppercase py-3 px-2 min-w-[170px]">Item Name</TableHead>
+                  <TableHead className="w-[180px] text-[10px] font-bold uppercase py-3 px-2">
                     <div className="flex items-center justify-between">
                       <span>Category</span>
                       {purchaseItems.length > 0 && (
@@ -1534,169 +1655,214 @@ export default function NewPurchasePage() {
                       )}
                     </div>
                   </TableHead>
-                  <TableHead className="w-[85px] text-[10px] font-bold uppercase py-3 px-2 text-center">Qty</TableHead>
-                  <TableHead className="w-[115px] text-[10px] font-bold uppercase py-3 px-2 text-right">Cost (₹)</TableHead>
-                  <TableHead className="w-[115px] text-[10px] font-bold uppercase py-3 px-2 text-right">MRP (₹)</TableHead>
-                  <TableHead className="w-[85px] text-[10px] font-bold uppercase py-3 px-2 text-center">Alert Lvl</TableHead>
+                  <TableHead className="w-[75px] text-[10px] font-bold uppercase py-3 px-1 text-center">Qty</TableHead>
+                  <TableHead className="w-[105px] text-[10px] font-bold uppercase py-3 px-1 text-right">Cost (₹)</TableHead>
+                  <TableHead className="w-[80px] text-[10px] font-bold uppercase py-3 px-1 text-center">GST (%)</TableHead>
+                  <TableHead className="w-[95px] text-[10px] font-bold uppercase py-3 px-1 text-right">GST (₹)</TableHead>
+                  <TableHead className="w-[105px] text-[10px] font-bold uppercase py-3 px-1 text-right">MRP (₹)</TableHead>
+                  <TableHead className="w-[80px] text-[10px] font-bold uppercase py-3 px-1 text-center">Alert Lvl</TableHead>
                   <TableHead className="w-[110px] text-right text-[10px] font-bold uppercase py-3 px-2">Subtotal (₹)</TableHead>
                   <TableHead className="w-10 py-3 px-2" />
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {purchaseItems.map((item, index) => (
-                  <TableRow key={item.productId} className="border-border/30 group hover:bg-secondary/10">
-                    <TableCell className="text-center font-code text-xs text-muted-foreground py-2.5 px-2">{index + 1}</TableCell>
-                    <TableCell className="py-2.5 px-2">
-                      <p className="font-bold text-xs text-foreground leading-snug">{item.productName}</p>
-                      <div className="flex items-center gap-1.5 mt-1">
-                        <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-tight">Code:</span>
+                {purchaseItems.map((item, index) => {
+                  const lineBase = (Number(item.quantity) || 0) * (Number(item.purchasePrice) || 0)
+                  const lineTax = Number(item.taxAmount) || 0
+                  const lineSubtotal = lineBase + lineTax
+
+                  return (
+                    <TableRow key={item.productId} className="border-border/30 group hover:bg-secondary/10">
+                      <TableCell className="text-center font-code text-xs text-muted-foreground py-2.5 px-2">{index + 1}</TableCell>
+                      <TableCell className="py-2.5 px-2">
+                        <p className="font-bold text-xs text-foreground leading-snug">{item.productName}</p>
+                        <div className="flex items-center gap-1.5 mt-1">
+                          <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-tight">Code:</span>
+                          <input
+                            type="text"
+                            placeholder="Code / SKU"
+                            value={item.sku || ""}
+                            onChange={e => updateItem(item.productId, "sku", e.target.value)}
+                            style={{
+                              color: '#38bdf8',
+                              backgroundColor: '#0f172a',
+                              WebkitTextFillColor: '#38bdf8',
+                            }}
+                            className="h-5 px-1.5 text-[10px] font-code font-bold border border-slate-600 rounded focus:border-cyan-400 focus:outline-none w-28"
+                            title="Item Code / SKU (used for customer search & inventory)"
+                          />
+                          {item.isNewProduct && (
+                            <Badge className="text-[8px] bg-accent/20 text-accent hover:bg-accent/30 px-1 py-0 h-4">
+                              New
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
+
+                      {/* Category with inline selector + create */}
+                      <TableCell className="py-2.5 px-2">
+                        <div className="flex items-center gap-1 min-w-[140px]">
+                          <Select
+                            value={item.category}
+                            onValueChange={val => updateItem(item.productId, "category", val)}
+                          >
+                            <SelectTrigger className="h-9 text-xs bg-[#0f172a] border border-slate-600 text-foreground flex-1 rounded-lg">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {categories.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0 hover:bg-accent/10 text-muted-foreground hover:text-accent"
+                            onClick={() => handleApplyCategoryToAll(item.category)}
+                            title={`Apply category "${item.category}" to all items`}
+                          >
+                            <Layers className="w-3.5 h-3.5" />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0 hover:bg-accent/10 text-accent"
+                            onClick={() => {
+                              setInlineNewCategoryItemIndex(index)
+                              setInlineNewCategoryOpen(true)
+                            }}
+                            title="Create New Category"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      </TableCell>
+
+                      {/* Qty */}
+                      <TableCell className="py-2.5 px-1 text-center">
                         <input
-                          type="text"
-                          placeholder="Code / SKU"
-                          value={item.sku || ""}
-                          onChange={e => updateItem(item.productId, "sku", e.target.value)}
+                          type="number"
+                          min={1}
+                          style={{
+                            color: '#ffffff',
+                            backgroundColor: '#0f172a',
+                            WebkitTextFillColor: '#ffffff',
+                          }}
+                          className="w-16 h-9 px-2 text-xs border-2 border-slate-600 font-bold text-center rounded-lg shadow-sm focus:border-cyan-400 focus:outline-none mx-auto block"
+                          value={item.quantity ?? 1}
+                          onChange={e => updateItem(item.productId, "quantity", e.target.value === "" ? "" : Number(e.target.value))}
+                        />
+                      </TableCell>
+
+                      {/* Purchase Price (Cost) */}
+                      <TableCell className="py-2.5 px-1 text-right">
+                        <input
+                          type="number"
+                          min={0}
+                          step="any"
+                          style={{
+                            color: '#fbbf24',
+                            backgroundColor: '#0f172a',
+                            WebkitTextFillColor: '#fbbf24',
+                          }}
+                          className="w-24 h-9 px-2 text-xs border-2 border-slate-600 font-bold text-right font-code rounded-lg shadow-sm focus:border-amber-400 focus:outline-none ml-auto block"
+                          value={item.purchasePrice ?? 0}
+                          onChange={e => updateItem(item.productId, "purchasePrice", e.target.value === "" ? "" : Number(e.target.value))}
+                        />
+                      </TableCell>
+
+                      {/* GST (%) */}
+                      <TableCell className="py-2.5 px-1 text-center">
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          step="any"
+                          placeholder="0%"
                           style={{
                             color: '#38bdf8',
                             backgroundColor: '#0f172a',
                             WebkitTextFillColor: '#38bdf8',
                           }}
-                          className="h-5 px-1.5 text-[10px] font-code font-bold border border-slate-600 rounded focus:border-cyan-400 focus:outline-none w-28"
-                          title="Item Code / SKU (used for customer search & inventory)"
+                          className="w-16 h-9 px-1 text-xs border-2 border-slate-600 font-bold text-center font-code rounded-lg shadow-sm focus:border-cyan-400 focus:outline-none mx-auto block"
+                          value={item.taxRate ?? 0}
+                          onChange={e => updateItem(item.productId, "taxRate", e.target.value === "" ? "" : Number(e.target.value))}
                         />
-                        {item.isNewProduct && (
-                          <Badge className="text-[8px] bg-accent/20 text-accent hover:bg-accent/30 px-1 py-0 h-4">
-                            New
-                          </Badge>
-                        )}
-                      </div>
-                    </TableCell>
+                      </TableCell>
 
-                    {/* Category with inline selector + create */}
-                    <TableCell className="py-2.5 px-2">
-                      <div className="flex items-center gap-1 min-w-[140px]">
-                        <Select
-                          value={item.category}
-                          onValueChange={val => updateItem(item.productId, "category", val)}
-                        >
-                          <SelectTrigger className="h-9 text-xs bg-[#0f172a] border border-slate-600 text-foreground flex-1 rounded-lg">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {categories.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 shrink-0 hover:bg-accent/10 text-muted-foreground hover:text-accent"
-                          onClick={() => handleApplyCategoryToAll(item.category)}
-                          title={`Apply category "${item.category}" to all items`}
-                        >
-                          <Layers className="w-3.5 h-3.5" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 shrink-0 hover:bg-accent/10 text-accent"
-                          onClick={() => {
-                            setInlineNewCategoryItemIndex(index)
-                            setInlineNewCategoryOpen(true)
+                      {/* GST (₹) */}
+                      <TableCell className="py-2.5 px-1 text-right">
+                        <input
+                          type="number"
+                          min={0}
+                          step="any"
+                          placeholder="0"
+                          style={{
+                            color: '#38bdf8',
+                            backgroundColor: '#0f172a',
+                            WebkitTextFillColor: '#38bdf8',
                           }}
-                          title="Create New Category"
+                          className="w-20 h-9 px-1.5 text-xs border-2 border-slate-600 font-bold text-right font-code rounded-lg shadow-sm focus:border-cyan-400 focus:outline-none ml-auto block"
+                          value={item.taxAmount ?? 0}
+                          onChange={e => updateItem(item.productId, "taxAmount", e.target.value === "" ? "" : Number(e.target.value))}
+                        />
+                      </TableCell>
+
+                      {/* MRP (Selling Price) */}
+                      <TableCell className="py-2.5 px-1 text-right">
+                        <input
+                          type="number"
+                          min={0}
+                          step="any"
+                          style={{
+                            color: '#34d399',
+                            backgroundColor: '#0f172a',
+                            WebkitTextFillColor: '#34d399',
+                          }}
+                          className="w-24 h-9 px-2 text-xs border-2 border-slate-600 font-bold text-right font-code rounded-lg shadow-sm focus:border-emerald-400 focus:outline-none ml-auto block"
+                          value={item.sellingPrice ?? 0}
+                          onChange={e => updateItem(item.productId, "sellingPrice", e.target.value === "" ? "" : Number(e.target.value))}
+                        />
+                      </TableCell>
+
+                      {/* Alert Level (minStock) */}
+                      <TableCell className="py-2.5 px-1 text-center">
+                        <input
+                          type="number"
+                          min={0}
+                          style={{
+                            color: '#38bdf8',
+                            backgroundColor: '#0f172a',
+                            WebkitTextFillColor: '#38bdf8',
+                          }}
+                          className="w-16 h-9 px-2 text-xs border-2 border-slate-600 font-bold text-center rounded-lg shadow-sm focus:border-cyan-400 focus:outline-none mx-auto block"
+                          value={item.minStock ?? 2}
+                          onChange={e => updateItem(item.productId, "minStock", e.target.value === "" ? "" : Number(e.target.value))}
+                        />
+                      </TableCell>
+
+                      {/* Subtotal */}
+                      <TableCell className="py-2.5 px-2 text-right font-code font-bold text-foreground">
+                        ₹{lineSubtotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      </TableCell>
+
+                      {/* Remove */}
+                      <TableCell className="py-2.5 px-2 text-center">
+                        <Button
+                          variant="ghost" size="icon"
+                          className="h-8 w-8 text-destructive/40 hover:text-destructive hover:bg-destructive/10"
+                          onClick={() => removeItem(item.productId)}
                         >
-                          <Plus className="w-3.5 h-3.5" />
+                          <Trash2 className="w-4 h-4" />
                         </Button>
-                      </div>
-                    </TableCell>
-
-                    {/* Qty */}
-                    <TableCell className="py-2.5 px-2 text-center">
-                      <input
-                        type="number"
-                        min={1}
-                        style={{
-                          color: '#ffffff',
-                          backgroundColor: '#0f172a',
-                          WebkitTextFillColor: '#ffffff',
-                        }}
-                        className="w-16 h-9 px-2 text-xs border-2 border-slate-600 font-bold text-center rounded-lg shadow-sm focus:border-cyan-400 focus:outline-none mx-auto block"
-                        value={item.quantity ?? 1}
-                        onChange={e => updateItem(item.productId, "quantity", e.target.value === "" ? "" : Number(e.target.value))}
-                      />
-                    </TableCell>
-
-                    {/* Purchase Price (Cost) */}
-                    <TableCell className="py-2.5 px-2 text-right">
-                      <input
-                        type="number"
-                        min={0}
-                        step="any"
-                        style={{
-                          color: '#fbbf24',
-                          backgroundColor: '#0f172a',
-                          WebkitTextFillColor: '#fbbf24',
-                        }}
-                        className="w-24 h-9 px-2 text-xs border-2 border-slate-600 font-bold text-right font-code rounded-lg shadow-sm focus:border-amber-400 focus:outline-none ml-auto block"
-                        value={item.purchasePrice ?? 0}
-                        onChange={e => updateItem(item.productId, "purchasePrice", e.target.value === "" ? "" : Number(e.target.value))}
-                      />
-                    </TableCell>
-
-                    {/* MRP (Selling Price) */}
-                    <TableCell className="py-2.5 px-2 text-right">
-                      <input
-                        type="number"
-                        min={0}
-                        step="any"
-                        style={{
-                          color: '#34d399',
-                          backgroundColor: '#0f172a',
-                          WebkitTextFillColor: '#34d399',
-                        }}
-                        className="w-24 h-9 px-2 text-xs border-2 border-slate-600 font-bold text-right font-code rounded-lg shadow-sm focus:border-emerald-400 focus:outline-none ml-auto block"
-                        value={item.sellingPrice ?? 0}
-                        onChange={e => updateItem(item.productId, "sellingPrice", e.target.value === "" ? "" : Number(e.target.value))}
-                      />
-                    </TableCell>
-
-                    {/* Alert Level (minStock) */}
-                    <TableCell className="py-2.5 px-2 text-center">
-                      <input
-                        type="number"
-                        min={0}
-                        style={{
-                          color: '#38bdf8',
-                          backgroundColor: '#0f172a',
-                          WebkitTextFillColor: '#38bdf8',
-                        }}
-                        className="w-16 h-9 px-2 text-xs border-2 border-slate-600 font-bold text-center rounded-lg shadow-sm focus:border-cyan-400 focus:outline-none mx-auto block"
-                        value={item.minStock ?? 2}
-                        onChange={e => updateItem(item.productId, "minStock", e.target.value === "" ? "" : Number(e.target.value))}
-                      />
-                    </TableCell>
-
-                    {/* Subtotal */}
-                    <TableCell className="py-2.5 px-2 text-right font-code font-bold text-foreground">
-                      ₹{((Number(item.quantity) || 0) * (Number(item.purchasePrice) || 0)).toLocaleString()}
-                    </TableCell>
-
-                    {/* Remove */}
-                    <TableCell className="py-2.5 px-2 text-center">
-                      <Button
-                        variant="ghost" size="icon"
-                        className="h-8 w-8 text-destructive/40 hover:text-destructive hover:bg-destructive/10"
-                        onClick={() => removeItem(item.productId)}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
                 {purchaseItems.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={9} className="h-72 text-center">
+                    <TableCell colSpan={11} className="h-72 text-center">
                       <div className="flex flex-col items-center justify-center opacity-30 gap-3">
                         <Package className="w-12 h-12" />
                         <div className="space-y-1">
@@ -1714,12 +1880,16 @@ export default function NewPurchasePage() {
                     <TableCell colSpan={3} className="py-3 px-3 text-right text-xs font-bold uppercase tracking-wider text-muted-foreground">
                       Sheet Total ({purchaseItems.length} Products):
                     </TableCell>
-                    <TableCell className="py-3 px-2 text-center text-xs font-bold text-foreground">
+                    <TableCell className="py-3 px-1 text-center text-xs font-bold text-foreground">
                       {purchaseItems.reduce((acc, i) => acc + (Number(i.quantity) || 0), 0)}
                     </TableCell>
-                    <TableCell colSpan={3} />
+                    <TableCell />
+                    <TableCell colSpan={2} className="py-3 px-1 text-right text-xs font-bold text-cyan-400 font-code">
+                      +₹{totalTax.toLocaleString(undefined, { maximumFractionDigits: 2 })} GST
+                    </TableCell>
+                    <TableCell colSpan={2} />
                     <TableCell className="py-3 px-2 text-right font-code font-bold text-base text-accent">
-                      ₹{total.toLocaleString()}
+                      ₹{total.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                     </TableCell>
                     <TableCell />
                   </TableRow>
@@ -1900,17 +2070,6 @@ export default function NewPurchasePage() {
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <Label className="text-xs font-semibold flex items-center gap-1">
-                    <UserCheck className="w-3 h-3 text-muted-foreground" /> Contact Person
-                  </Label>
-                  <Input
-                    className="h-9 text-xs"
-                    placeholder="Name"
-                    value={scannedSupplierForm.contactPerson}
-                    onChange={e => setScannedSupplierForm({ ...scannedSupplierForm, contactPerson: e.target.value })}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs font-semibold flex items-center gap-1">
                     <Phone className="w-3 h-3 text-muted-foreground" /> Full Mobile Number *
                   </Label>
                   <Input
@@ -1921,31 +2080,43 @@ export default function NewPurchasePage() {
                     required
                   />
                 </div>
+                <div className="space-y-1">
+                  <Label className="text-xs font-semibold flex items-center gap-1">
+                    <CreditCard className="w-3 h-3 text-muted-foreground" /> GSTIN / GST No.
+                  </Label>
+                  <Input
+                    className="h-9 text-xs font-code font-bold uppercase tracking-wide"
+                    placeholder="e.g. 32AAAAA0000A1Z5"
+                    value={scannedSupplierForm.gstNumber}
+                    onChange={e => setScannedSupplierForm({ ...scannedSupplierForm, gstNumber: e.target.value.toUpperCase() })}
+                  />
+                </div>
               </div>
 
-              <div className="space-y-1">
-                <Label className="text-xs font-semibold flex items-center gap-1">
-                  <Mail className="w-3 h-3 text-muted-foreground" /> Email
-                </Label>
-                <Input
-                  type="email"
-                  className="h-9 text-xs"
-                  placeholder="vendor@example.com"
-                  value={scannedSupplierForm.email}
-                  onChange={e => setScannedSupplierForm({ ...scannedSupplierForm, email: e.target.value })}
-                />
-              </div>
-
-              <div className="space-y-1">
-                <Label className="text-xs font-semibold flex items-center gap-1">
-                  <MapPin className="w-3 h-3 text-muted-foreground" /> Address
-                </Label>
-                <Input
-                  className="h-9 text-xs"
-                  placeholder="Address"
-                  value={scannedSupplierForm.address}
-                  onChange={e => setScannedSupplierForm({ ...scannedSupplierForm, address: e.target.value })}
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-xs font-semibold flex items-center gap-1">
+                    <Mail className="w-3 h-3 text-muted-foreground" /> Email
+                  </Label>
+                  <Input
+                    type="email"
+                    className="h-9 text-xs"
+                    placeholder="vendor@example.com"
+                    value={scannedSupplierForm.email}
+                    onChange={e => setScannedSupplierForm({ ...scannedSupplierForm, email: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs font-semibold flex items-center gap-1">
+                    <MapPin className="w-3 h-3 text-muted-foreground" /> Address
+                  </Label>
+                  <Input
+                    className="h-9 text-xs"
+                    placeholder="Address"
+                    value={scannedSupplierForm.address}
+                    onChange={e => setScannedSupplierForm({ ...scannedSupplierForm, address: e.target.value })}
+                  />
+                </div>
               </div>
             </div>
 
@@ -2001,17 +2172,6 @@ export default function NewPurchasePage() {
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <Label className="text-xs font-semibold flex items-center gap-1">
-                      <UserCheck className="w-3 h-3 text-muted-foreground" /> Contact Person
-                    </Label>
-                    <Input
-                      className="h-9 text-xs"
-                      placeholder="Name"
-                      value={editSupplierForm.contactPerson}
-                      onChange={e => setEditSupplierForm({ ...editSupplierForm, contactPerson: e.target.value })}
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs font-semibold flex items-center gap-1">
                       <Phone className="w-3 h-3 text-muted-foreground" /> Full Mobile Number *
                     </Label>
                     <Input
@@ -2022,31 +2182,43 @@ export default function NewPurchasePage() {
                       required
                     />
                   </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs font-semibold flex items-center gap-1">
+                      <CreditCard className="w-3 h-3 text-muted-foreground" /> GSTIN / GST No.
+                    </Label>
+                    <Input
+                      className="h-9 text-xs font-code font-bold uppercase tracking-wide"
+                      placeholder="e.g. 32AAAAA0000A1Z5"
+                      value={editSupplierForm.gstNumber}
+                      onChange={e => setEditSupplierForm({ ...editSupplierForm, gstNumber: e.target.value.toUpperCase() })}
+                    />
+                  </div>
                 </div>
 
-                <div className="space-y-1">
-                  <Label className="text-xs font-semibold flex items-center gap-1">
-                    <Mail className="w-3 h-3 text-muted-foreground" /> Email
-                  </Label>
-                  <Input
-                    type="email"
-                    className="h-9 text-xs"
-                    placeholder="vendor@example.com"
-                    value={editSupplierForm.email}
-                    onChange={e => setEditSupplierForm({ ...editSupplierForm, email: e.target.value })}
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <Label className="text-xs font-semibold flex items-center gap-1">
-                    <MapPin className="w-3 h-3 text-muted-foreground" /> Address
-                  </Label>
-                  <Input
-                    className="h-9 text-xs"
-                    placeholder="Address"
-                    value={editSupplierForm.address}
-                    onChange={e => setEditSupplierForm({ ...editSupplierForm, address: e.target.value })}
-                  />
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs font-semibold flex items-center gap-1">
+                      <Mail className="w-3 h-3 text-muted-foreground" /> Email
+                    </Label>
+                    <Input
+                      type="email"
+                      className="h-9 text-xs"
+                      placeholder="vendor@example.com"
+                      value={editSupplierForm.email}
+                      onChange={e => setEditSupplierForm({ ...editSupplierForm, email: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs font-semibold flex items-center gap-1">
+                      <MapPin className="w-3 h-3 text-muted-foreground" /> Address
+                    </Label>
+                    <Input
+                      className="h-9 text-xs"
+                      placeholder="Address"
+                      value={editSupplierForm.address}
+                      onChange={e => setEditSupplierForm({ ...editSupplierForm, address: e.target.value })}
+                    />
+                  </div>
                 </div>
               </div>
 

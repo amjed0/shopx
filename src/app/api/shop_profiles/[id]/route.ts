@@ -51,6 +51,7 @@ export async function POST(
     if (data.location !== undefined) updateFields.location = data.location;
     if (data.phone !== undefined) updateFields.phone = data.phone;
     if (data.email !== undefined) updateFields.email = data.email;
+    if (data.gstNumber !== undefined) updateFields.gstNumber = data.gstNumber;
     if (data.businessCategory !== undefined) updateFields.businessCategory = data.businessCategory;
 
     const shop = await Shop.findOneAndUpdate(

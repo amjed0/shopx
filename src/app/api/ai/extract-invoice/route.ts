@@ -177,6 +177,7 @@ function repairAndParseGeminiJson(rawText: string): any {
       items,
       supplierName: extractString('supplierName'),
       supplierPhone: extractString('supplierPhone'),
+      supplierGst: extractString('supplierGst') || extractString('supplierGstin'),
       supplierEmail: extractString('supplierEmail'),
       supplierAddress: extractString('supplierAddress'),
       supplierContactPerson: extractString('supplierContactPerson'),
@@ -223,7 +224,9 @@ For EACH product item found, extract:
 - "name": Product name (as written on the bill)
 - "itemCode": Item Code, SKU, Product Code, HSN code, or Part No if printed on the bill (null if not shown)
 - "quantity": Number of units purchased (default to 1 if not clear)
-- "purchasePrice": Price per unit in INR (if only total is given, divide by quantity)
+- "purchasePrice": Price per unit in INR (before tax or unit cost)
+- "taxRate": GST percentage rate if shown (e.g. 18, 12, 5, 0; null if not specified)
+- "taxAmount": Total GST/tax amount for this item (null if not shown)
 - "sellingPrice": MRP or retail selling price per unit if visible (null if not shown)
 - "category": Accurate category based on product type.
 
@@ -240,7 +243,9 @@ CRITICAL RULES:
 3. INVOICE DATE:
    - Extract the exact bill/invoice date printed on the bill.
    - Format it strictly as YYYY-MM-DD (e.g. "2026-11-12"). If year is 2 digits like 26, convert to 2026.
-4. OUTPUT PURE JSON:
+4. SUPPLIER GST NUMBER:
+   - Extract the supplier's GSTIN / GST Number (e.g. 15-character Indian GST format like "32AAAAA0000A1Z5") if printed on the invoice into "supplierGst".
+5. OUTPUT PURE JSON:
    - Return valid JSON only, no markdown formatting.
 
 Return JSON in this format:
@@ -252,11 +257,14 @@ Return JSON in this format:
       "itemCode": "ITM-001 or SKU or null",
       "quantity": 1,
       "purchasePrice": 100,
+      "taxRate": 18,
+      "taxAmount": 18,
       "sellingPrice": 150,
       "category": "Fragrance"
     }
   ],
   "supplierName": "Vendor Name or null",
+  "supplierGst": "32AAAAA0000A1Z5 or null",
   "supplierPhone": "9876543210 or null",
   "supplierEmail": "email@example.com or null",
   "supplierAddress": "Full address or null",
@@ -372,10 +380,14 @@ Return JSON in this format:
         ? `code_${itemCode.toLowerCase()}`
         : `name_${name.toLowerCase()}`;
 
+      const taxRate = raw.taxRate !== undefined && raw.taxRate !== null ? Number(raw.taxRate) : 0;
+      const taxAmount = raw.taxAmount !== undefined && raw.taxAmount !== null ? Number(raw.taxAmount) : 0;
+
       if (seenMap.has(dedupKey)) {
         // Already seen this product/serial item: merge quantity instead of duplicating!
         const existing = seenMap.get(dedupKey);
         existing.quantity += quantity;
+        if (taxAmount > 0) existing.taxAmount = (existing.taxAmount || 0) + taxAmount;
       } else {
         seenMap.set(dedupKey, {
           serialNumber,
@@ -383,6 +395,8 @@ Return JSON in this format:
           itemCode,
           quantity,
           purchasePrice,
+          taxRate,
+          taxAmount,
           sellingPrice,
           category,
         });
@@ -396,6 +410,7 @@ Return JSON in this format:
       items,
       supplierName: parsed.supplierName || null,
       supplierPhone: parsed.supplierPhone || null,
+      supplierGst: parsed.supplierGst || parsed.supplierGstin || null,
       supplierEmail: parsed.supplierEmail || null,
       supplierAddress: parsed.supplierAddress || null,
       supplierContactPerson: parsed.supplierContactPerson || null,

@@ -17,8 +17,18 @@ import {
   CheckCircle2,
   Loader2,
   Sparkles,
+  FileText,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
@@ -35,6 +45,7 @@ interface ShopData {
   email: string
   phone: string
   location: string
+  gstNumber?: string
   businessCategory?: string
   createdAt: string
 }
@@ -45,6 +56,54 @@ export default function ProfilePage() {
   const [shopData, setShopData] = React.useState<ShopData | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [updatingCategory, setUpdatingCategory] = React.useState(false)
+
+  // Edit Business Profile Dialog
+  const [isEditProfileOpen, setIsEditProfileOpen] = React.useState(false)
+  const [editProfileForm, setEditProfileForm] = React.useState({
+    ownerName: "",
+    companyName: "",
+    phone: "",
+    email: "",
+    location: "",
+    gstNumber: "",
+  })
+  const [isSavingProfile, setIsSavingProfile] = React.useState(false)
+
+  const handleOpenEdit = () => {
+    if (!shopData) return
+    setEditProfileForm({
+      ownerName: shopData.ownerName || "",
+      companyName: shopData.companyName || "",
+      phone: shopData.phone || "",
+      email: shopData.email || "",
+      location: shopData.location || "",
+      gstNumber: shopData.gstNumber || "",
+    })
+    setIsEditProfileOpen(true)
+  }
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!session?.user?.id) return
+    setIsSavingProfile(true)
+    try {
+      const res = await fetch(`/api/shop_profiles/${session.user.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(editProfileForm),
+      })
+      if (!res.ok) throw new Error("Failed to update profile")
+      const updated = await res.json()
+      setShopData(updated)
+      setIsEditProfileOpen(false)
+      window.dispatchEvent(new CustomEvent("shop-profile-updated", { detail: updated }))
+      toast({ title: "Shop Profile Updated ✓", description: "Business details and GSTIN saved successfully." })
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Update Failed", description: err.message })
+    } finally {
+      setIsSavingProfile(false)
+    }
+  }
 
  React.useEffect(() => {
   if (status === "loading") return
@@ -188,9 +247,9 @@ export default function ProfilePage() {
                 variant="outline"
                 size="sm"
                 className="rounded-full gap-2 border-border hover:bg-secondary/50 font-bold"
-                onClick={() => router.push("/profile/edit")}
+                onClick={handleOpenEdit}
               >
-                <Edit className="w-4 h-4" /> Edit
+                <Edit className="w-4 h-4" /> Edit Profile
               </Button>
             </CardHeader>
             <CardContent className="grid gap-6 sm:grid-cols-2">
@@ -199,6 +258,15 @@ export default function ProfilePage() {
                 <div className="flex items-center gap-3 text-foreground font-bold">
                   <Building className="w-4 h-4 text-muted-foreground" />
                   {shopData.companyName}
+                </div>
+              </div>
+              <div className="space-y-1">
+                <p className="text-[10px] uppercase font-bold tracking-widest text-primary">Shop GST Number (GSTIN)</p>
+                <div className="flex items-center gap-3 text-foreground font-bold">
+                  <FileText className="w-4 h-4 text-accent" />
+                  <span className="font-code text-accent font-bold">
+                    {shopData.gstNumber ? shopData.gstNumber : <span className="text-muted-foreground font-normal">Not Registered</span>}
+                  </span>
                 </div>
               </div>
               <div className="space-y-1">
@@ -215,7 +283,7 @@ export default function ProfilePage() {
                   {shopData.phone || "—"}
                 </div>
               </div>
-              <div className="space-y-1">
+              <div className="space-y-1 sm:col-span-2">
                 <p className="text-[10px] uppercase font-bold tracking-widest text-primary">Shop Location</p>
                 <div className="flex items-center gap-3 text-foreground font-bold">
                   <MapPin className="w-4 h-4 text-muted-foreground" />
@@ -380,6 +448,110 @@ export default function ProfilePage() {
           </Card>
         </div>
       </div>
+
+      {/* ── EDIT BUSINESS IDENTITY & GSTIN DIALOG ── */}
+      <Dialog open={isEditProfileOpen} onOpenChange={setIsEditProfileOpen}>
+        <DialogContent className="sm:max-w-md">
+          <form onSubmit={handleSaveProfile}>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-lg font-bold">
+                <Store className="w-5 h-5 text-accent" /> Edit Business Identity
+              </DialogTitle>
+              <CardDescription>
+                Update your store details and GSTIN. These appear on generated customer bills.
+              </CardDescription>
+            </DialogHeader>
+
+            <div className="space-y-3 py-4">
+              <div>
+                <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Shop / Company Name *</Label>
+                <Input
+                  required
+                  placeholder="e.g. ShopX Elite Retail"
+                  className="mt-1 h-9 text-xs font-bold"
+                  value={editProfileForm.companyName}
+                  onChange={e => setEditProfileForm(prev => ({ ...prev, companyName: e.target.value }))}
+                />
+              </div>
+
+              <div>
+                <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Shop GST Number (GSTIN)</Label>
+                <Input
+                  placeholder="e.g. 32AAAAA0000A1Z5"
+                  className="mt-1 h-9 text-xs font-code font-bold uppercase tracking-wider"
+                  value={editProfileForm.gstNumber}
+                  onChange={e => setEditProfileForm(prev => ({ ...prev, gstNumber: e.target.value.toUpperCase() }))}
+                />
+                <p className="text-[10px] text-muted-foreground mt-0.5">Used for bill generation and printed tax receipts.</p>
+              </div>
+
+              <div>
+                <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Owner Name *</Label>
+                <Input
+                  required
+                  placeholder="Owner's Name"
+                  className="mt-1 h-9 text-xs"
+                  value={editProfileForm.ownerName}
+                  onChange={e => setEditProfileForm(prev => ({ ...prev, ownerName: e.target.value }))}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Phone Number</Label>
+                  <Input
+                    placeholder="e.g. 9876543210"
+                    className="mt-1 h-9 text-xs font-code"
+                    value={editProfileForm.phone}
+                    onChange={e => setEditProfileForm(prev => ({ ...prev, phone: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Email Address</Label>
+                  <Input
+                    type="email"
+                    placeholder="shop@example.com"
+                    className="mt-1 h-9 text-xs"
+                    value={editProfileForm.email}
+                    onChange={e => setEditProfileForm(prev => ({ ...prev, email: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Shop Location / Address</Label>
+                <Input
+                  placeholder="e.g. MG Road, Bengaluru, Karnataka"
+                  className="mt-1 h-9 text-xs"
+                  value={editProfileForm.location}
+                  onChange={e => setEditProfileForm(prev => ({ ...prev, location: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            <DialogFooter className="gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="text-xs"
+                onClick={() => setIsEditProfileOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={isSavingProfile}
+                className="text-xs font-bold bg-accent text-accent-foreground hover:brightness-110"
+              >
+                {isSavingProfile ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
+                Save Identity
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

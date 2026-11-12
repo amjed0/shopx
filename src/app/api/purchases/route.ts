@@ -44,7 +44,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { supplierId, productId, productName, itemCode, quantity, purchasePrice, billingDate } = body;
+    const { supplierId, productId, productName, itemCode, quantity, purchasePrice, taxRate, taxAmount, billingDate } = body;
 
     const purchase = await Purchase.create({
       userId,
@@ -54,6 +54,8 @@ export async function POST(request: Request) {
       itemCode,
       quantity,
       purchasePrice,
+      taxRate: Number(taxRate) || 0,
+      taxAmount: Number(taxAmount) || 0,
       billingDate: billingDate || new Date().toISOString().split('T')[0],
     });
 

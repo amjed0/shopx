@@ -8,6 +8,8 @@ export interface IPurchase extends Document {
   itemCode?: string;
   quantity: number;
   purchasePrice: number;
+  taxRate?: number;
+  taxAmount?: number;
   billingDate: string;
   createdAt: string;
 }
@@ -20,6 +22,8 @@ const PurchaseSchema = new Schema<IPurchase>({
   itemCode: { type: String },
   quantity: { type: Number, required: true },
   purchasePrice: { type: Number, required: true },
+  taxRate: { type: Number, default: 0 },
+  taxAmount: { type: Number, default: 0 },
   billingDate: { type: String, default: () => new Date().toISOString().split('T')[0] },
   createdAt: { type: String, default: () => new Date().toISOString() },
 }, { strict: false });

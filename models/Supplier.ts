@@ -7,6 +7,7 @@ export interface ISupplier extends Document {
   phone: string;
   email?: string;
   address?: string;
+  gstNumber?: string;
   createdAt: string;
 }
 
@@ -17,8 +18,9 @@ const SupplierSchema = new Schema<ISupplier>({
   phone: { type: String, required: true },
   email: { type: String },
   address: { type: String },
+  gstNumber: { type: String },
   createdAt: { type: String, default: () => new Date().toISOString() },
-});
+}, { strict: false });
 
 const Supplier: Model<ISupplier> =
   mongoose.models.Supplier || mongoose.model<ISupplier>('Supplier', SupplierSchema);

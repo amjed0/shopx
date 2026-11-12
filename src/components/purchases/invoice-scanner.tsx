@@ -24,6 +24,8 @@ export interface ScannedItem {
   itemCode?: string | null
   quantity: number
   purchasePrice: number
+  taxRate?: number | null
+  taxAmount?: number | null
   sellingPrice?: number | null
   category: string
 }
@@ -31,6 +33,7 @@ export interface ScannedItem {
 export interface ScanResult {
   items: ScannedItem[]
   supplierName: string | null
+  supplierGst?: string | null
   supplierPhone?: string | null
   supplierEmail?: string | null
   supplierAddress?: string | null
