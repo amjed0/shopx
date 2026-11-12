@@ -399,11 +399,11 @@ export default function InventoryPage() {
   const lowStockCount = products.filter(p => p.stock <= p.minStock).length
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-4 sm:space-y-8">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-4xl font-headline font-bold text-foreground">Inventory Vault</h1>
-          <p className="text-muted-foreground">Manage products and track real-time stock levels.</p>
+          <h1 className="text-2xl sm:text-4xl font-headline font-bold text-foreground">Inventory Vault</h1>
+          <p className="text-xs sm:text-sm text-muted-foreground">Manage products and track real-time stock levels.</p>
         </div>
         <div className="flex gap-2">
           <Dialog open={isAddDialogOpen} onOpenChange={(open) => {
@@ -458,15 +458,15 @@ export default function InventoryPage() {
                   </div>
 
                   {/* Name */}
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label className="text-right">Name</Label>
-                    <Input className="col-span-3" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} required />
+                  <div className="grid grid-cols-1 sm:grid-cols-4 sm:items-center gap-1.5 sm:gap-4">
+                    <Label className="sm:text-right text-xs font-semibold">Name</Label>
+                    <Input className="sm:col-span-3" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} required />
                   </div>
 
                   {/* SKU */}
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label className="text-right">SKU</Label>
-                    <div className="col-span-3 flex gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-4 sm:items-center gap-1.5 sm:gap-4">
+                    <Label className="sm:text-right text-xs font-semibold">SKU</Label>
+                    <div className="sm:col-span-3 flex gap-2">
                       <Input value={formData.sku} onChange={e => setFormData({...formData, sku: e.target.value})} required />
                       <Button type="button" variant="ghost" size="icon" onClick={() => setFormData({...formData, sku: generateSKU()})}>
                         <RefreshCw className="w-4 h-4" />
@@ -475,9 +475,9 @@ export default function InventoryPage() {
                   </div>
 
                   {/* Category */}
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label className="text-right">Category</Label>
-                    <div className="col-span-3 flex gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-4 sm:items-center gap-1.5 sm:gap-4">
+                    <Label className="sm:text-right text-xs font-semibold">Category</Label>
+                    <div className="sm:col-span-3 flex gap-2">
                       {isNewCategoryMode ? (
                         <Input 
                           placeholder="Type new category..." 
@@ -516,9 +516,9 @@ export default function InventoryPage() {
                   </div>
 
                   {/* Supplier */}
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label className="text-right">Supplier</Label>
-                    <div className="col-span-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-4 sm:items-center gap-1.5 sm:gap-4">
+                    <Label className="sm:text-right text-xs font-semibold">Supplier</Label>
+                    <div className="sm:col-span-3">
                       <Select value={selectedSupplier} onValueChange={setSelectedSupplier}>
                         <SelectTrigger className="flex-1">
                           <SelectValue placeholder="Select supplier" />
@@ -594,21 +594,21 @@ export default function InventoryPage() {
       </div>
 
       <Card className="border-none bg-card shadow-sm">
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle className="font-headline">Catalog</CardTitle>
-          <div className="flex items-center gap-2">
-            <div className="relative">
+        <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:p-6">
+          <CardTitle className="font-headline text-lg sm:text-xl">Catalog</CardTitle>
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+            <div className="relative flex-1 sm:w-64 sm:flex-none">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input placeholder="Search..." className="w-64 pl-9 rounded-full bg-secondary/30 border-none" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+              <Input placeholder="Search..." className="w-full pl-9 rounded-full bg-secondary/30 border-none text-sm" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
             </div>
             {showOnlyLowStock && (
-              <Button variant="ghost" size="sm" onClick={() => setShowOnlyLowStock(false)} className="text-xs gap-1 h-8 rounded-full bg-destructive/10 text-destructive hover:bg-destructive/20">
+              <Button variant="ghost" size="sm" onClick={() => setShowOnlyLowStock(false)} className="text-xs gap-1 h-8 rounded-full bg-destructive/10 text-destructive hover:bg-destructive/20 shrink-0">
                 <X className="w-3 h-3" /> Clear
               </Button>
             )}
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-2 sm:p-6 pt-0">
           {loadingProducts ? (
             <div className="flex justify-center py-20">
               <Loader2 className="w-8 h-8 animate-spin text-primary opacity-50" />
@@ -618,16 +618,16 @@ export default function InventoryPage() {
               {Object.keys(groupedProducts).sort().map(category => (
                 <AccordionItem key={category} value={category} className="border-border/50">
                   <div className="flex items-center justify-between pr-4 group">
-                    <AccordionTrigger className="hover:no-underline flex-1">
-                      <div className="flex items-center gap-3">
-                        <Tag className="w-4 h-4 text-primary" />
-                        <span className="font-bold text-lg">{category}</span>
-                        <Badge variant="secondary" className="rounded-md bg-secondary/50">{groupedProducts[category].length} Items</Badge>
+                    <AccordionTrigger className="hover:no-underline flex-1 py-3">
+                      <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                        <Tag className="w-4 h-4 text-primary shrink-0" />
+                        <span className="font-bold text-base sm:text-lg truncate">{category}</span>
+                        <Badge variant="secondary" className="rounded-md bg-secondary/50 text-[10px] shrink-0">{groupedProducts[category].length} Items</Badge>
                       </div>
                     </AccordionTrigger>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity">
                           <MoreVertical className="w-4 h-4" />
                         </Button>
                       </DropdownMenuTrigger>
@@ -638,9 +638,10 @@ export default function InventoryPage() {
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
-                  <AccordionContent>
-                    <Table>
-                      <TableHeader className="bg-secondary/20">
+                  <AccordionContent className="pt-1 pb-3">
+                    <div className="overflow-x-auto w-full">
+                      <Table className="min-w-[620px] sm:min-w-full">
+                        <TableHeader className="bg-secondary/20">
                         <TableRow className="border-none hover:bg-transparent">
                           <TableHead className="font-bold uppercase text-[10px]">Info</TableHead>
                           <TableHead className="font-bold uppercase text-[10px]">Supplier</TableHead>
@@ -728,7 +729,8 @@ export default function InventoryPage() {
                         ))}
                       </TableBody>
                     </Table>
-                  </AccordionContent>
+                  </div>
+                </AccordionContent>
                 </AccordionItem>
               ))}
               {Object.keys(groupedProducts).length === 0 && !loadingProducts && (

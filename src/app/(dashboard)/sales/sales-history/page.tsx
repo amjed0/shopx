@@ -98,28 +98,28 @@ export default function SalesHistoryPage() {
     setExpandedSaleId(prev => (prev === id ? null : id))
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
+    <div className="space-y-6 sm:space-y-8 animate-in fade-in duration-500">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3 sm:gap-4">
           <Button
             variant="ghost"
             size="icon"
-            className="rounded-full hover:bg-secondary"
+            className="rounded-full hover:bg-secondary shrink-0"
             onClick={() => router.back()}
           >
             <ArrowLeft className="w-5 h-5" />
           </Button>
           <div>
-            <h1 className="text-4xl font-headline font-bold text-foreground">
+            <h1 className="text-2xl sm:text-4xl font-headline font-bold text-foreground">
               Sales <span className="text-primary">Registry</span>
             </h1>
-            <p className="text-muted-foreground">Track billing history, returns, and payment status.</p>
+            <p className="text-xs sm:text-sm text-muted-foreground">Track billing history, returns, and payment status.</p>
           </div>
         </div>
         <Button
           onClick={() => router.push("/sales/new")}
-          className="bg-primary text-primary-foreground gap-2 font-bold px-8 py-6 rounded-full shadow-lg shadow-primary/20"
+          className="w-full sm:w-auto bg-primary text-primary-foreground gap-2 font-bold px-6 sm:px-8 py-5 sm:py-6 rounded-full shadow-lg shadow-primary/20"
         >
           <ShoppingBag className="w-5 h-5" />
           Create New Bill
@@ -127,48 +127,48 @@ export default function SalesHistoryPage() {
       </div>
 
       {/* Stats */}
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-        <Card className="border-none bg-card shadow-sm p-4">
-          <div className="flex items-center gap-4">
-            <div className="bg-primary/10 p-3 rounded-xl">
-              <FileText className="w-6 h-6 text-primary" />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
+        <Card className="border-none bg-card shadow-sm p-3 sm:p-4">
+          <div className="flex items-center gap-2.5 sm:gap-4">
+            <div className="bg-primary/10 p-2 sm:p-3 rounded-xl shrink-0">
+              <FileText className="w-5 h-5 sm:w-6 sm:h-6 text-primary" />
             </div>
-            <div>
-              <p className="text-xs text-muted-foreground uppercase font-bold tracking-wider">Today's Invoices</p>
-              <p className="text-2xl font-bold font-headline">{stats.todayCount}</p>
-            </div>
-          </div>
-        </Card>
-        <Card className="border-none bg-card shadow-sm p-4">
-          <div className="flex items-center gap-4">
-            <div className="bg-accent/10 p-3 rounded-xl">
-              <IndianRupee className="w-6 h-6 text-accent" />
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground uppercase font-bold tracking-wider">Gross Sales</p>
-              <p className="text-2xl font-bold font-headline">₹{stats.gross.toLocaleString()}</p>
+            <div className="min-w-0">
+              <p className="text-[10px] sm:text-xs text-muted-foreground uppercase font-bold tracking-wider truncate">Today's Invoices</p>
+              <p className="text-lg sm:text-2xl font-bold font-headline">{stats.todayCount}</p>
             </div>
           </div>
         </Card>
-        <Card className="border-none bg-card shadow-sm p-4">
-          <div className="flex items-center gap-4">
-            <div className="bg-orange-500/10 p-3 rounded-xl">
-              <Wallet className="w-6 h-6 text-orange-400" />
+        <Card className="border-none bg-card shadow-sm p-3 sm:p-4">
+          <div className="flex items-center gap-2.5 sm:gap-4">
+            <div className="bg-accent/10 p-2 sm:p-3 rounded-xl shrink-0">
+              <IndianRupee className="w-5 h-5 sm:w-6 sm:h-6 text-accent" />
             </div>
-            <div>
-              <p className="text-xs text-muted-foreground uppercase font-bold tracking-wider">Digital Mix</p>
-              <p className="text-2xl font-bold font-headline">{stats.digitalPercent}%</p>
+            <div className="min-w-0">
+              <p className="text-[10px] sm:text-xs text-muted-foreground uppercase font-bold tracking-wider truncate">Gross Sales</p>
+              <p className="text-lg sm:text-2xl font-bold font-headline truncate">₹{stats.gross.toLocaleString()}</p>
             </div>
           </div>
         </Card>
-        <Card className="border-none bg-card shadow-sm p-4">
-          <div className="flex items-center gap-4">
-            <div className="bg-purple-500/10 p-3 rounded-xl">
-              <CreditCard className="w-6 h-6 text-purple-400" />
+        <Card className="border-none bg-card shadow-sm p-3 sm:p-4">
+          <div className="flex items-center gap-2.5 sm:gap-4">
+            <div className="bg-orange-500/10 p-2 sm:p-3 rounded-xl shrink-0">
+              <Wallet className="w-5 h-5 sm:w-6 sm:h-6 text-orange-400" />
             </div>
-            <div>
-              <p className="text-xs text-muted-foreground uppercase font-bold tracking-wider">Credit Sales</p>
-              <p className="text-2xl font-bold font-headline">₹{stats.credit.toLocaleString()}</p>
+            <div className="min-w-0">
+              <p className="text-[10px] sm:text-xs text-muted-foreground uppercase font-bold tracking-wider truncate">Digital Mix</p>
+              <p className="text-lg sm:text-2xl font-bold font-headline">{stats.digitalPercent}%</p>
+            </div>
+          </div>
+        </Card>
+        <Card className="border-none bg-card shadow-sm p-3 sm:p-4">
+          <div className="flex items-center gap-2.5 sm:gap-4">
+            <div className="bg-purple-500/10 p-2 sm:p-3 rounded-xl shrink-0">
+              <CreditCard className="w-5 h-5 sm:w-6 sm:h-6 text-purple-400" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[10px] sm:text-xs text-muted-foreground uppercase font-bold tracking-wider truncate">Credit Sales</p>
+              <p className="text-lg sm:text-2xl font-bold font-headline truncate">₹{stats.credit.toLocaleString()}</p>
             </div>
           </div>
         </Card>
@@ -181,23 +181,24 @@ export default function SalesHistoryPage() {
         </div>
       ) : (
         <Card className="border-none bg-card shadow-sm overflow-hidden">
-          <CardHeader className="bg-secondary/20 border-b border-border/50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <CardHeader className="bg-secondary/20 border-b border-border/50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 sm:p-6">
             <div>
-              <CardTitle className="font-headline text-xl">Recent Transactions</CardTitle>
-              <CardDescription>Click a row to expand item details.</CardDescription>
+              <CardTitle className="font-headline text-lg sm:text-xl">Recent Transactions</CardTitle>
+              <CardDescription className="text-xs">Click a row to expand item details.</CardDescription>
             </div>
-            <div className="relative">
+            <div className="relative w-full sm:w-72">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
                 placeholder="Search invoice or customer..."
-                className="pl-9 h-9 w-72 bg-secondary/50 border-none rounded-full"
+                className="pl-9 h-9 w-full bg-secondary/50 border-none rounded-full text-xs sm:text-sm"
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
               />
             </div>
           </CardHeader>
           <CardContent className="p-0">
-            <Table>
+            <div className="overflow-x-auto w-full">
+              <Table className="min-w-[580px] w-full">
               <TableHeader className="bg-secondary/10">
                 <TableRow className="border-none hover:bg-transparent">
                   <TableHead className="w-8 py-4 pl-4" />
@@ -320,7 +321,8 @@ export default function SalesHistoryPage() {
                 )}
               </TableBody>
             </Table>
-          </CardContent>
+          </div>
+        </CardContent>
         </Card>
       )}
     </div>

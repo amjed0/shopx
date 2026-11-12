@@ -205,29 +205,29 @@ export default function CustomersPage() {
     }).format(n)
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
+    <div className="space-y-6 sm:space-y-8 animate-in fade-in duration-500">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3 sm:gap-4">
           <Button
             variant="ghost"
             size="icon"
-            className="rounded-full hover:bg-secondary"
+            className="rounded-full hover:bg-secondary shrink-0"
             onClick={() => router.back()}
           >
             <ArrowLeft className="w-5 h-5" />
           </Button>
           <div>
-            <h1 className="text-4xl font-headline font-bold text-foreground">
+            <h1 className="text-2xl sm:text-4xl font-headline font-bold text-foreground">
               Customer <span className="text-primary">Registry</span>
             </h1>
-            <p className="text-muted-foreground">Manage customer records, contact details, and transactions.</p>
+            <p className="text-xs sm:text-sm text-muted-foreground">Manage customer records, contact details, and transactions.</p>
           </div>
         </div>
 
         <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
           <DialogTrigger asChild>
-            <Button className="bg-primary text-primary-foreground gap-2 font-bold px-8 py-6 rounded-full shadow-lg shadow-primary/20">
+            <Button className="w-full sm:w-auto bg-primary text-primary-foreground gap-2 font-bold px-6 sm:px-8 py-5 sm:py-6 rounded-full shadow-lg shadow-primary/20">
               <UserPlus className="w-5 h-5" />
               Add Customer
             </Button>
@@ -351,69 +351,72 @@ export default function CustomersPage() {
                 <Loader2 className="w-8 h-8 animate-spin text-primary opacity-50" />
               </div>
             ) : (
-              <Table>
-                <TableHeader className="bg-secondary/10">
-                  <TableRow className="border-none hover:bg-transparent">
-                    <TableHead className="font-bold uppercase text-[10px] tracking-widest py-4 pl-6">Bill ID</TableHead>
-                    <TableHead className="font-bold uppercase text-[10px] tracking-widest py-4">Date</TableHead>
-                    <TableHead className="font-bold uppercase text-[10px] tracking-widest py-4">Items Count</TableHead>
-                    <TableHead className="font-bold uppercase text-[10px] tracking-widest py-4">Method</TableHead>
-                    <TableHead className="font-bold uppercase text-[10px] tracking-widest py-4 text-right pr-6">Total</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {customerSales.length > 0 ? customerSales.map((sale) => (
-                    <TableRow key={sale.id} className="border-border/50 hover:bg-secondary/10 transition-colors">
-                      <TableCell className="pl-6 py-4 font-bold text-xs uppercase text-muted-foreground">
-                        #{sale.id.slice(-6)}
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {new Date(sale.date).toLocaleDateString()}
-                      </TableCell>
-                      <TableCell>{sale.items.length} items</TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="text-[10px] uppercase">
-                          {sale.paymentMethod}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right pr-6 font-bold">
-                        {formatCurrency(sale.total)}
-                      </TableCell>
+              <div className="overflow-x-auto w-full">
+                <Table className="min-w-[550px] w-full">
+                  <TableHeader className="bg-secondary/10">
+                    <TableRow className="border-none hover:bg-transparent">
+                      <TableHead className="font-bold uppercase text-[10px] tracking-widest py-4 pl-6">Bill ID</TableHead>
+                      <TableHead className="font-bold uppercase text-[10px] tracking-widest py-4">Date</TableHead>
+                      <TableHead className="font-bold uppercase text-[10px] tracking-widest py-4">Items Count</TableHead>
+                      <TableHead className="font-bold uppercase text-[10px] tracking-widest py-4">Method</TableHead>
+                      <TableHead className="font-bold uppercase text-[10px] tracking-widest py-4 text-right pr-6">Total</TableHead>
                     </TableRow>
-                  )) : (
-                    <TableRow>
-                      <TableCell colSpan={5} className="text-center py-16 text-muted-foreground">
-                        <div className="flex flex-col items-center gap-3 opacity-40">
-                          <ShoppingCart className="w-10 h-10" />
-                          <p className="font-medium">No sales bills found for this customer.</p>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {customerSales.length > 0 ? customerSales.map((sale) => (
+                      <TableRow key={sale.id} className="border-border/50 hover:bg-secondary/10 transition-colors">
+                        <TableCell className="pl-6 py-4 font-bold text-xs uppercase text-muted-foreground">
+                          #{sale.id.slice(-6)}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {new Date(sale.date).toLocaleDateString()}
+                        </TableCell>
+                        <TableCell>{sale.items.length} items</TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-[10px] uppercase">
+                            {sale.paymentMethod}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right pr-6 font-bold">
+                          {formatCurrency(sale.total)}
+                        </TableCell>
+                      </TableRow>
+                    )) : (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center py-16 text-muted-foreground">
+                          <div className="flex flex-col items-center gap-3 opacity-40">
+                            <ShoppingCart className="w-10 h-10" />
+                            <p className="font-medium">No sales bills found for this customer.</p>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
             )}
           </CardContent>
         </Card>
       ) : (
         <Card className="border-none bg-card shadow-sm overflow-hidden">
-          <CardHeader className="bg-secondary/20 border-b border-border/50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <CardHeader className="bg-secondary/20 border-b border-border/50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 sm:p-6">
             <div>
-              <CardTitle className="font-headline text-xl">Customer Directory</CardTitle>
-              <CardDescription>A list of all registered customers and their contact cards.</CardDescription>
+              <CardTitle className="font-headline text-lg sm:text-xl">Customer Directory</CardTitle>
+              <CardDescription className="text-xs">A list of all registered customers and their contact cards.</CardDescription>
             </div>
-            <div className="relative">
+            <div className="relative w-full sm:w-72">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
                 placeholder="Search customers..."
-                className="pl-9 h-9 w-72 bg-secondary/50 border-none rounded-full"
+                className="pl-9 h-9 w-full bg-secondary/50 border-none rounded-full text-xs sm:text-sm"
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
               />
             </div>
           </CardHeader>
           <CardContent className="p-0">
-            <Table>
+            <div className="overflow-x-auto w-full">
+              <Table className="min-w-[620px] w-full">
               <TableHeader className="bg-secondary/10">
                 <TableRow className="border-none hover:bg-transparent">
                   <TableHead className="font-bold uppercase text-[10px] tracking-widest py-4 pl-6">Customer Name</TableHead>
@@ -478,7 +481,8 @@ export default function CustomersPage() {
                 )}
               </TableBody>
             </Table>
-          </CardContent>
+          </div>
+        </CardContent>
         </Card>
       )}
 

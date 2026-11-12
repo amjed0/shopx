@@ -192,20 +192,20 @@ export default function ProfitLossPage() {
             </div>
 
             {/* Custom range */}
-            <div className="flex items-center gap-3 ml-auto">
-              <Calendar className="w-4 h-4 text-muted-foreground" />
+            <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 sm:gap-3 w-full md:w-auto md:ml-auto">
+              <Calendar className="w-4 h-4 text-muted-foreground shrink-0" />
               <input
                 type="date"
                 value={fromDate}
                 onChange={e => setFromDate(e.target.value)}
-                className="bg-secondary/30 border-none rounded-lg px-3 py-1.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary"
+                className="flex-1 sm:flex-none min-w-[120px] bg-secondary/30 border-none rounded-lg px-2.5 py-1.5 text-xs sm:text-sm text-foreground outline-none focus:ring-2 focus:ring-primary"
               />
               <span className="text-muted-foreground text-xs">to</span>
               <input
                 type="date"
                 value={toDate}
                 onChange={e => setToDate(e.target.value)}
-                className="bg-secondary/30 border-none rounded-lg px-3 py-1.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary"
+                className="flex-1 sm:flex-none min-w-[120px] bg-secondary/30 border-none rounded-lg px-2.5 py-1.5 text-xs sm:text-sm text-foreground outline-none focus:ring-2 focus:ring-primary"
               />
             </div>
           </div>
@@ -219,7 +219,7 @@ export default function ProfitLossPage() {
       ) : data ? (
         <>
           {/* ── SUMMARY CARDS ── */}
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
             {/* Revenue */}
             <Card className="border-none bg-card shadow-sm p-5 space-y-3">
               <div className="flex items-center justify-between">
@@ -341,24 +341,26 @@ export default function ProfitLossPage() {
                 {data.revenueBreakdown.length === 0 ? (
                   <p className="text-center py-10 text-sm text-muted-foreground opacity-50">No income in this period</p>
                 ) : (
-                  <Table>
-                    <TableHeader className="bg-secondary/20">
-                      <TableRow className="border-none hover:bg-transparent">
-                        <TableHead className="font-bold uppercase text-[10px]">Description</TableHead>
-                        <TableHead className="font-bold uppercase text-[10px]">Date</TableHead>
-                        <TableHead className="text-right font-bold uppercase text-[10px]">Amount</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {data.revenueBreakdown.map((r, i) => (
-                        <TableRow key={i} className="border-border/30 hover:bg-secondary/10">
-                          <TableCell className="font-medium text-sm">{r.label}</TableCell>
-                          <TableCell className="text-xs text-muted-foreground">{formatDate(r.date)}</TableCell>
-                          <TableCell className="text-right font-bold text-accent">{formatCurrency(r.amount)}</TableCell>
+                  <div className="overflow-x-auto w-full">
+                    <Table className="min-w-[420px] w-full">
+                      <TableHeader className="bg-secondary/20">
+                        <TableRow className="border-none hover:bg-transparent">
+                          <TableHead className="font-bold uppercase text-[10px]">Description</TableHead>
+                          <TableHead className="font-bold uppercase text-[10px]">Date</TableHead>
+                          <TableHead className="text-right font-bold uppercase text-[10px]">Amount</TableHead>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                      </TableHeader>
+                      <TableBody>
+                        {data.revenueBreakdown.map((r, i) => (
+                          <TableRow key={i} className="border-border/30 hover:bg-secondary/10">
+                            <TableCell className="font-medium text-sm">{r.label}</TableCell>
+                            <TableCell className="text-xs text-muted-foreground">{formatDate(r.date)}</TableCell>
+                            <TableCell className="text-right font-bold text-accent">{formatCurrency(r.amount)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
                 )}
               </CardContent>
             </Card>
@@ -378,28 +380,30 @@ export default function ProfitLossPage() {
                 {data.expenseBreakdown.length === 0 ? (
                   <p className="text-center py-10 text-sm text-muted-foreground opacity-50">No expenses in this period</p>
                 ) : (
-                  <Table>
-                    <TableHeader className="bg-secondary/20">
-                      <TableRow className="border-none hover:bg-transparent">
-                        <TableHead className="font-bold uppercase text-[10px]">Description</TableHead>
-                        <TableHead className="font-bold uppercase text-[10px]">Type</TableHead>
-                        <TableHead className="font-bold uppercase text-[10px]">Date</TableHead>
-                        <TableHead className="text-right font-bold uppercase text-[10px]">Amount</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {data.expenseBreakdown.map((e, i) => (
-                        <TableRow key={i} className="border-border/30 hover:bg-secondary/10">
-                          <TableCell className="font-medium text-sm">{e.label}</TableCell>
-                          <TableCell>
-                            <Badge variant="secondary" className="text-[9px] h-4 uppercase">{e.type}</Badge>
-                          </TableCell>
-                          <TableCell className="text-xs text-muted-foreground">{formatDate(e.date)}</TableCell>
-                          <TableCell className="text-right font-bold text-destructive">{formatCurrency(e.amount)}</TableCell>
+                  <div className="overflow-x-auto w-full">
+                    <Table className="min-w-[480px] w-full">
+                      <TableHeader className="bg-secondary/20">
+                        <TableRow className="border-none hover:bg-transparent">
+                          <TableHead className="font-bold uppercase text-[10px]">Description</TableHead>
+                          <TableHead className="font-bold uppercase text-[10px]">Type</TableHead>
+                          <TableHead className="font-bold uppercase text-[10px]">Date</TableHead>
+                          <TableHead className="text-right font-bold uppercase text-[10px]">Amount</TableHead>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                      </TableHeader>
+                      <TableBody>
+                        {data.expenseBreakdown.map((e, i) => (
+                          <TableRow key={i} className="border-border/30 hover:bg-secondary/10">
+                            <TableCell className="font-medium text-sm">{e.label}</TableCell>
+                            <TableCell>
+                              <Badge variant="secondary" className="text-[9px] h-4 uppercase">{e.type}</Badge>
+                            </TableCell>
+                            <TableCell className="text-xs text-muted-foreground">{formatDate(e.date)}</TableCell>
+                            <TableCell className="text-right font-bold text-destructive">{formatCurrency(e.amount)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
                 )}
               </CardContent>
             </Card>

@@ -429,10 +429,10 @@ export default function BalanceSheetPage() {
           <Badge className="bg-primary/10 text-primary border-none mb-2 px-3 py-1 text-[10px] tracking-widest uppercase font-bold">
             ShopX Elite · Financial Report
           </Badge>
-          <h1 className="text-4xl font-headline font-bold tracking-tight">
+          <h1 className="text-2xl sm:text-4xl font-headline font-bold tracking-tight">
             Balance <span className="text-primary">Sheet</span>
           </h1>
-          <p className="text-muted-foreground mt-1">
+          <p className="text-xs sm:text-sm text-muted-foreground mt-1">
             Consolidated balance sheet and transaction history for FY {year}.
           </p>
         </div>
@@ -510,7 +510,7 @@ export default function BalanceSheetPage() {
       )}
 
       {/* ── KPI Cards ── */}
-      <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5">
         <StatCard icon={IndianRupee} title="Total Revenue"    colorClass="bg-primary/10 text-primary"
           value={s ? fmt(s.totalRevenue) : '—'}
           badge={{ label: 'FY ' + year, positive: true }} />

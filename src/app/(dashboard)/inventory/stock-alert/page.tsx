@@ -150,23 +150,23 @@ export default function StockAlertsPage() {
   }
 
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
+    <div className="space-y-6 sm:space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
       {/* ── Header ── */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3 sm:gap-4">
           <Button
             variant="ghost"
             size="icon"
-            className="rounded-full hover:bg-secondary"
+            className="rounded-full hover:bg-secondary shrink-0"
             onClick={() => router.back()}
           >
             <ArrowLeft className="w-5 h-5" />
           </Button>
           <div>
-            <h1 className="text-4xl font-headline font-bold text-foreground">
+            <h1 className="text-2xl sm:text-4xl font-headline font-bold text-foreground">
               Critical <span className="text-destructive">Alerts</span>
             </h1>
-            <p className="text-muted-foreground">
+            <p className="text-xs sm:text-sm text-muted-foreground">
               Immediate action required for the following inventory items.
             </p>
           </div>
@@ -175,7 +175,7 @@ export default function StockAlertsPage() {
           <Button
             onClick={() => router.push("/inventory")}
             variant="outline"
-            className="rounded-full border-border hover:bg-secondary font-bold"
+            className="w-full sm:w-auto rounded-full border-border hover:bg-secondary font-bold text-xs sm:text-sm"
           >
             View Full Catalog
           </Button>
@@ -183,33 +183,33 @@ export default function StockAlertsPage() {
       </div>
 
       {/* ── Summary Cards ── */}
-      <div className="grid gap-6 md:grid-cols-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-6">
         <Card className="bg-destructive/10 border-none shadow-sm">
-          <CardHeader className="pb-2">
+          <CardHeader className="p-4 sm:p-6 pb-2 sm:pb-2">
             <CardDescription className="text-destructive font-bold uppercase text-[10px] tracking-widest">
               Active Alerts
             </CardDescription>
-            <CardTitle className="text-4xl font-headline font-bold text-destructive">
+            <CardTitle className="text-3xl sm:text-4xl font-headline font-bold text-destructive">
               {lowStockItems.length}
             </CardTitle>
           </CardHeader>
         </Card>
         <Card className="bg-primary/10 border-none shadow-sm">
-          <CardHeader className="pb-2">
+          <CardHeader className="p-4 sm:p-6 pb-2 sm:pb-2">
             <CardDescription className="text-primary font-bold uppercase text-[10px] tracking-widest">
               Est. Refill Cost
             </CardDescription>
-            <CardTitle className="text-4xl font-headline font-bold text-primary">
+            <CardTitle className="text-3xl sm:text-4xl font-headline font-bold text-primary">
               ₹{totalShortageValue.toLocaleString()}
             </CardTitle>
           </CardHeader>
         </Card>
         <Card className="bg-accent/10 border-none shadow-sm">
-          <CardHeader className="pb-2">
+          <CardHeader className="p-4 sm:p-6 pb-2 sm:pb-2">
             <CardDescription className="text-accent font-bold uppercase text-[10px] tracking-widest">
               Items Out of Stock
             </CardDescription>
-            <CardTitle className="text-4xl font-headline font-bold text-accent">
+            <CardTitle className="text-3xl sm:text-4xl font-headline font-bold text-accent">
               {lowStockItems.filter((p) => p.stock === 0).length}
             </CardTitle>
           </CardHeader>
@@ -233,26 +233,27 @@ export default function StockAlertsPage() {
         </div>
       ) : (
         <Card className="border-none bg-card shadow-sm overflow-hidden">
-          <CardHeader className="bg-secondary/20 border-b border-border/50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <CardHeader className="bg-secondary/20 border-b border-border/50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 sm:p-6">
             <div className="flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5 text-destructive" />
-              <CardTitle className="font-headline text-lg">Shortage Registry</CardTitle>
-              <Badge variant="outline" className="font-bold text-[8px] bg-secondary/50 border-none ml-2">
+              <AlertTriangle className="w-5 h-5 text-destructive shrink-0" />
+              <CardTitle className="font-headline text-base sm:text-lg">Shortage Registry</CardTitle>
+              <Badge variant="outline" className="font-bold text-[8px] bg-secondary/50 border-none ml-1 sm:ml-2">
                 SORT: LOW TO HIGH
               </Badge>
             </div>
-            <div className="relative">
+            <div className="relative w-full sm:w-64">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input 
                 placeholder="Search low stock..." 
-                className="w-64 pl-9 rounded-full bg-secondary/30 border-none h-9 text-xs" 
+                className="w-full pl-9 rounded-full bg-secondary/30 border-none h-9 text-xs" 
                 value={searchQuery} 
                 onChange={e => setSearchQuery(e.target.value)} 
               />
             </div>
           </CardHeader>
           <CardContent className="p-0">
-            <Table>
+            <div className="overflow-x-auto w-full">
+              <Table className="min-w-[580px] w-full">
               <TableHeader className="bg-secondary/10">
                 <TableRow className="border-border/30 hover:bg-transparent">
                   <TableHead className="font-bold uppercase text-[10px] py-4 pl-6">Product Details</TableHead>
@@ -359,7 +360,8 @@ export default function StockAlertsPage() {
                 )}
               </TableBody>
             </Table>
-          </CardContent>
+          </div>
+        </CardContent>
         </Card>
       )}
 

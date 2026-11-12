@@ -84,7 +84,7 @@ export default function LoginPage() {
             </div>
           </div>
           <div className="text-center space-y-2">
-            <CardTitle className="text-3xl font-headline font-bold">Welcome Back</CardTitle>
+            <CardTitle className="text-2xl sm:text-3xl font-headline font-bold">Welcome Back</CardTitle>
             <CardDescription className="text-muted-foreground">
               Enter your credentials to access your terminal
             </CardDescription>

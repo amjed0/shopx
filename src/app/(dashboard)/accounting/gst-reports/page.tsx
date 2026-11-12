@@ -508,43 +508,45 @@ export default function GSTReportPage() {
             </CardHeader>
 
             <CardContent className="p-0">
-              <Table>
-                {/* TableHeader — same bg-secondary/20, text-[10px] uppercase as Inventory */}
-                <TableHeader className="bg-secondary/20">
-                  <TableRow className="border-none hover:bg-transparent">
-                    <TableHead className="font-bold uppercase text-[10px]">Invoice Info</TableHead>
-                    <TableHead className="font-bold uppercase text-[10px]">Party / GSTIN</TableHead>
-                    <TableHead className="font-bold uppercase text-[10px]">Type</TableHead>
-                    <TableHead className="font-bold uppercase text-[10px] text-right">Taxable</TableHead>
-                    <TableHead className="font-bold uppercase text-[10px] text-right">CGST</TableHead>
-                    <TableHead className="font-bold uppercase text-[10px] text-right">SGST</TableHead>
-                    <TableHead className="font-bold uppercase text-[10px] text-right">IGST</TableHead>
-                    <TableHead className="font-bold uppercase text-[10px] text-right">Total</TableHead>
-                    <TableHead className="font-bold uppercase text-[10px]">Status</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filtered.map(inv => (
-                    <TableRow key={inv.id} className="border-border/30 hover:bg-secondary/10">
-                      <TableCell>
-                        <p className="font-bold">{inv.invoiceNo}</p>
-                        <p className="text-[10px] uppercase font-code opacity-60">{inv.date}</p>
-                      </TableCell>
-                      <TableCell>
-                        <p className="font-bold">{inv.party}</p>
-                        <p className="text-[10px] font-code opacity-50">{inv.gstin || "—"}</p>
-                      </TableCell>
-                      <TableCell><TypeChip type={inv.type} /></TableCell>
-                      <TableCell className="text-right font-medium">{fmt(inv.taxable)}</TableCell>
-                      <TableCell className="text-right text-primary">{inv.cgst ? fmt(inv.cgst) : <span className="opacity-30">—</span>}</TableCell>
-                      <TableCell className="text-right text-accent">{inv.sgst ? fmt(inv.sgst) : <span className="opacity-30">—</span>}</TableCell>
-                      <TableCell className="text-right text-primary/70">{inv.igst ? fmt(inv.igst) : <span className="opacity-30">—</span>}</TableCell>
-                      <TableCell className="text-right font-bold">{fmt(inv.total)}</TableCell>
-                      <TableCell><StatusBadge status={inv.status} /></TableCell>
+              <div className="overflow-x-auto w-full">
+                <Table className="min-w-[700px] w-full">
+                  {/* TableHeader — same bg-secondary/20, text-[10px] uppercase as Inventory */}
+                  <TableHeader className="bg-secondary/20">
+                    <TableRow className="border-none hover:bg-transparent">
+                      <TableHead className="font-bold uppercase text-[10px]">Invoice Info</TableHead>
+                      <TableHead className="font-bold uppercase text-[10px]">Party / GSTIN</TableHead>
+                      <TableHead className="font-bold uppercase text-[10px]">Type</TableHead>
+                      <TableHead className="font-bold uppercase text-[10px] text-right">Taxable</TableHead>
+                      <TableHead className="font-bold uppercase text-[10px] text-right">CGST</TableHead>
+                      <TableHead className="font-bold uppercase text-[10px] text-right">SGST</TableHead>
+                      <TableHead className="font-bold uppercase text-[10px] text-right">IGST</TableHead>
+                      <TableHead className="font-bold uppercase text-[10px] text-right">Total</TableHead>
+                      <TableHead className="font-bold uppercase text-[10px]">Status</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {filtered.map(inv => (
+                      <TableRow key={inv.id} className="border-border/30 hover:bg-secondary/10">
+                        <TableCell>
+                          <p className="font-bold">{inv.invoiceNo}</p>
+                          <p className="text-[10px] uppercase font-code opacity-60">{inv.date}</p>
+                        </TableCell>
+                        <TableCell>
+                          <p className="font-bold">{inv.party}</p>
+                          <p className="text-[10px] font-code opacity-50">{inv.gstin || "—"}</p>
+                        </TableCell>
+                        <TableCell><TypeChip type={inv.type} /></TableCell>
+                        <TableCell className="text-right font-medium">{fmt(inv.taxable)}</TableCell>
+                        <TableCell className="text-right text-primary">{inv.cgst ? fmt(inv.cgst) : <span className="opacity-30">—</span>}</TableCell>
+                        <TableCell className="text-right text-accent">{inv.sgst ? fmt(inv.sgst) : <span className="opacity-30">—</span>}</TableCell>
+                        <TableCell className="text-right text-primary/70">{inv.igst ? fmt(inv.igst) : <span className="opacity-30">—</span>}</TableCell>
+                        <TableCell className="text-right font-bold">{fmt(inv.total)}</TableCell>
+                        <TableCell><StatusBadge status={inv.status} /></TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
 
               {/* Totals footer — same bg-secondary/30 pattern as Inventory */}
               <div className="bg-secondary/30 border-t border-border/30 px-4 py-3 flex flex-wrap gap-4 justify-between text-sm">
@@ -589,40 +591,42 @@ export default function GSTReportPage() {
                 <CardTitle className="font-headline text-sm">3.1 — Outward Taxable Supplies</CardTitle>
               </CardHeader>
               <CardContent className="p-0">
-                <Table>
-                  <TableHeader className="bg-secondary/10">
-                    <TableRow className="border-none hover:bg-transparent">
-                      <TableHead className="font-bold uppercase text-[10px]">Nature</TableHead>
-                      <TableHead className="font-bold uppercase text-[10px] text-right">Taxable</TableHead>
-                      <TableHead className="font-bold uppercase text-[10px] text-right">IGST</TableHead>
-                      <TableHead className="font-bold uppercase text-[10px] text-right">CGST</TableHead>
-                      <TableHead className="font-bold uppercase text-[10px] text-right">SGST</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {[
-                      { label: "(a) Inter-state outward", taxable: 375000, igst: 67500, cgst: 0,     sgst: 0     },
-                      { label: "(b) Intra-state outward", taxable: 285500, igst: 0,     cgst: 25695, sgst: 25695 },
-                      { label: "(c) Zero rated supplies", taxable: 95000,  igst: 0,     cgst: 0,     sgst: 0     },
-                      { label: "(d) Nil rated / Exempt",  taxable: 5000,   igst: 0,     cgst: 0,     sgst: 0     },
-                    ].map(row => (
-                      <TableRow key={row.label} className="border-border/30 hover:bg-secondary/10">
-                        <TableCell className="text-xs text-muted-foreground">{row.label}</TableCell>
-                        <TableCell className="text-right font-medium text-sm">{fmt(row.taxable)}</TableCell>
-                        <TableCell className="text-right text-primary/70 text-sm">{row.igst ? fmt(row.igst) : <span className="opacity-30">—</span>}</TableCell>
-                        <TableCell className="text-right text-primary text-sm">{row.cgst ? fmt(row.cgst) : <span className="opacity-30">—</span>}</TableCell>
-                        <TableCell className="text-right text-accent text-sm">{row.sgst ? fmt(row.sgst) : <span className="opacity-30">—</span>}</TableCell>
+                <div className="overflow-x-auto w-full">
+                  <Table className="min-w-[480px] w-full">
+                    <TableHeader className="bg-secondary/10">
+                      <TableRow className="border-none hover:bg-transparent">
+                        <TableHead className="font-bold uppercase text-[10px]">Nature</TableHead>
+                        <TableHead className="font-bold uppercase text-[10px] text-right">Taxable</TableHead>
+                        <TableHead className="font-bold uppercase text-[10px] text-right">IGST</TableHead>
+                        <TableHead className="font-bold uppercase text-[10px] text-right">CGST</TableHead>
+                        <TableHead className="font-bold uppercase text-[10px] text-right">SGST</TableHead>
                       </TableRow>
-                    ))}
-                    <TableRow className="bg-primary text-primary-foreground hover:bg-primary">
-                      <TableCell className="font-bold text-xs uppercase tracking-wide">Total</TableCell>
-                      <TableCell className="text-right font-bold text-sm">{fmt(760500)}</TableCell>
-                      <TableCell className="text-right font-bold text-sm">{fmt(67500)}</TableCell>
-                      <TableCell className="text-right font-bold text-sm">{fmt(25695)}</TableCell>
-                      <TableCell className="text-right font-bold text-sm">{fmt(25695)}</TableCell>
-                    </TableRow>
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {[
+                        { label: "(a) Inter-state outward", taxable: 375000, igst: 67500, cgst: 0,     sgst: 0     },
+                        { label: "(b) Intra-state outward", taxable: 285500, igst: 0,     cgst: 25695, sgst: 25695 },
+                        { label: "(c) Zero rated supplies", taxable: 95000,  igst: 0,     cgst: 0,     sgst: 0     },
+                        { label: "(d) Nil rated / Exempt",  taxable: 5000,   igst: 0,     cgst: 0,     sgst: 0     },
+                      ].map(row => (
+                        <TableRow key={row.label} className="border-border/30 hover:bg-secondary/10">
+                          <TableCell className="text-xs text-muted-foreground">{row.label}</TableCell>
+                          <TableCell className="text-right font-medium text-sm">{fmt(row.taxable)}</TableCell>
+                          <TableCell className="text-right text-primary/70 text-sm">{row.igst ? fmt(row.igst) : <span className="opacity-30">—</span>}</TableCell>
+                          <TableCell className="text-right text-primary text-sm">{row.cgst ? fmt(row.cgst) : <span className="opacity-30">—</span>}</TableCell>
+                          <TableCell className="text-right text-accent text-sm">{row.sgst ? fmt(row.sgst) : <span className="opacity-30">—</span>}</TableCell>
+                        </TableRow>
+                      ))}
+                      <TableRow className="bg-primary text-primary-foreground hover:bg-primary">
+                        <TableCell className="font-bold text-xs uppercase tracking-wide">Total</TableCell>
+                        <TableCell className="text-right font-bold text-sm">{fmt(760500)}</TableCell>
+                        <TableCell className="text-right font-bold text-sm">{fmt(67500)}</TableCell>
+                        <TableCell className="text-right font-bold text-sm">{fmt(25695)}</TableCell>
+                        <TableCell className="text-right font-bold text-sm">{fmt(25695)}</TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                </div>
               </CardContent>
             </Card>
 
@@ -632,37 +636,39 @@ export default function GSTReportPage() {
                 <CardTitle className="font-headline text-sm">4 — Eligible Input Tax Credit (ITC)</CardTitle>
               </CardHeader>
               <CardContent className="p-0">
-                <Table>
-                  <TableHeader className="bg-secondary/10">
-                    <TableRow className="border-none hover:bg-transparent">
-                      <TableHead className="font-bold uppercase text-[10px]">Detail</TableHead>
-                      <TableHead className="font-bold uppercase text-[10px] text-right">IGST</TableHead>
-                      <TableHead className="font-bold uppercase text-[10px] text-right">CGST</TableHead>
-                      <TableHead className="font-bold uppercase text-[10px] text-right">SGST</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {[
-                      { label: "(A) Import of goods",    igst: 12000, cgst: 0,     sgst: 0     },
-                      { label: "(B) Import of services", igst: 5400,  cgst: 0,     sgst: 0     },
-                      { label: "(C) Inward from ISD",    igst: 0,     cgst: 3200,  sgst: 3200  },
-                      { label: "(D) All other ITC",      igst: 18000, cgst: 14500, sgst: 14500 },
-                    ].map(row => (
-                      <TableRow key={row.label} className="border-border/30 hover:bg-secondary/10">
-                        <TableCell className="text-xs text-muted-foreground">{row.label}</TableCell>
-                        <TableCell className="text-right text-primary/70 text-sm">{row.igst ? fmt(row.igst) : <span className="opacity-30">—</span>}</TableCell>
-                        <TableCell className="text-right text-primary text-sm">{row.cgst ? fmt(row.cgst) : <span className="opacity-30">—</span>}</TableCell>
-                        <TableCell className="text-right text-accent text-sm">{row.sgst ? fmt(row.sgst) : <span className="opacity-30">—</span>}</TableCell>
+                <div className="overflow-x-auto w-full">
+                  <Table className="min-w-[420px] w-full">
+                    <TableHeader className="bg-secondary/10">
+                      <TableRow className="border-none hover:bg-transparent">
+                        <TableHead className="font-bold uppercase text-[10px]">Detail</TableHead>
+                        <TableHead className="font-bold uppercase text-[10px] text-right">IGST</TableHead>
+                        <TableHead className="font-bold uppercase text-[10px] text-right">CGST</TableHead>
+                        <TableHead className="font-bold uppercase text-[10px] text-right">SGST</TableHead>
                       </TableRow>
-                    ))}
-                    <TableRow className="bg-accent/80 text-accent-foreground hover:bg-accent/80">
-                      <TableCell className="font-bold text-xs uppercase tracking-wide">Net ITC Available</TableCell>
-                      <TableCell className="text-right font-bold text-sm">{fmt(35400)}</TableCell>
-                      <TableCell className="text-right font-bold text-sm">{fmt(17700)}</TableCell>
-                      <TableCell className="text-right font-bold text-sm">{fmt(17700)}</TableCell>
-                    </TableRow>
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {[
+                        { label: "(A) Import of goods",    igst: 12000, cgst: 0,     sgst: 0     },
+                        { label: "(B) Import of services", igst: 5400,  cgst: 0,     sgst: 0     },
+                        { label: "(C) Inward from ISD",    igst: 0,     cgst: 3200,  sgst: 3200  },
+                        { label: "(D) All other ITC",      igst: 18000, cgst: 14500, sgst: 14500 },
+                      ].map(row => (
+                        <TableRow key={row.label} className="border-border/30 hover:bg-secondary/10">
+                          <TableCell className="text-xs text-muted-foreground">{row.label}</TableCell>
+                          <TableCell className="text-right text-primary/70 text-sm">{row.igst ? fmt(row.igst) : <span className="opacity-30">—</span>}</TableCell>
+                          <TableCell className="text-right text-primary text-sm">{row.cgst ? fmt(row.cgst) : <span className="opacity-30">—</span>}</TableCell>
+                          <TableCell className="text-right text-accent text-sm">{row.sgst ? fmt(row.sgst) : <span className="opacity-30">—</span>}</TableCell>
+                        </TableRow>
+                      ))}
+                      <TableRow className="bg-accent/80 text-accent-foreground hover:bg-accent/80">
+                        <TableCell className="font-bold text-xs uppercase tracking-wide">Net ITC Available</TableCell>
+                        <TableCell className="text-right font-bold text-sm">{fmt(35400)}</TableCell>
+                        <TableCell className="text-right font-bold text-sm">{fmt(17700)}</TableCell>
+                        <TableCell className="text-right font-bold text-sm">{fmt(17700)}</TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                </div>
               </CardContent>
             </Card>
           </div>

@@ -136,7 +136,7 @@ export default function DashboardLayout({
           </header>
 
           {/* ── MAIN CONTENT ── */}
-          <main className="flex-1 overflow-y-auto p-4 pb-24 md:pb-6 md:p-6 lg:p-10 w-full max-w-7xl mx-auto">
+          <main className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-4 md:p-6 lg:p-10 pb-24 md:pb-6 w-full max-w-7xl mx-auto min-w-0">
             {children}
           </main>
 

@@ -136,8 +136,8 @@ export default function ProfilePage() {
           <ArrowLeft className="w-5 h-5" />
         </Button>
         <div>
-          <h1 className="text-4xl font-headline font-bold text-foreground">Shop Profile</h1>
-          <p className="text-muted-foreground">Manage your credentials and shop visibility settings.</p>
+          <h1 className="text-2xl sm:text-4xl font-headline font-bold text-foreground">Shop Profile</h1>
+          <p className="text-xs sm:text-sm text-muted-foreground">Manage your credentials and shop visibility settings.</p>
         </div>
       </div>
 

@@ -751,12 +751,12 @@ export default function SuppliersPage() {
               <CardTitle className="font-headline text-xl">Vendor Directory</CardTitle>
               <CardDescription>All registered suppliers and their contact details.</CardDescription>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="relative">
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+              <div className="relative flex-1 sm:w-72 sm:flex-none">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
                   placeholder="Search suppliers..."
-                  className="pl-9 h-9 w-60 sm:w-72 bg-secondary/50 border-none rounded-full text-xs font-bold"
+                  className="pl-9 h-9 w-full bg-secondary/50 border-none rounded-full text-xs font-bold"
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
                 />

@@ -146,25 +146,25 @@ export default function SignupPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4 sm:p-8">
+    <div className="min-h-screen flex items-center justify-center bg-background p-3 sm:p-8">
       <Card className="w-full max-w-[500px] border-none bg-card shadow-2xl overflow-hidden relative">
         <div className="absolute top-0 left-0 w-full h-1.5 bg-accent" />
-        <CardHeader className="space-y-4 pt-10">
+        <CardHeader className="space-y-4 pt-8 sm:pt-10 p-4 sm:p-6">
           <div className="flex justify-center">
             <div className="bg-accent p-3 rounded-2xl shadow-lg shadow-accent/20">
-              <ShieldCheck className="w-8 h-8 text-accent-foreground" />
+              <ShieldCheck className="w-7 h-7 sm:w-8 sm:h-8 text-accent-foreground" />
             </div>
           </div>
-          <div className="text-center space-y-2">
-            <CardTitle className="text-3xl font-headline font-bold">Register Shop</CardTitle>
-            <CardDescription className="text-muted-foreground">
+          <div className="text-center space-y-1.5 sm:space-y-2">
+            <CardTitle className="text-2xl sm:text-3xl font-headline font-bold">Register Shop</CardTitle>
+            <CardDescription className="text-xs sm:text-sm text-muted-foreground">
               Join the elite ShopX network of smart retailers
             </CardDescription>
           </div>
         </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-6">
-            <div className="grid gap-4 sm:grid-cols-2">
+        <CardContent className="p-4 sm:p-6 pt-0">
+          <form onSubmit={handleSubmit} className="space-y-5 sm:space-y-6">
+            <div className="grid gap-3.5 sm:gap-4 sm:grid-cols-2">
 
               {/* Full Name */}
               <div className="space-y-2">
@@ -207,7 +207,7 @@ export default function SignupPage() {
                 <Label className="text-[10px] font-bold uppercase tracking-wider opacity-70">
                   Business Category
                 </Label>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">
                   <button
                     type="button"
                     onClick={() => setFormData((prev) => ({ ...prev, businessCategory: "retail" }))}

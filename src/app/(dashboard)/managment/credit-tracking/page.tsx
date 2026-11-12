@@ -221,47 +221,47 @@ export default function CreditTrackingPage() {
   }
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
+    <div className="space-y-6 sm:space-y-8 animate-in fade-in duration-500">
       <div className="flex items-center gap-4">
         <div>
-          <h1 className="text-4xl font-headline font-bold text-foreground">Credit Tracking</h1>
-          <p className="text-muted-foreground">Manage customer outstanding balances and payment logs.</p>
+          <h1 className="text-2xl sm:text-4xl font-headline font-bold text-foreground">Credit Tracking</h1>
+          <p className="text-xs sm:text-sm text-muted-foreground">Manage customer outstanding balances and payment logs.</p>
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <Card className="border-none bg-card shadow-sm p-6 space-y-2">
+      <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+        <Card className="border-none bg-card shadow-sm p-4 sm:p-6 space-y-1 sm:space-y-2">
           <div className="flex items-center justify-between">
             <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Total Credit Outstanding</p>
             <div className="w-8 h-8 rounded-full bg-orange-500/10 flex items-center justify-center">
               <IndianRupee className="w-4 h-4 text-orange-500" />
             </div>
           </div>
-          <p className="text-3xl font-bold font-headline text-orange-500">{formatCurrency(totalOutstanding)}</p>
+          <p className="text-2xl sm:text-3xl font-bold font-headline text-orange-500">{formatCurrency(totalOutstanding)}</p>
           <p className="text-xs text-muted-foreground">{creditCustomers.length} active customer ledgers</p>
         </Card>
 
-        <Card className="border-none bg-card shadow-sm p-6 space-y-2">
+        <Card className="border-none bg-card shadow-sm p-4 sm:p-6 space-y-1 sm:space-y-2">
           <div className="flex items-center justify-between">
             <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Pending Bills</p>
             <div className="w-8 h-8 rounded-full bg-amber-500/10 flex items-center justify-center">
               <FileText className="w-4 h-4 text-amber-500" />
             </div>
           </div>
-          <p className="text-3xl font-bold font-headline text-amber-500">
+          <p className="text-2xl sm:text-3xl font-bold font-headline text-amber-500">
             {creditSales.filter(s => s.status === "pending").length}
           </p>
           <p className="text-xs text-muted-foreground">Sales waiting for settlement</p>
         </Card>
 
-        <Card className="border-none bg-card shadow-sm p-6 space-y-2">
+        <Card className="border-none bg-card shadow-sm p-4 sm:p-6 space-y-1 sm:space-y-2">
           <div className="flex items-center justify-between">
             <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Settled Bills</p>
             <div className="w-8 h-8 rounded-full bg-emerald-500/10 flex items-center justify-center">
               <CheckCircle className="w-4 h-4 text-emerald-500" />
             </div>
           </div>
-          <p className="text-3xl font-bold font-headline text-emerald-500">
+          <p className="text-2xl sm:text-3xl font-bold font-headline text-emerald-500">
             {creditSales.filter(s => s.status === "paid").length}
           </p>
           <p className="text-xs text-muted-foreground">Credit sales fully cleared</p>
@@ -290,44 +290,46 @@ export default function CreditTrackingPage() {
               {searchQuery ? "No matching customers found." : "No customers have outstanding credit balances."}
             </div>
           ) : (
-            <Table>
-              <TableHeader className="bg-secondary/10">
-                <TableRow className="hover:bg-transparent border-none">
-                  <TableHead className="font-bold uppercase text-[10px]">Customer</TableHead>
-                  <TableHead className="font-bold uppercase text-[10px]">Phone Number</TableHead>
-                  <TableHead className="font-bold uppercase text-[10px]">Created Date</TableHead>
-                  <TableHead className="font-bold uppercase text-[10px]">Outstanding Balance</TableHead>
-                  <TableHead className="text-right font-bold uppercase text-[10px]">Action</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredCustomers.map(c => (
-                  <TableRow key={c.id} className="border-border/30 hover:bg-secondary/5">
-                    <TableCell className="font-medium text-sm flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center font-bold text-primary text-xs">
-                        {c.name.charAt(0).toUpperCase()}
-                      </div>
-                      <div>
-                        <p className="font-bold">{c.name}</p>
-                        {c.email && <p className="text-xs text-muted-foreground">{c.email}</p>}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{c.phone}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{formatDate(c.createdAt)}</TableCell>
-                    <TableCell className="font-bold text-orange-500">{formatCurrency(c.outstandingBalance)}</TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        size="sm"
-                        onClick={() => setSelectedCustomer(c)}
-                        className="bg-primary hover:bg-primary/90 rounded-full text-xs"
-                      >
-                        Record Payment
-                      </Button>
-                    </TableCell>
+            <div className="overflow-x-auto w-full">
+              <Table className="min-w-[580px] w-full">
+                <TableHeader className="bg-secondary/10">
+                  <TableRow className="hover:bg-transparent border-none">
+                    <TableHead className="font-bold uppercase text-[10px]">Customer</TableHead>
+                    <TableHead className="font-bold uppercase text-[10px]">Phone Number</TableHead>
+                    <TableHead className="font-bold uppercase text-[10px]">Created Date</TableHead>
+                    <TableHead className="font-bold uppercase text-[10px]">Outstanding Balance</TableHead>
+                    <TableHead className="text-right font-bold uppercase text-[10px]">Action</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {filteredCustomers.map(c => (
+                    <TableRow key={c.id} className="border-border/30 hover:bg-secondary/5">
+                      <TableCell className="font-medium text-sm flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center font-bold text-primary text-xs shrink-0">
+                          {c.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="font-bold truncate">{c.name}</p>
+                          {c.email && <p className="text-xs text-muted-foreground truncate">{c.email}</p>}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{c.phone}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{formatDate(c.createdAt)}</TableCell>
+                      <TableCell className="font-bold text-orange-500">{formatCurrency(c.outstandingBalance)}</TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          size="sm"
+                          onClick={() => setSelectedCustomer(c)}
+                          className="bg-primary hover:bg-primary/90 rounded-full text-xs"
+                        >
+                          Record Payment
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -341,41 +343,43 @@ export default function CreditTrackingPage() {
           {creditSales.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">No credit sales bills recorded yet.</div>
           ) : (
-            <Table>
-              <TableHeader className="bg-secondary/10">
-                <TableRow className="hover:bg-transparent border-none">
-                  <TableHead className="font-bold uppercase text-[10px]">Bill ID</TableHead>
-                  <TableHead className="font-bold uppercase text-[10px]">Date</TableHead>
-                  <TableHead className="font-bold uppercase text-[10px]">Customer</TableHead>
-                  <TableHead className="font-bold uppercase text-[10px]">Items Count</TableHead>
-                  <TableHead className="font-bold uppercase text-[10px]">Amount</TableHead>
-                  <TableHead className="font-bold uppercase text-[10px]">Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {creditSales.slice(0, 15).map(s => (
-                  <TableRow key={s.id} className="border-border/30 hover:bg-secondary/5">
-                    <TableCell className="font-bold text-xs uppercase text-muted-foreground">#{s.id.slice(-6)}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{formatDate(s.date)}</TableCell>
-                    <TableCell className="font-medium text-sm">{s.customerName}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{s.items.length} items</TableCell>
-                    <TableCell className="font-bold">{formatCurrency(s.total)}</TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={s.status === "paid" ? "outline" : "secondary"}
-                        className={
-                          s.status === "paid"
-                            ? "border-emerald-500/30 text-emerald-500 bg-emerald-500/5 text-[9px]"
-                            : "border-amber-500/30 text-amber-500 bg-amber-500/5 text-[9px]"
-                        }
-                      >
-                        {s.status === "paid" ? "Settled" : "Pending"}
-                      </Badge>
-                    </TableCell>
+            <div className="overflow-x-auto w-full">
+              <Table className="min-w-[550px] w-full">
+                <TableHeader className="bg-secondary/10">
+                  <TableRow className="hover:bg-transparent border-none">
+                    <TableHead className="font-bold uppercase text-[10px]">Bill ID</TableHead>
+                    <TableHead className="font-bold uppercase text-[10px]">Date</TableHead>
+                    <TableHead className="font-bold uppercase text-[10px]">Customer</TableHead>
+                    <TableHead className="font-bold uppercase text-[10px]">Items Count</TableHead>
+                    <TableHead className="font-bold uppercase text-[10px]">Amount</TableHead>
+                    <TableHead className="font-bold uppercase text-[10px]">Status</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {creditSales.slice(0, 15).map(s => (
+                    <TableRow key={s.id} className="border-border/30 hover:bg-secondary/5">
+                      <TableCell className="font-bold text-xs uppercase text-muted-foreground">#{s.id.slice(-6)}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{formatDate(s.date)}</TableCell>
+                      <TableCell className="font-medium text-sm">{s.customerName}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{s.items.length} items</TableCell>
+                      <TableCell className="font-bold">{formatCurrency(s.total)}</TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={s.status === "paid" ? "outline" : "secondary"}
+                          className={
+                            s.status === "paid"
+                              ? "border-emerald-500/30 text-emerald-500 bg-emerald-500/5 text-[9px]"
+                              : "border-amber-500/30 text-amber-500 bg-amber-500/5 text-[9px]"
+                          }
+                        >
+                          {s.status === "paid" ? "Settled" : "Pending"}
+                        </Badge>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </CardContent>
       </Card>

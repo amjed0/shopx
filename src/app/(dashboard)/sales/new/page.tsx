@@ -275,31 +275,31 @@ export default function NewBillPage() {
   const isCreditMissingCustomer = paymentMethod === "credit" && !selectedCustomer
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-3xl font-headline font-bold flex items-center gap-3">
-        <FileText className="text-primary" /> Billing Terminal
+    <div className="space-y-4 sm:space-y-6">
+      <h1 className="text-2xl sm:text-3xl font-headline font-bold flex items-center gap-2 sm:gap-3">
+        <FileText className="text-primary w-6 h-6 sm:w-8 sm:h-8" /> Billing Terminal
       </h1>
 
       {/* Top row: small customer selection box (left) + larger product search box (right) */}
-      <div className="grid gap-6 grid-cols-1 lg:grid-cols-3">
+      <div className="grid gap-4 sm:gap-6 grid-cols-1 lg:grid-cols-3">
         {/* Customer Selection - small square */}
         <Card className="lg:col-span-1">
-          <CardHeader className="flex flex-row justify-between items-center">
-            <CardTitle className="text-lg">Customer</CardTitle>
+          <CardHeader className="flex flex-row justify-between items-center p-4 sm:p-6">
+            <CardTitle className="text-base sm:text-lg">Customer</CardTitle>
             {!selectedCustomer && (
               <Dialog open={isCustomerDialogOpen} onOpenChange={setIsCustomerDialogOpen}>
                 <DialogTrigger asChild>
-                  <Button variant="outline" size="sm" className="rounded-full">
-                    <UserPlus className="w-4 h-4 mr-2" /> New
+                  <Button variant="outline" size="sm" className="rounded-full text-xs">
+                    <UserPlus className="w-3.5 h-3.5 mr-1.5" /> New
                   </Button>
                 </DialogTrigger>
-                <DialogContent>
+                <DialogContent className="w-[95vw] max-w-md rounded-2xl p-4 sm:p-6">
                   <form onSubmit={handleAddCustomer}>
                     <DialogHeader>
                       <DialogTitle>Register New Customer</DialogTitle>
                       <DialogDescription>Add a customer to your network for tracking balances and sales.</DialogDescription>
                     </DialogHeader>
-                    <div className="grid gap-4 py-6">
+                    <div className="grid gap-4 py-4 sm:py-6">
                       <div className="space-y-2">
                         <Label>Full Name</Label>
                         <Input name="name" placeholder="Enter customer name" required />
@@ -324,20 +324,20 @@ export default function NewBillPage() {
               </Dialog>
             )}
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0">
             {!selectedCustomer ? (
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input placeholder="Search by name or phone..." className="pl-9 bg-secondary/30 border-none rounded-xl" value={customerSearch} onChange={e => setCustomerSearch(e.target.value)} />
+                <Input placeholder="Search by name or phone..." className="pl-9 bg-secondary/30 border-none rounded-xl text-sm" value={customerSearch} onChange={e => setCustomerSearch(e.target.value)} />
                 {customerSearch && filteredCustomers.length > 0 && (
-                  <div className="absolute top-full w-full bg-card border rounded-xl mt-2 z-50 shadow-xl overflow-hidden">
+                  <div className="absolute top-full w-full bg-card border rounded-xl mt-2 z-50 shadow-xl overflow-hidden max-h-60 overflow-y-auto">
                     {filteredCustomers.map(c => (
                       <button key={c.id} className="w-full p-3 text-left hover:bg-secondary text-sm flex items-center gap-3" onClick={() => { setSelectedCustomer(c); setCustomerSearch(""); }}>
-                        <div className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-xs">
+                        <div className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-xs shrink-0">
                           {c.name.charAt(0)}
                         </div>
-                        <div>
-                          <p className="font-bold">{c.name}</p>
+                        <div className="min-w-0">
+                          <p className="font-bold truncate">{c.name}</p>
                           <p className="text-[10px] text-muted-foreground">{c.phone}</p>
                         </div>
                       </button>
@@ -369,28 +369,28 @@ export default function NewBillPage() {
 
         {/* Product Search - larger square */}
         <Card className="lg:col-span-2 border-none shadow-sm">
-          <CardHeader className="pb-3 space-y-2">
+          <CardHeader className="p-4 sm:p-6 pb-3 space-y-2">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input placeholder="Search inventory by name or SKU..." className="pl-9 bg-secondary/30 border-none rounded-xl h-11" value={productSearch} onChange={e => setProductSearch(e.target.value)} />
+              <Input placeholder="Search inventory by name or SKU..." className="pl-9 bg-secondary/30 border-none rounded-xl h-10 sm:h-11 text-sm" value={productSearch} onChange={e => setProductSearch(e.target.value)} />
             </div>
             <div className="flex items-center justify-between text-xs text-muted-foreground px-1">
-              <span className="font-semibold uppercase tracking-wider text-[11px] text-accent flex items-center gap-1.5">
-                <Zap className="w-3.5 h-3.5" />
-                {productSearch ? "Search Results (Top 5)" : "🔥 Top 5 Best Selling Products"}
+              <span className="font-semibold uppercase tracking-wider text-[11px] text-accent flex items-center gap-1.5 truncate">
+                <Zap className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">{productSearch ? "Search Results (Top 5)" : "🔥 Top 5 Best Selling Products"}</span>
               </span>
-              <span className="text-[10px] font-code">{displayProducts.length} items</span>
+              <span className="text-[10px] font-code shrink-0">{displayProducts.length} items</span>
             </div>
           </CardHeader>
-          <CardContent className="grid gap-3 sm:grid-cols-2 max-h-[320px] overflow-y-auto">
+          <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0 grid gap-3 sm:grid-cols-2 max-h-[320px] overflow-y-auto">
             {displayProducts.map(p => (
-              <div key={p.id} className="p-4 border border-border/50 rounded-xl hover:bg-secondary/50 cursor-pointer transition-colors group" onClick={() => addItem(p)}>
-                <div className="flex justify-between items-start mb-1">
-                  <p className="font-bold text-sm group-hover:text-primary transition-colors">{p.name}</p>
-                  <Badge variant="outline" className="text-[9px] font-code opacity-60 uppercase">{p.sku}</Badge>
+              <div key={p.id} className="p-3 sm:p-4 border border-border/50 rounded-xl hover:bg-secondary/50 cursor-pointer transition-colors group" onClick={() => addItem(p)}>
+                <div className="flex justify-between items-start mb-1 gap-2">
+                  <p className="font-bold text-sm group-hover:text-primary transition-colors line-clamp-1">{p.name}</p>
+                  <Badge variant="outline" className="text-[9px] font-code opacity-60 uppercase shrink-0">{p.sku}</Badge>
                 </div>
                 <div className="flex justify-between items-end">
-                  <p className="text-accent font-bold text-lg">₹{p.sellingPrice.toLocaleString()}</p>
+                  <p className="text-accent font-bold text-base sm:text-lg">₹{p.sellingPrice.toLocaleString()}</p>
                   <p className="text-[10px] text-muted-foreground">In Stock: <span className={p.stock <= p.minStock ? 'text-destructive font-bold' : ''}>{p.stock}</span></p>
                 </div>
               </div>
@@ -406,14 +406,14 @@ export default function NewBillPage() {
 
       {/* Bottom row: full-width Review Invoice */}
       <Card className="border-none shadow-xl bg-card/50 backdrop-blur-sm">
-        <CardHeader className="border-b border-border/50 flex flex-row items-center justify-between">
-          <CardTitle className="text-xl font-headline flex items-center gap-2">
-            <ShoppingCart className="w-5 h-5 text-primary" />
-            Review Invoice
-            {billItems.length > 0 && <Badge className="ml-2">{billItems.length}</Badge>}
+        <CardHeader className="p-4 sm:p-6 border-b border-border/50 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+          <CardTitle className="text-lg sm:text-xl font-headline flex items-center gap-2">
+            <ShoppingCart className="w-5 h-5 text-primary shrink-0" />
+            <span>Review Invoice</span>
+            {billItems.length > 0 && <Badge className="ml-1.5">{billItems.length}</Badge>}
           </CardTitle>
           <Button
-            className="h-11 px-6 bg-accent text-accent-foreground font-bold rounded-2xl shadow-lg shadow-accent/20 hover:scale-[1.01] active:scale-[0.99] transition-all"
+            className="w-full sm:w-auto h-11 px-6 bg-accent text-accent-foreground font-bold rounded-2xl shadow-lg shadow-accent/20 hover:scale-[1.01] active:scale-[0.99] transition-all"
             onClick={handleCompleteSale}
             disabled={billItems.length === 0 || isSubmitting || isCreditMissingCustomer}
           >
@@ -424,20 +424,20 @@ export default function NewBillPage() {
             )}
           </Button>
         </CardHeader>
-        <CardContent className="pt-6">
+        <CardContent className="p-4 sm:p-6 pt-4 sm:pt-6">
           <div className="grid gap-6 lg:grid-cols-3">
             {/* Cart items */}
-            <div className="lg:col-span-2 space-y-3 max-h-[300px] overflow-y-auto pr-2">
+            <div className="lg:col-span-2 space-y-3 max-h-[300px] overflow-y-auto pr-1 sm:pr-2">
               {billItems.map(item => (
-                <div key={item.product.id} className="flex justify-between items-center group">
-                  <div className="space-y-0.5">
-                    <p className="text-sm font-bold truncate max-w-[220px]">{item.product.name}</p>
+                <div key={item.product.id} className="flex justify-between items-center gap-2 group p-2 rounded-lg hover:bg-secondary/20">
+                  <div className="space-y-0.5 min-w-0 flex-1">
+                    <p className="text-sm font-bold truncate">{item.product.name}</p>
                     <p className="text-[10px] text-muted-foreground">₹{item.product.sellingPrice.toLocaleString()} per unit</p>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                     <div className="flex items-center bg-secondary/50 rounded-lg p-0.5 border border-border/30">
                       <Button variant="ghost" size="icon" className="h-7 w-7 rounded-md hover:bg-background" onClick={() => updateQuantity(item.product.id, -1)}>-</Button>
-                      <span className="w-8 text-center text-xs font-bold">{item.quantity}</span>
+                      <span className="w-7 sm:w-8 text-center text-xs font-bold">{item.quantity}</span>
                       <Button variant="ghost" size="icon" className="h-7 w-7 rounded-md hover:bg-background" onClick={() => updateQuantity(item.product.id, 1)}>+</Button>
                     </div>
                     <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive/50 hover:text-destructive hover:bg-destructive/10 rounded-md" onClick={() => removeItem(item.product.id)}>
@@ -471,7 +471,7 @@ export default function NewBillPage() {
                       value={discountValue || ""}
                       onChange={e => setDiscountValue(Math.max(0, Number(e.target.value) || 0))}
                       placeholder="0"
-                      className="h-8 w-20 text-right bg-secondary/30 border-none rounded-lg"
+                      className="h-8 w-20 text-right bg-secondary/30 border-none rounded-lg text-sm"
                     />
                     <div className="flex items-center bg-secondary/50 rounded-lg p-0.5 border border-border/30">
                       <Button
@@ -507,7 +507,7 @@ export default function NewBillPage() {
 
                 <Separator className="bg-border/50 my-2" />
 
-                <div className="flex justify-between text-2xl font-bold text-foreground">
+                <div className="flex justify-between text-xl sm:text-2xl font-bold text-foreground">
                   <span>Grand Total</span>
                   <span className="text-primary">₹{grandTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
                 </div>
@@ -526,13 +526,13 @@ export default function NewBillPage() {
                       key={m.id}
                       variant={paymentMethod === m.id ? "default" : "outline"}
                       className={cn(
-                        "h-12 justify-start gap-2 rounded-xl transition-all",
+                        "h-12 justify-start gap-2 rounded-xl transition-all px-2.5 sm:px-4",
                         paymentMethod === m.id ? "bg-primary shadow-lg shadow-primary/20 scale-[1.02]" : "hover:bg-secondary/50"
                       )}
                       onClick={() => setPaymentMethod(m.id)}
                     >
-                      <m.icon className="w-4 h-4" />
-                      <span className="text-[10px] font-bold uppercase">{m.label}</span>
+                      <m.icon className="w-4 h-4 shrink-0" />
+                      <span className="text-[10px] font-bold uppercase truncate">{m.label}</span>
                     </Button>
                   ))}
                 </div>

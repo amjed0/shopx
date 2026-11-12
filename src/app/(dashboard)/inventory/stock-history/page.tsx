@@ -141,28 +141,28 @@ export default function StockHistoryPage() {
   }, [stockEntries])
 
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
+    <div className="space-y-6 sm:space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3 sm:gap-4">
           <Button
             variant="ghost"
             size="icon"
-            className="rounded-full hover:bg-secondary"
+            className="rounded-full hover:bg-secondary shrink-0"
             onClick={() => router.back()}
           >
             <ArrowLeft className="w-5 h-5" />
           </Button>
           <div>
-            <h1 className="text-4xl font-headline font-bold text-foreground">
+            <h1 className="text-2xl sm:text-4xl font-headline font-bold text-foreground">
               Stock <span className="text-primary">History</span>
             </h1>
-            <p className="text-muted-foreground">All inventory movements from your sales.</p>
+            <p className="text-xs sm:text-sm text-muted-foreground">All inventory movements from your sales.</p>
           </div>
         </div>
         <Button
           variant="outline"
-          className="rounded-full font-bold"
+          className="w-full sm:w-auto rounded-full font-bold text-xs sm:text-sm"
           onClick={() => router.push("/inventory")}
         >
           <Package className="w-4 h-4 mr-2" />
@@ -171,48 +171,48 @@ export default function StockHistoryPage() {
       </div>
 
       {/* Stats */}
-      <div className="grid gap-6 md:grid-cols-4">
-        <Card className="border-none bg-card shadow-sm p-4">
-          <div className="flex items-center gap-3">
-            <div className="bg-primary/10 p-3 rounded-xl">
-              <History className="w-5 h-5 text-primary" />
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-6">
+        <Card className="border-none bg-card shadow-sm p-3 sm:p-4">
+          <div className="flex items-center gap-2.5 sm:gap-3">
+            <div className="bg-primary/10 p-2 sm:p-3 rounded-xl shrink-0">
+              <History className="w-4 h-4 sm:w-5 sm:h-5 text-primary" />
             </div>
-            <div>
-              <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Total Movements</p>
-              <p className="text-2xl font-bold">{stockEntries.length}</p>
-            </div>
-          </div>
-        </Card>
-        <Card className="border-none bg-card shadow-sm p-4">
-          <div className="flex items-center gap-3">
-            <div className="bg-destructive/10 p-3 rounded-xl">
-              <TrendingDown className="w-5 h-5 text-destructive" />
-            </div>
-            <div>
-              <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Units Sold</p>
-              <p className="text-2xl font-bold">{stats.totalUnitsOut}</p>
+            <div className="min-w-0">
+              <p className="text-[9px] sm:text-[10px] text-muted-foreground uppercase font-bold tracking-wider truncate">Movements</p>
+              <p className="text-lg sm:text-2xl font-bold">{stockEntries.length}</p>
             </div>
           </div>
         </Card>
-        <Card className="border-none bg-card shadow-sm p-4">
-          <div className="flex items-center gap-3">
-            <div className="bg-accent/10 p-3 rounded-xl">
-              <Package className="w-5 h-5 text-accent" />
+        <Card className="border-none bg-card shadow-sm p-3 sm:p-4">
+          <div className="flex items-center gap-2.5 sm:gap-3">
+            <div className="bg-destructive/10 p-2 sm:p-3 rounded-xl shrink-0">
+              <TrendingDown className="w-4 h-4 sm:w-5 sm:h-5 text-destructive" />
             </div>
-            <div>
-              <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Products Moved</p>
-              <p className="text-2xl font-bold">{stats.uniqueProducts}</p>
+            <div className="min-w-0">
+              <p className="text-[9px] sm:text-[10px] text-muted-foreground uppercase font-bold tracking-wider truncate">Units Sold</p>
+              <p className="text-lg sm:text-2xl font-bold">{stats.totalUnitsOut}</p>
             </div>
           </div>
         </Card>
-        <Card className="border-none bg-card shadow-sm p-4">
-          <div className="flex items-center gap-3">
-            <div className="bg-orange-500/10 p-3 rounded-xl">
-              <ArrowDownCircle className="w-5 h-5 text-orange-400" />
+        <Card className="border-none bg-card shadow-sm p-3 sm:p-4">
+          <div className="flex items-center gap-2.5 sm:gap-3">
+            <div className="bg-accent/10 p-2 sm:p-3 rounded-xl shrink-0">
+              <Package className="w-4 h-4 sm:w-5 sm:h-5 text-accent" />
             </div>
-            <div>
-              <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Today's Units</p>
-              <p className="text-2xl font-bold">{stats.todayUnits}</p>
+            <div className="min-w-0">
+              <p className="text-[9px] sm:text-[10px] text-muted-foreground uppercase font-bold tracking-wider truncate">Products</p>
+              <p className="text-lg sm:text-2xl font-bold">{stats.uniqueProducts}</p>
+            </div>
+          </div>
+        </Card>
+        <Card className="border-none bg-card shadow-sm p-3 sm:p-4">
+          <div className="flex items-center gap-2.5 sm:gap-3">
+            <div className="bg-orange-500/10 p-2 sm:p-3 rounded-xl shrink-0">
+              <ArrowDownCircle className="w-4 h-4 sm:w-5 sm:h-5 text-orange-400" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[9px] sm:text-[10px] text-muted-foreground uppercase font-bold tracking-wider truncate">Today's Units</p>
+              <p className="text-lg sm:text-2xl font-bold">{stats.todayUnits}</p>
             </div>
           </div>
         </Card>
@@ -225,26 +225,27 @@ export default function StockHistoryPage() {
         </div>
       ) : (
         <Card className="border-none bg-card shadow-sm overflow-hidden">
-          <CardHeader className="bg-secondary/20 border-b border-border/50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <CardHeader className="bg-secondary/20 border-b border-border/50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 sm:p-6">
             <div>
-              <CardTitle className="font-headline text-lg flex items-center gap-2">
-                <History className="w-5 h-5 text-primary" />
+              <CardTitle className="font-headline text-base sm:text-lg flex items-center gap-2">
+                <History className="w-5 h-5 text-primary shrink-0" />
                 Movement Log
               </CardTitle>
-              <CardDescription>Stock changes from all completed sales.</CardDescription>
+              <CardDescription className="text-xs">Stock changes from all completed sales.</CardDescription>
             </div>
-            <div className="relative">
+            <div className="relative w-full sm:w-64">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
                 placeholder="Search product, SKU, reference..."
-                className="pl-9 rounded-full bg-secondary/30 border-none h-9 w-64 text-xs"
+                className="w-full pl-9 rounded-full bg-secondary/30 border-none h-9 text-xs"
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
               />
             </div>
           </CardHeader>
           <CardContent className="p-0">
-            <Table>
+            <div className="overflow-x-auto w-full">
+              <Table className="min-w-[580px] w-full">
               <TableHeader className="bg-secondary/10">
                 <TableRow className="border-border/30 hover:bg-transparent">
                   <TableHead className="font-bold uppercase text-[10px] py-4 pl-6">Type</TableHead>
@@ -318,7 +319,8 @@ export default function StockHistoryPage() {
                 )}
               </TableBody>
             </Table>
-          </CardContent>
+          </div>
+        </CardContent>
         </Card>
       )}
     </div>

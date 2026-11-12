@@ -418,8 +418,9 @@ export default function CashbookHistoryPage() {
               <p className="text-sm font-medium">No entries found for this period.</p>
             </div>
           ) : (
-            <Table>
-              <TableHeader className="bg-secondary/20">
+            <div className="overflow-x-auto w-full">
+              <Table className="min-w-[620px] w-full">
+                <TableHeader className="bg-secondary/20">
                 <TableRow className="border-none hover:bg-transparent">
                   <TableHead className="font-bold uppercase text-[10px]">Date</TableHead>
                   <TableHead className="font-bold uppercase text-[10px]">Type</TableHead>
@@ -476,8 +477,9 @@ export default function CashbookHistoryPage() {
                 ))}
               </TableBody>
             </Table>
-          )}
-        </CardContent>
+          </div>
+        )}
+      </CardContent>
       </Card>
     </div>
   )
