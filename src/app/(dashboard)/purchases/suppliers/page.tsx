@@ -240,72 +240,195 @@ export default function SuppliersPage() {
     })
   }
 
-  const exportToPDF = (
+  // Pure JS PDF Blob generator fallback
+  const buildPdfBlob = (
     title: string,
     subtitle: string,
     headers: string[],
     rows: (string | number)[][],
     summary?: { label: string; value: string }[]
-  ) => {
-    const printWindow = window.open("", "_blank")
-    if (!printWindow) {
-      toast({ variant: "destructive", title: "Popup Blocked", description: "Please allow popups to generate PDF report." })
-      return
+  ): Blob => {
+    const pageWidth = 595.28
+    const pageHeight = 841.89
+    const margin = 36
+    const contentWidth = pageWidth - margin * 2
+
+    let stream = ""
+    const esc = (txt: any) =>
+      String(txt ?? "")
+        .replace(/\\/g, "\\\\")
+        .replace(/\(/g, "\\(")
+        .replace(/\)/g, "\\)")
+
+    // Title
+    stream += `BT /F2 16 Tf 0.05 0.1 0.2 rg ${margin} ${pageHeight - margin - 20} Td (${esc(title)}) Tj ET\n`
+    // Subtitle
+    stream += `BT /F1 9 Tf 0.4 0.45 0.5 rg ${margin} ${pageHeight - margin - 35} Td (${esc(subtitle)}) Tj ET\n`
+    // Date
+    const dateStr = `Exported: ${new Date().toLocaleDateString()}`
+    stream += `BT /F1 8 Tf 0.5 0.5 0.5 rg ${pageWidth - margin - 100} ${pageHeight - margin - 20} Td (${esc(dateStr)}) Tj ET\n`
+
+    // Accent line
+    const headerLineY = pageHeight - margin - 45
+    stream += `0.0 0.5 0.8 RG 1.5 w ${margin} ${headerLineY} m ${pageWidth - margin} ${headerLineY} l S\n`
+
+    // Column widths
+    const colCount = Math.max(1, headers.length)
+    const colWidth = contentWidth / colCount
+
+    // Table Header
+    let currentY = headerLineY - 18
+    stream += `0.94 0.96 0.98 rg ${margin} ${currentY - 4} ${contentWidth} 18 re f\n`
+    stream += `0.8 0.85 0.9 RG 0.5 w ${margin} ${currentY - 4} ${contentWidth} 18 re s\n`
+
+    headers.forEach((h, idx) => {
+      const x = margin + idx * colWidth + 5
+      stream += `BT /F2 9 Tf 0.1 0.15 0.2 rg ${x} ${currentY + 1} Td (${esc(h)}) Tj ET\n`
+    })
+
+    currentY -= 18
+
+    // Rows
+    rows.forEach((row, rowIdx) => {
+      if (currentY < margin + 40) return
+      if (rowIdx % 2 === 1) {
+        stream += `0.98 0.98 0.99 rg ${margin} ${currentY - 4} ${contentWidth} 16 re f\n`
+      }
+      stream += `0.9 0.92 0.94 RG 0.5 w ${margin} ${currentY - 4} ${contentWidth} 16 re s\n`
+
+      row.forEach((cell, idx) => {
+        const x = margin + idx * colWidth + 5
+        const cellText = String(cell ?? "").replace(/₹/g, "Rs. ")
+        stream += `BT /F1 8.5 Tf 0.2 0.2 0.2 rg ${x} ${currentY} Td (${esc(cellText)}) Tj ET\n`
+      })
+
+      currentY -= 16
+    })
+
+    // Summary
+    if (summary && summary.length > 0) {
+      currentY -= 12
+      stream += `0.0 0.5 0.8 RG 1 w ${margin} ${currentY + 10} m ${pageWidth - margin} ${currentY + 10} l S\n`
+      summary.forEach((s) => {
+        const sumText = `${s.label}: ${String(s.value).replace(/₹/g, "Rs. ")}`
+        stream += `BT /F2 9.5 Tf 0.05 0.3 0.6 rg ${margin + 10} ${currentY} Td (${esc(sumText)}) Tj ET\n`
+        currentY -= 14
+      })
     }
 
-    const html = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>${title}</title>
-          <style>
-            @page { size: A4; margin: 15mm; }
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #1e293b; margin: 0; padding: 24px; }
-            .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #0284c7; padding-bottom: 12px; margin-bottom: 16px; }
-            .title { font-size: 20px; font-weight: bold; color: #0f172a; }
-            .subtitle { font-size: 12px; color: #64748b; margin-top: 4px; }
-            .date { font-size: 11px; color: #64748b; }
-            table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 12px; }
-            th { background: #f8fafc; color: #334155; font-weight: 700; text-align: left; padding: 8px 10px; border-bottom: 2px solid #cbd5e1; }
-            td { padding: 8px 10px; border-bottom: 1px solid #e2e8f0; }
-            tr:nth-child(even) { background: #f8fafc; }
-            .text-right { text-align: right; }
-            .summary { margin-top: 20px; display: flex; justify-content: flex-end; gap: 24px; font-size: 13px; font-weight: bold; border-top: 2px solid #e2e8f0; padding-top: 12px; }
-            .footer { margin-top: 36px; font-size: 11px; color: #94a3b8; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 10px; }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <div>
-              <div class="title">${title}</div>
-              <div class="subtitle">${subtitle}</div>
-            </div>
-            <div class="date">Report Date: ${new Date().toLocaleDateString()}</div>
-          </div>
-          <table>
-            <thead>
-              <tr>${headers.map(h => `<th>${h}</th>`).join("")}</tr>
-            </thead>
-            <tbody>
-              ${rows.map(r => `<tr>${r.map((cell) => `<td class="${typeof cell === 'number' || (typeof cell === 'string' && cell.startsWith('₹')) ? 'text-right' : ''}">${cell}</td>`).join("")}</tr>`).join("")}
-            </tbody>
-          </table>
-          ${summary ? `
-            <div class="summary">
-              ${summary.map(s => `<div>${s.label}: <span style="color: #0284c7;">${s.value}</span></div>`).join("")}
-            </div>
-          ` : ""}
-          <div class="footer">ShopX Elite — Procurement & Inventory System</div>
-        </body>
-      </html>
-    `
-    printWindow.document.write(html)
-    printWindow.document.close()
-    printWindow.focus()
-    setTimeout(() => {
-      printWindow.print()
-      printWindow.close()
-    }, 250)
+    // Footer
+    stream += `BT /F1 8 Tf 0.6 0.6 0.6 rg ${margin} 25 Td (ShopX Elite Procurement System) Tj ET\n`
+
+    // Construct PDF structure
+    const objects: string[] = []
+    objects.push(`1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n`)
+    objects.push(`2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n`)
+    objects.push(`3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> >>\nendobj\n`)
+
+    const enc = new TextEncoder()
+    const streamBytes = enc.encode(stream)
+    objects.push(`4 0 obj\n<< /Length ${streamBytes.length} >>\nstream\n${stream}\nendstream\nendobj\n`)
+    objects.push(`5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n`)
+    objects.push(`6 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>\nendobj\n`)
+
+    const header = "%PDF-1.4\n"
+    let body = ""
+    const xref: string[] = ["xref\n0 7\n0000000000 65535 f \n"]
+
+    let currentOffset = enc.encode(header).length
+
+    for (let i = 0; i < objects.length; i++) {
+      const offsetStr = String(currentOffset).padStart(10, "0")
+      xref.push(`${offsetStr} 00000 n \n`)
+      body += objects[i]
+      currentOffset += enc.encode(objects[i]).length
+    }
+
+    const startxref = currentOffset
+    const trailer = `trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${startxref}\n%%EOF\n`
+
+    const fullPdfStr = header + body + xref.join("") + trailer
+    return new Blob([enc.encode(fullPdfStr)], { type: "application/pdf" })
+  }
+
+  const exportToPDF = async (
+    title: string,
+    subtitle: string,
+    headers: string[],
+    rows: (string | number)[][],
+    summary?: { label: string; value: string }[],
+    filename?: string
+  ) => {
+    const safeFilename = filename || `Export_${new Date().toISOString().split("T")[0]}`
+
+    try {
+      // 1. Try high-definition vector PDF with jsPDF via CDN
+      if (!(window as any).jspdf) {
+        await new Promise((resolve, reject) => {
+          const s1 = document.createElement("script")
+          s1.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"
+          s1.onload = () => {
+            const s2 = document.createElement("script")
+            s2.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"
+            s2.onload = resolve
+            s2.onerror = reject
+            document.head.appendChild(s2)
+          }
+          s1.onerror = reject
+          document.head.appendChild(s1)
+        })
+      }
+
+      if ((window as any).jspdf?.jsPDF) {
+        const { jsPDF } = (window as any).jspdf
+        const doc = new jsPDF()
+        doc.setFontSize(16)
+        doc.setTextColor(15, 23, 42)
+        doc.text(title, 14, 18)
+        doc.setFontSize(9)
+        doc.setTextColor(100, 116, 139)
+        doc.text(subtitle, 14, 25)
+
+        const sanitizedHeaders = headers.map(h => String(h).replace(/₹/g, "INR"))
+        const sanitizedRows = rows.map(r => r.map(c => String(c ?? "").replace(/₹/g, "Rs. ")))
+
+        ;(doc as any).autoTable({
+          startY: 30,
+          head: [sanitizedHeaders],
+          body: sanitizedRows,
+          theme: "striped",
+          headStyles: { fillColor: [2, 132, 199] },
+          styles: { fontSize: 8.5 },
+        })
+
+        if (summary && summary.length > 0) {
+          const finalY = (doc as any).lastAutoTable.finalY + 8
+          summary.forEach((s, idx) => {
+            doc.setFontSize(9)
+            doc.setTextColor(30, 41, 59)
+            doc.text(`${s.label}: ${String(s.value).replace(/₹/g, "Rs. ")}`, 14, finalY + (idx * 5.5))
+          })
+        }
+
+        doc.save(`${safeFilename}.pdf`)
+        toast({ title: "PDF Downloaded ✓", description: `Saved ${safeFilename}.pdf to Downloads.` })
+        return
+      }
+    } catch (cdnErr) {
+      console.warn("CDN PDF unavailable, using native generator fallback:", cdnErr)
+    }
+
+    // 2. Native pure JS PDF fallback — directly downloads a valid .pdf file to disk
+    const blob = buildPdfBlob(title, subtitle, headers, rows, summary)
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.setAttribute("download", `${safeFilename}.pdf`)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+    toast({ title: "PDF Downloaded ✓", description: `Saved ${safeFilename}.pdf to Downloads.` })
   }
 
   // Trigger export for Vendor Directory
@@ -949,7 +1072,8 @@ export default function SuppliersPage() {
                     exportData.subtitle,
                     exportData.headers,
                     exportData.rows,
-                    exportData.summary
+                    exportData.summary,
+                    exportData.filename
                   )
                   setIsExportOpen(false)
                 }}
@@ -959,7 +1083,7 @@ export default function SuppliersPage() {
                   <FileText className="w-6 h-6" />
                 </div>
                 <span className="text-xs font-bold text-foreground">PDF Document</span>
-                <span className="text-[10px] text-muted-foreground mt-0.5">Print / Save .pdf</span>
+                <span className="text-[10px] text-muted-foreground mt-0.5">Download .pdf</span>
               </button>
 
               {/* Microsoft Excel */}
