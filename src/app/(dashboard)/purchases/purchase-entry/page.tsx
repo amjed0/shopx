@@ -181,101 +181,102 @@ export default function NewPurchasePage() {
     minStock: "2"
   })
 
-  React.useEffect(() => {
+  const fetchAll = React.useCallback(async () => {
     if (!user?.uid) return
     const headers = { "x-user-id": user.uid }
-    const fetchAll = async () => {
-      try {
-        setLoadingData(true)
-        const [suppliersRes, productsRes, salesRes, purchasesRes] = await Promise.all([
-          fetch("/api/suppliers", { headers, credentials: "include" }),
-          fetch("/api/products", { headers, credentials: "include" }),
-          fetch("/api/sales", { headers, credentials: "include" }).catch(() => null),
-          fetch("/api/purchases", { headers, credentials: "include" }).catch(() => null),
-        ])
-        let fetchedSuppliers: Supplier[] = []
-        if (suppliersRes.ok) {
-          fetchedSuppliers = await suppliersRes.json()
-          setSuppliers(fetchedSuppliers)
-        }
-        if (productsRes.ok) setProducts(await productsRes.json())
-
-        // Calculate sales count per product to rank top sellers
-        if (salesRes && salesRes.ok) {
-          const salesData = await salesRes.json()
-          const counts: Record<string, number> = {}
-          if (Array.isArray(salesData)) {
-            salesData.forEach((s: any) => {
-              if (Array.isArray(s.items)) {
-                s.items.forEach((it: any) => {
-                  const pid = it.productId || it.product?.id
-                  if (pid) {
-                    counts[pid] = (counts[pid] || 0) + (Number(it.quantity) || 1)
-                  }
-                })
-              }
-            })
-          }
-          setProductSalesCount(counts)
-        }
-
-        // Group past purchases into sequential bills for Bill Navigator
-        if (purchasesRes && purchasesRes.ok) {
-          const purchasesData = await purchasesRes.json()
-          if (Array.isArray(purchasesData) && purchasesData.length > 0) {
-            // Sort oldest to newest
-            const sorted = [...purchasesData].sort((a, b) => {
-              const dateA = a.billingDate || (a.createdAt ? a.createdAt.split("T")[0] : "")
-              const dateB = b.billingDate || (b.createdAt ? b.createdAt.split("T")[0] : "")
-              if (dateA !== dateB) return dateA.localeCompare(dateB)
-              return (a.createdAt || "").localeCompare(b.createdAt || "")
-            })
-
-            const groups: { [key: string]: BillGroup } = {}
-            sorted.forEach(p => {
-              const d = p.billingDate || (p.createdAt ? p.createdAt.split("T")[0] : "Unknown")
-              const sId = p.supplierId || "unknown"
-              const key = `${d}_${sId}`
-              if (!groups[key]) {
-                const supp = fetchedSuppliers.find(s => s.id === sId || (s as any)._id === sId)
-                groups[key] = {
-                  billNumber: 0,
-                  date: d,
-                  supplierId: sId,
-                  supplierName: supp?.name || "Unknown Supplier",
-                  supplierPhone: supp?.phone || "",
-                  items: [],
-                  totalAmount: 0,
-                  totalQty: 0,
-                }
-              }
-              const qty = Number(p.quantity) || 1
-              const price = Number(p.purchasePrice) || 0
-              groups[key].items.push({
-                productName: p.productName || "Product",
-                quantity: qty,
-                purchasePrice: price,
-              })
-              groups[key].totalQty += qty
-              groups[key].totalAmount += qty * price
-            })
-
-            const billList = Object.values(groups).map((bg, idx) => ({
-              ...bg,
-              billNumber: idx + 1,
-            }))
-            setPastBills(billList)
-          }
-        }
-      } catch (err) {
-        console.error(err)
-        toast({ variant: "destructive", title: "Failed to load data" })
-      } finally {
-        setLoadingData(false)
+    try {
+      setLoadingData(true)
+      const [suppliersRes, productsRes, salesRes, purchasesRes] = await Promise.all([
+        fetch("/api/suppliers", { headers, credentials: "include" }),
+        fetch("/api/products", { headers, credentials: "include" }),
+        fetch("/api/sales", { headers, credentials: "include" }).catch(() => null),
+        fetch("/api/purchases", { headers, credentials: "include" }).catch(() => null),
+      ])
+      let fetchedSuppliers: Supplier[] = []
+      if (suppliersRes.ok) {
+        fetchedSuppliers = await suppliersRes.json()
+        setSuppliers(fetchedSuppliers)
       }
+      if (productsRes.ok) setProducts(await productsRes.json())
+
+      // Calculate sales count per product to rank top sellers
+      if (salesRes && salesRes.ok) {
+        const salesData = await salesRes.json()
+        const counts: Record<string, number> = {}
+        if (Array.isArray(salesData)) {
+          salesData.forEach((s: any) => {
+            if (Array.isArray(s.items)) {
+              s.items.forEach((it: any) => {
+                const pid = it.productId || it.product?.id
+                if (pid) {
+                  counts[pid] = (counts[pid] || 0) + (Number(it.quantity) || 1)
+                }
+              })
+            }
+          })
+        }
+        setProductSalesCount(counts)
+      }
+
+      // Group past purchases into sequential bills for Bill Navigator
+      if (purchasesRes && purchasesRes.ok) {
+        const purchasesData = await purchasesRes.json()
+        if (Array.isArray(purchasesData) && purchasesData.length > 0) {
+          // Sort oldest to newest
+          const sorted = [...purchasesData].sort((a, b) => {
+            const dateA = a.billingDate || (a.createdAt ? a.createdAt.split("T")[0] : "")
+            const dateB = b.billingDate || (b.createdAt ? b.createdAt.split("T")[0] : "")
+            if (dateA !== dateB) return dateA.localeCompare(dateB)
+            return (a.createdAt || "").localeCompare(b.createdAt || "")
+          })
+
+          const groups: { [key: string]: BillGroup } = {}
+          sorted.forEach(p => {
+            const d = p.billingDate || (p.createdAt ? p.createdAt.split("T")[0] : "Unknown")
+            const sId = p.supplierId || "unknown"
+            const key = `${d}_${sId}`
+            if (!groups[key]) {
+              const supp = fetchedSuppliers.find(s => s.id === sId || (s as any)._id === sId)
+              groups[key] = {
+                billNumber: 0,
+                date: d,
+                supplierId: sId,
+                supplierName: supp?.name || "Unknown Supplier",
+                supplierPhone: supp?.phone || "",
+                items: [],
+                totalAmount: 0,
+                totalQty: 0,
+              }
+            }
+            const qty = Number(p.quantity) || 1
+            const price = Number(p.purchasePrice) || 0
+            groups[key].items.push({
+              productName: p.productName || "Product",
+              quantity: qty,
+              purchasePrice: price,
+            })
+            groups[key].totalQty += qty
+            groups[key].totalAmount += qty * price
+          })
+
+          const billList = Object.values(groups).map((bg, idx) => ({
+            ...bg,
+            billNumber: idx + 1,
+          }))
+          setPastBills(billList)
+        }
+      }
+    } catch (err) {
+      console.error(err)
+      toast({ variant: "destructive", title: "Failed to load data" })
+    } finally {
+      setLoadingData(false)
     }
-    fetchAll()
   }, [user?.uid])
+
+  React.useEffect(() => {
+    fetchAll()
+  }, [fetchAll])
 
   const loadBillData = (bill: BillGroup) => {
     setBillingDate(bill.date)
@@ -839,7 +840,7 @@ export default function NewPurchasePage() {
         description: `Successfully processed ${purchaseItems.length} products.${isCredit ? ` Balance Due: ₹${balanceDue.toLocaleString()}` : ""}` 
       })
       handleResetToNewBill()
-      router.push("/purchases/purchase-history")
+      fetchAll()
     } catch (err: any) {
       console.error("UPDATE ERROR:", err)
       toast({ variant: "destructive", title: "Operation Failed", description: err.message })
