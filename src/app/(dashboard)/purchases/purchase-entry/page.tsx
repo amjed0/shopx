@@ -84,6 +84,8 @@ interface PurchaseItem {
   productId: string
   productName: string
   sku: string
+  billItemCode?: string
+  generatedSku?: string
   quantity: number | string
   purchasePrice: number | string
   sellingPrice: number | string    // MRP
@@ -181,6 +183,9 @@ export default function NewPurchasePage() {
   const [isBillViewOpen, setIsBillViewOpen] = React.useState(false)
   const [viewingBill, setViewingBill] = React.useState<BillGroup | null>(null)
   const [scannerKey, setScannerKey] = React.useState(0)
+
+  // Invoice Item Code Preference: Use supplier's bill item code vs auto-generated SX code
+  const [useBillItemCode, setUseBillItemCode] = React.useState<boolean>(true)
 
   // Billing Date & Payment (Credit)
   const [billingDate, setBillingDate] = React.useState<string>(() => new Date().toISOString().split("T")[0])
@@ -756,27 +761,34 @@ export default function NewPurchasePage() {
       }
 
       if (existing) {
-        // USE EXISTING PRODUCT: Keep existing name and existing SKU to prevent duplicates!
+        // USE EXISTING PRODUCT: Keep established name & SKU in stock to prevent duplicates!
         newItems.push({
           productId: existing.id,
           productName: existing.name,
-          sku: existing.sku || item.itemCode || generateSKU(),
+          sku: existing.sku,
+          billItemCode: (item.itemCode || "").trim(),
           quantity: itemQty,
           purchasePrice: itemCost,
           sellingPrice: item.sellingPrice || existing.sellingPrice || Math.round(itemCost * 1.25),
-          category: matchedCat,
+          category: existing.category || matchedCat,
           minStock: existing.minStock || 2,
           taxRate: itemTaxRate,
           taxAmount: itemTaxAmount,
           isNewProduct: false,
         })
       } else {
-        // TRULY NEW PRODUCT: Use bill's item code as SKU if present
-        const itemSku = (item.itemCode || "").trim() || generateSKU()
+        // TRULY NEW PRODUCT:
+        // If useBillItemCode tickbox is checked, use bill itemCode; otherwise generate normal SX code
+        const billCode = (item.itemCode || "").trim()
+        const autoSku = generateSKU()
+        const finalSku = (useBillItemCode && billCode) ? billCode : autoSku
+
         newItems.push({
           productId: `temp-${Math.random().toString(36).slice(2)}`,
           productName: item.name,
-          sku: itemSku,
+          sku: finalSku,
+          billItemCode: billCode,
+          generatedSku: autoSku,
           quantity: itemQty,
           purchasePrice: itemCost,
           sellingPrice: item.sellingPrice || Math.round(itemCost * 1.25),
@@ -799,6 +811,30 @@ export default function NewPurchasePage() {
         description: `Loaded ${newItems.length} unique product(s) into fresh acquisition sheet.`,
       })
     }
+  }
+
+  // Toggle Use Bill Item Code
+  const handleToggleUseBillItemCode = (checked: boolean) => {
+    setUseBillItemCode(checked)
+    setPurchaseItems(prev => prev.map(item => {
+      // Existing products in stock keep their established code & name!
+      if (!item.isNewProduct) return item
+
+      const billCode = item.billItemCode?.trim()
+      const autoCode = item.generatedSku || generateSKU()
+      return {
+        ...item,
+        sku: (checked && billCode) ? billCode : autoCode,
+        generatedSku: autoCode,
+      }
+    }))
+    toast({
+      title: checked ? "Using Bill Item Codes ✓" : "Using Normal Generated Codes ✓",
+      description: checked
+        ? "New products use supplier invoice codes."
+        : "New products use auto-generated ShopX codes (SX-XXXX).",
+    })
+  }
   }
 
   // Bulk Category Application: Change all products to a selected category in one click
@@ -956,7 +992,8 @@ export default function NewPurchasePage() {
         })
 
         if (existing) {
-          // EXISTING PRODUCT: Update stock, latest MRP, latest cost, and keep same SKU/title to prevent duplicates!
+          // EXISTING PRODUCT IN STOCK:
+          // Keep established code & name in stock! Only update stock, latest cost (purchasePrice) and latest rate (sellingPrice) in product master.
           finalProductId = existing.id
           const patchRes = await fetch(`/api/products/${existing.id}`, {
             method: "PATCH",
@@ -964,13 +1001,13 @@ export default function NewPurchasePage() {
             credentials: "include",
             body: JSON.stringify({
               stock: Number(existing.stock || 0) + Number(item.quantity),
-              purchasePrice: Number(item.purchasePrice),
-              sellingPrice: Number(item.sellingPrice), // Update latest MRP
-              category: item.category || existing.category,
+              purchasePrice: Number(item.purchasePrice), // Updates latest cost in product master
+              sellingPrice: Number(item.sellingPrice),   // Updates latest rate/MRP in product master
+              category: existing.category || item.category,
               minStock: Number(item.minStock || existing.minStock || 2),
             }),
           })
-          if (!patchRes.ok) throw new Error(`Failed updating ${item.productName}`)
+          if (!patchRes.ok) throw new Error(`Failed updating ${existing.name}`)
         } else {
           // TRULY NEW PRODUCT: Create once in inventory
           const createRes = await fetch("/api/products", {
@@ -994,7 +1031,7 @@ export default function NewPurchasePage() {
           finalProductId = created.id || created._id
         }
 
-        // Always save the exact purchase price and billing date in Purchase History
+        // Always save a new purchase log for THIS bill in Purchase History (never alters past bills)
         const purchaseRes = await fetch("/api/purchases", {
           method: "POST",
           headers: { "Content-Type": "application/json", "x-user-id": user.uid },
@@ -1002,11 +1039,15 @@ export default function NewPurchasePage() {
           body: JSON.stringify({
             supplierId,
             productId: finalProductId,
-            productName: item.productName,
-            itemCode: item.sku || "",
+            productName: existing ? existing.name : item.productName,
+            itemCode: existing ? existing.sku : (item.sku || ""),
             quantity: Number(item.quantity),
             purchasePrice: Number(item.purchasePrice), // Exactly preserved historical purchase cost
             taxRate: Number(item.taxRate) || 0,
+            taxAmount: Number(item.taxAmount) || 0,
+            billingDate,
+          }),
+        })
             taxAmount: Number(item.taxAmount) || 0,
             billingDate,
           }),
@@ -1587,6 +1628,47 @@ export default function NewPurchasePage() {
           </div>
         </CardHeader>
 
+        {/* ── ITEM CODE SETTING BAR: Tickbox for Use Bill Item Codes vs Auto SX Codes ── */}
+        <div className="bg-secondary/15 border-b border-border/40 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5">
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 cursor-pointer select-none group bg-secondary/30 hover:bg-secondary/60 px-3 py-1.5 rounded-xl border border-border/60 transition-all shadow-sm">
+              <input
+                type="checkbox"
+                checked={useBillItemCode}
+                onChange={e => handleToggleUseBillItemCode(e.target.checked)}
+                className="w-4 h-4 rounded text-accent accent-accent cursor-pointer"
+              />
+              <span className="text-xs font-bold text-foreground group-hover:text-accent transition-colors">
+                Use Bill Item Codes
+              </span>
+              <Badge
+                variant="outline"
+                className={`text-[9px] px-1.5 py-0 h-4 font-mono font-bold transition-all ${
+                  useBillItemCode
+                    ? "bg-accent/15 text-accent border-accent/40"
+                    : "bg-secondary/40 text-muted-foreground border-border/60"
+                }`}
+              >
+                {useBillItemCode ? "Bill SKU ✓" : "Auto SX Code"}
+              </Badge>
+            </label>
+            <span className="text-[11px] text-muted-foreground hidden sm:inline">
+              {useBillItemCode
+                ? "• Using supplier's item codes from invoice for new products."
+                : "• Auto-generating ShopX codes (SX-XXXX) for new products."}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-muted-foreground hidden md:inline">
+              Existing products in stock keep established code &amp; name:
+            </span>
+            <Badge variant="outline" className="text-[9px] border-emerald-500/40 bg-emerald-500/10 text-emerald-400 font-bold px-2 py-0.5">
+              Updates Cost &amp; Rate only
+            </Badge>
+          </div>
+        </div>
+
         {/* Credit / Payment Bar */}
         <div className="bg-secondary/10 border-b border-border/30 px-4 py-3 grid grid-cols-1 sm:grid-cols-3 gap-3 items-center">
           <div>
@@ -1691,9 +1773,13 @@ export default function NewPurchasePage() {
                             className="h-5 px-1.5 text-[10px] font-code font-bold border border-slate-600 rounded focus:border-cyan-400 focus:outline-none w-28"
                             title="Item Code / SKU (used for customer search & inventory)"
                           />
-                          {item.isNewProduct && (
+                          {item.isNewProduct ? (
                             <Badge className="text-[8px] bg-accent/20 text-accent hover:bg-accent/30 px-1 py-0 h-4">
                               New
+                            </Badge>
+                          ) : (
+                            <Badge className="text-[8px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1 py-0 h-4 font-bold" title="Already in stock: uses existing code and name. Only stock, cost and rate will be updated.">
+                              In Stock ✓
                             </Badge>
                           )}
                         </div>
