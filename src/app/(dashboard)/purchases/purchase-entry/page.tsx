@@ -1651,41 +1651,64 @@ export default function NewPurchasePage() {
                   <p className="text-2xl sm:text-3xl font-code font-bold text-accent">₹{total.toLocaleString()}</p>
                 </div>
 
-                <div className="flex gap-2">
-                  {currentBillIndex !== -1 ? (
-                    <Button
-                      type="button"
-                      onClick={handleResetToNewBill}
-                      className="bg-accent text-accent-foreground font-bold px-6 sm:px-8 rounded-xl shadow-lg shadow-accent/25 h-11 text-sm sm:text-base hover:brightness-110 transition-all gap-2"
-                    >
-                      <Plus className="w-4 h-4" />
-                      Start New Bill (Clear)
-                    </Button>
-                  ) : (
-                    <>
+                <div className="flex flex-col items-end gap-1.5">
+                  <div className="flex gap-2">
+                    {currentBillIndex !== -1 ? (
                       <Button
                         type="button"
-                        variant="outline"
-                        className="rounded-xl font-bold uppercase tracking-wider text-[10px] h-11 px-4 gap-1.5 hover:text-destructive hover:border-destructive/40"
                         onClick={handleResetToNewBill}
+                        className="bg-accent text-accent-foreground font-bold px-6 sm:px-8 rounded-xl shadow-lg shadow-accent/25 h-11 text-sm sm:text-base hover:brightness-110 transition-all gap-2"
                       >
-                        <RotateCcw className="w-3.5 h-3.5" />
-                        Clear Sheet
+                        <Plus className="w-4 h-4" />
+                        Start New Bill (Clear)
                       </Button>
-                      <Button
-                        type="button"
-                        onClick={handleComplete}
-                        className="bg-accent text-accent-foreground font-bold px-6 sm:px-8 rounded-xl shadow-lg shadow-accent/25 h-11 text-sm sm:text-base hover:brightness-110 transition-all"
-                        disabled={purchaseItems.length === 0 || !selectedSupplier || isSubmitting}
-                      >
-                        {isSubmitting ? (
-                          <Loader2 className="w-5 h-5 animate-spin mr-2" />
-                        ) : (
-                          <Save className="w-5 h-5 mr-2" />
-                        )}
-                        Commit Entry
-                      </Button>
-                    </>
+                    ) : (
+                      <>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="rounded-xl font-bold uppercase tracking-wider text-[10px] h-11 px-4 gap-1.5 hover:text-destructive hover:border-destructive/40"
+                          onClick={handleResetToNewBill}
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          Clear Sheet
+                        </Button>
+                        <Button
+                          type="button"
+                          onClick={handleComplete}
+                          className={`font-bold px-6 sm:px-8 rounded-xl shadow-lg h-11 text-sm sm:text-base transition-all ${
+                            purchaseItems.length === 0 || !selectedSupplier
+                              ? "bg-muted text-muted-foreground border border-red-500/50 cursor-not-allowed opacity-60"
+                              : "bg-accent text-accent-foreground shadow-accent/25 hover:brightness-110"
+                          }`}
+                          disabled={purchaseItems.length === 0 || !selectedSupplier || isSubmitting}
+                        >
+                          {isSubmitting ? (
+                            <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                          ) : (
+                            <Save className="w-5 h-5 mr-2" />
+                          )}
+                          Commit Entry
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                  {/* Red validation hints when Commit Entry is disabled */}
+                  {currentBillIndex === -1 && (purchaseItems.length === 0 || !selectedSupplier) && (
+                    <div className="flex flex-col items-end gap-0.5">
+                      {!selectedSupplier && (
+                        <p className="text-[11px] font-semibold text-red-400 flex items-center gap-1">
+                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                          Select a supplier first
+                        </p>
+                      )}
+                      {purchaseItems.length === 0 && (
+                        <p className="text-[11px] font-semibold text-red-400 flex items-center gap-1">
+                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                          Add at least one product
+                        </p>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
