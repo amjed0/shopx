@@ -44,13 +44,14 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { supplierId, productId, productName, quantity, purchasePrice, billingDate } = body;
+    const { supplierId, productId, productName, itemCode, quantity, purchasePrice, billingDate } = body;
 
     const purchase = await Purchase.create({
       userId,
       supplierId,
       productId,
       productName,
+      itemCode,
       quantity,
       purchasePrice,
       billingDate: billingDate || new Date().toISOString().split('T')[0],
@@ -106,6 +107,7 @@ export async function PATCH(request: Request) {
         supplierId,
         productId,
         productName: product.name,
+        itemCode: product.sku,
         quantity: Number(quantity),
         purchasePrice: Number(purchasePrice ?? product.purchasePrice ?? 0),
         billingDate: billingDate || new Date().toISOString().split('T')[0],

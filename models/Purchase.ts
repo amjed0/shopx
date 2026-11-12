@@ -5,6 +5,7 @@ export interface IPurchase extends Document {
   supplierId: string;
   productId: string;
   productName: string;
+  itemCode?: string;
   quantity: number;
   purchasePrice: number;
   billingDate: string;
@@ -16,6 +17,7 @@ const PurchaseSchema = new Schema<IPurchase>({
   supplierId: { type: String, required: true, index: true },
   productId: { type: String, required: true },
   productName: { type: String, required: true },
+  itemCode: { type: String },
   quantity: { type: Number, required: true },
   purchasePrice: { type: Number, required: true },
   billingDate: { type: String, default: () => new Date().toISOString().split('T')[0] },

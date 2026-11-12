@@ -8,6 +8,8 @@ import {
   Package,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
   Receipt,
   ShoppingCart,
   BadgeDollarSign,
@@ -40,6 +42,7 @@ interface Purchase {
   supplierId: string
   productId: string
   productName: string
+  itemCode?: string
   quantity: number
   purchasePrice: number
   billingDate?: string
@@ -54,9 +57,16 @@ interface Supplier {
   contactPerson: string
 }
 
+interface ProductInfo {
+  id: string
+  name: string
+  sku?: string
+}
+
 interface DateGroup {
   date: string            // e.g. "2026-11-12"
-  displayDate: string     // e.g. "Today" / "Yesterday" / "12 Nov 2026"
+  displayDate: string     // e.g. "12/11/2026"
+  relativeLabel: string | null // "Today" | "Yesterday" | null
   purchases: Purchase[]
   totalQty: number
   totalAmount: number
@@ -64,20 +74,18 @@ interface DateGroup {
   supplierNames: string[] // distinct supplier names on that day
 }
 
-function formatDisplayDate(dateStr: string): string {
+function formatToDDMMYYYY(dateStr: string): string {
+  if (!dateStr || !dateStr.includes("-")) return dateStr
+  const [y, m, d] = dateStr.split("-")
+  return `${d.padStart(2, "0")}/${m.padStart(2, "0")}/${y}`
+}
+
+function getRelativeDateLabel(dateStr: string): string | null {
   const today = new Date().toISOString().split("T")[0]
   const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0]
   if (dateStr === today) return "Today"
   if (dateStr === yesterday) return "Yesterday"
-  try {
-    return new Date(dateStr).toLocaleDateString("en-IN", {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-    })
-  } catch {
-    return dateStr
-  }
+  return null
 }
 
 export default function PurchaseHistoryPage() {
@@ -85,9 +93,14 @@ export default function PurchaseHistoryPage() {
   const { user } = useUser()
   const [purchases, setPurchases] = React.useState<Purchase[]>([])
   const [suppliers, setSuppliers] = React.useState<Supplier[]>([])
+  const [products, setProducts] = React.useState<ProductInfo[]>([])
   const [loading, setLoading] = React.useState(true)
   const [expandedDates, setExpandedDates] = React.useState<Set<string>>(new Set())
   const [searchQuery, setSearchQuery] = React.useState("")
+
+  // Date Stepper State: Defaults to Today (e.g. "2026-11-12") or "ALL"
+  const todayStr = React.useMemo(() => new Date().toISOString().split("T")[0], [])
+  const [selectedDate, setSelectedDate] = React.useState<string | "ALL">(todayStr)
 
   // Export Modal State
   const [isExportOpen, setIsExportOpen] = React.useState(false)
@@ -305,78 +318,16 @@ export default function PurchaseHistoryPage() {
     toast({ title: "PDF Downloaded ✓", description: `Saved ${safeFilename}.pdf to Downloads.` })
   }
 
-  // Export all purchases
-  const handleExportAll = () => {
-    const headers = ["Product Name", "Supplier", "Phone", "Billing Date", "Qty", "Cost (₹)", "Subtotal (₹)"]
-    const rows = purchases.map(p => {
-      const sup = supplierMap.get(p.supplierId)
-      const qty = Number(p.quantity) || 1
-      const cost = Number(p.purchasePrice) || 0
-      return [
-        p.productName || "Product",
-        sup?.name || "N/A",
-        sup?.phone || "N/A",
-        p.billingDate || (p.createdAt ? p.createdAt.split("T")[0] : ""),
-        qty,
-        `₹${cost.toLocaleString()}`,
-        `₹${(qty * cost).toLocaleString()}`,
-      ]
-    })
-    setExportData({
-      title: "All Purchase History",
-      subtitle: `Total ${purchases.length} inward purchases recorded in ShopX`,
-      filename: `Purchases_All_${new Date().toISOString().split("T")[0]}`,
-      headers,
-      rows,
-      summary: [
-        { label: "Total Purchases", value: String(purchases.length) },
-        { label: "Total Units", value: String(totalItems) },
-        { label: "Total Spent", value: `₹${totalSpent.toLocaleString()}` },
-      ],
-    })
-    setIsExportOpen(true)
-  }
-
-  // Export single date group
-  const handleExportGroup = (group: DateGroup) => {
-    const headers = ["Product Name", "Supplier", "Phone", "Qty", "Cost (₹)", "Subtotal (₹)"]
-    const rows = group.purchases.map(p => {
-      const sup = supplierMap.get(p.supplierId)
-      const qty = Number(p.quantity) || 1
-      const cost = Number(p.purchasePrice) || 0
-      return [
-        p.productName || "Product",
-        sup?.name || "N/A",
-        sup?.phone || "N/A",
-        qty,
-        `₹${cost.toLocaleString()}`,
-        `₹${(qty * cost).toLocaleString()}`,
-      ]
-    })
-    setExportData({
-      title: `Purchases — ${group.displayDate} (${group.date})`,
-      subtitle: `Day Total: ₹${group.totalAmount.toLocaleString()} • ${group.totalQty} units across ${group.purchases.length} items`,
-      filename: `Purchases_${group.date}`,
-      headers,
-      rows,
-      summary: [
-        { label: "Date", value: group.date },
-        { label: "Total Products", value: String(group.purchases.length) },
-        { label: "Total Quantity", value: String(group.totalQty) },
-        { label: "Day Total", value: `₹${group.totalAmount.toLocaleString()}` },
-      ],
-    })
-    setIsExportOpen(true)
-  }
-
+  // Load all purchases, suppliers, and products
   React.useEffect(() => {
     if (!user?.uid) return
     const fetchAll = async () => {
       try {
         setLoading(true)
-        const [purchasesRes, suppliersRes] = await Promise.all([
+        const [purchasesRes, suppliersRes, productsRes] = await Promise.all([
           fetch("/api/purchases", { headers: { "x-user-id": user.uid } }),
           fetch("/api/suppliers", { headers: { "x-user-id": user.uid } }),
+          fetch("/api/products", { headers: { "x-user-id": user.uid } }),
         ])
         if (purchasesRes.ok) {
           const data = await purchasesRes.json()
@@ -385,6 +336,10 @@ export default function PurchaseHistoryPage() {
         if (suppliersRes.ok) {
           const data = await suppliersRes.json()
           setSuppliers(Array.isArray(data) ? data : [])
+        }
+        if (productsRes.ok) {
+          const data = await productsRes.json()
+          setProducts(Array.isArray(data) ? data : [])
         }
       } catch (err) {
         console.error(err)
@@ -396,28 +351,93 @@ export default function PurchaseHistoryPage() {
     fetchAll()
   }, [user?.uid])
 
-  // Auto-expand today's date on first load
-  React.useEffect(() => {
-    const today = new Date().toISOString().split("T")[0]
-    setExpandedDates(new Set([today]))
-  }, [])
-
+  // Maps for fast lookups
   const supplierMap = React.useMemo(() => {
     const map = new Map<string, Supplier>()
     suppliers.forEach(s => map.set(s.id, s))
     return map
   }, [suppliers])
 
+  const productMap = React.useMemo(() => {
+    const map = new Map<string, ProductInfo>()
+    products.forEach(p => map.set(p.id, p))
+    return map
+  }, [products])
+
+  const getItemCode = React.useCallback((p: Purchase): string => {
+    if (p.itemCode && p.itemCode.trim()) return p.itemCode
+    const prod = productMap.get(p.productId)
+    if (prod?.sku && prod.sku.trim()) return prod.sku
+    return "—"
+  }, [productMap])
+
+  // Deduplicate identical twin purchases created within close timeframe by the dual POST bug
+  const cleanPurchases = React.useMemo(() => {
+    const seen = new Map<string, Purchase>()
+    const result: Purchase[] = []
+
+    // Sort by createdAt ascending so the earliest is kept
+    const sorted = [...purchases].sort((a, b) => {
+      const tA = new Date(a.createdAt || 0).getTime()
+      const tB = new Date(b.createdAt || 0).getTime()
+      return tA - tB
+    })
+
+    for (const p of sorted) {
+      const date = p.billingDate || (p.createdAt ? p.createdAt.split("T")[0] : "")
+      const key = `${date}_${p.supplierId}_${p.productId || p.productName}_${p.quantity}_${p.purchasePrice}`
+      const existing = seen.get(key)
+      if (existing) {
+        const diffMs = Math.abs(
+          new Date(p.createdAt || 0).getTime() - new Date(existing.createdAt || 0).getTime()
+        )
+        // If created within 2 minutes of each other with identical values, skip twin duplicate
+        if (diffMs < 120000) {
+          continue
+        }
+      }
+      seen.set(key, p)
+      result.push(p)
+    }
+
+    return result
+  }, [purchases])
+
+  // Unique Bill Count: Count unique bills by date + supplierId
+  const totalBills = React.useMemo(() => {
+    const billKeys = new Set(
+      cleanPurchases.map(p => `${p.billingDate || (p.createdAt ? p.createdAt.split("T")[0] : "")}_${p.supplierId}`)
+    )
+    return billKeys.size
+  }, [cleanPurchases])
+
+  const totalSpent = React.useMemo(() =>
+    cleanPurchases.reduce((acc, p) => acc + (Number(p.quantity) || 0) * (Number(p.purchasePrice) || 0), 0),
+  [cleanPurchases])
+
+  const totalItems = React.useMemo(() =>
+    cleanPurchases.reduce((acc, p) => acc + (Number(p.quantity) || 0), 0),
+  [cleanPurchases])
+
+  const todayPurchases = React.useMemo(() =>
+    cleanPurchases.filter(p => (p.billingDate || p.createdAt?.split("T")[0]) === todayStr),
+  [cleanPurchases, todayStr])
+
+  const todayTotal = React.useMemo(() =>
+    todayPurchases.reduce((acc, p) => acc + (Number(p.quantity) || 0) * (Number(p.purchasePrice) || 0), 0),
+  [todayPurchases])
+
   // Group by billing date, latest on top
   const dateGroups = React.useMemo((): DateGroup[] => {
     const map: Record<string, DateGroup> = {}
 
-    purchases.forEach(p => {
+    cleanPurchases.forEach(p => {
       const date = p.billingDate || (p.createdAt ? p.createdAt.split("T")[0] : "Unknown")
       if (!map[date]) {
         map[date] = {
           date,
-          displayDate: formatDisplayDate(date),
+          displayDate: formatToDDMMYYYY(date),
+          relativeLabel: getRelativeDateLabel(date),
           purchases: [],
           totalQty: 0,
           totalAmount: 0,
@@ -444,9 +464,15 @@ export default function PurchaseHistoryPage() {
 
     // Sort groups: latest date first
     return Object.values(map).sort((a, b) => b.date.localeCompare(a.date))
-  }, [purchases, supplierMap])
+  }, [cleanPurchases, supplierMap])
 
-  // Apply search filter across date groups
+  // Auto-expand all dates by default
+  React.useEffect(() => {
+    const allDates = new Set(dateGroups.map(g => g.date))
+    setExpandedDates(allDates)
+  }, [dateGroups])
+
+  // Apply search query filter
   const filteredGroups = React.useMemo((): DateGroup[] => {
     const q = searchQuery.trim().toLowerCase()
     if (!q) return dateGroups
@@ -456,10 +482,13 @@ export default function PurchaseHistoryPage() {
         ...g,
         purchases: g.purchases.filter(p => {
           const sup = supplierMap.get(p.supplierId)
+          const code = getItemCode(p).toLowerCase()
           return (
             p.productName.toLowerCase().includes(q) ||
+            code.includes(q) ||
             (sup && sup.name.toLowerCase().includes(q)) ||
-            g.date.includes(q)
+            g.date.includes(q) ||
+            formatToDDMMYYYY(g.date).includes(q)
           )
         }),
       }))
@@ -471,7 +500,23 @@ export default function PurchaseHistoryPage() {
         productCount: new Set(g.purchases.map(p => p.productId)).size,
         supplierNames: Array.from(new Set(g.purchases.map(p => supplierMap.get(p.supplierId)?.name ?? "Unknown"))).slice(0, 3),
       }))
-  }, [dateGroups, searchQuery, supplierMap])
+  }, [dateGroups, searchQuery, supplierMap, getItemCode])
+
+  // Filter groups according to Date Stepper (selectedDate)
+  const displayedGroups = React.useMemo(() => {
+    if (selectedDate === "ALL") return filteredGroups
+    return filteredGroups.filter(g => g.date === selectedDate)
+  }, [filteredGroups, selectedDate])
+
+  // Date Stepper Handlers
+  const stepDate = (deltaDays: number) => {
+    const base = selectedDate === "ALL" ? new Date() : new Date(selectedDate)
+    base.setDate(base.getDate() + deltaDays)
+    const newDateStr = base.toISOString().split("T")[0]
+    if (newDateStr <= todayStr) {
+      setSelectedDate(newDateStr)
+    }
+  }
 
   const toggleDate = (date: string) => {
     setExpandedDates(prev => {
@@ -482,19 +527,76 @@ export default function PurchaseHistoryPage() {
     })
   }
 
-  const totalSpent = React.useMemo(() =>
-    purchases.reduce((acc, p) => acc + (Number(p.quantity) || 0) * (Number(p.purchasePrice) || 0), 0),
-  [purchases])
+  // Export all purchases
+  const handleExportAll = () => {
+    const headers = ["#", "Item Code", "Product Name", "Supplier", "Phone", "Billing Date", "Qty", "Cost (₹)", "Subtotal (₹)"]
+    const rows = cleanPurchases.map((p, idx) => {
+      const sup = supplierMap.get(p.supplierId)
+      const qty = Number(p.quantity) || 1
+      const cost = Number(p.purchasePrice) || 0
+      const code = getItemCode(p)
+      return [
+        idx + 1,
+        code,
+        p.productName || "Product",
+        sup?.name || "N/A",
+        sup?.phone || "N/A",
+        formatToDDMMYYYY(p.billingDate || (p.createdAt ? p.createdAt.split("T")[0] : "")),
+        qty,
+        `₹${cost.toLocaleString()}`,
+        `₹${(qty * cost).toLocaleString()}`,
+      ]
+    })
+    setExportData({
+      title: "All Purchase History",
+      subtitle: `Total ${totalBills} inward purchase bills (${cleanPurchases.length} items) recorded in ShopX`,
+      filename: `Purchases_All_${todayStr}`,
+      headers,
+      rows,
+      summary: [
+        { label: "Total Bills", value: String(totalBills) },
+        { label: "Total Items", value: String(cleanPurchases.length) },
+        { label: "Total Units", value: String(totalItems) },
+        { label: "Total Spent", value: `₹${totalSpent.toLocaleString()}` },
+      ],
+    })
+    setIsExportOpen(true)
+  }
 
-  const totalItems = React.useMemo(() =>
-    purchases.reduce((acc, p) => acc + (Number(p.quantity) || 0), 0),
-  [purchases])
-
-  const todayTotal = React.useMemo(() => {
-    const today = new Date().toISOString().split("T")[0]
-    const todayGroup = dateGroups.find(g => g.date === today)
-    return todayGroup?.totalAmount ?? 0
-  }, [dateGroups])
+  // Export single date group
+  const handleExportGroup = (group: DateGroup) => {
+    const headers = ["#", "Item Code", "Product Name", "Supplier", "Phone", "Qty", "Cost (₹)", "Subtotal (₹)"]
+    const rows = group.purchases.map((p, idx) => {
+      const sup = supplierMap.get(p.supplierId)
+      const qty = Number(p.quantity) || 1
+      const cost = Number(p.purchasePrice) || 0
+      const code = getItemCode(p)
+      return [
+        idx + 1,
+        code,
+        p.productName || "Product",
+        sup?.name || "N/A",
+        sup?.phone || "N/A",
+        qty,
+        `₹${cost.toLocaleString()}`,
+        `₹${(qty * cost).toLocaleString()}`,
+      ]
+    })
+    setExportData({
+      title: `Purchases — ${group.displayDate} ${group.relativeLabel ? `(${group.relativeLabel})` : ""}`,
+      subtitle: `Day Total: ₹${group.totalAmount.toLocaleString()} • ${group.totalQty} units across ${group.purchases.length} items`,
+      filename: `Purchases_${group.date}`,
+      headers,
+      rows,
+      summary: [
+        { label: "Date", value: `${group.displayDate} (${group.date})` },
+        { label: "Total Products", value: String(group.purchases.length) },
+        { label: "Total Quantity", value: String(group.totalQty) },
+        { label: "Day Total", value: `₹${group.totalAmount.toLocaleString()}` },
+      ],
+    })
+    setIsExportOpen(true)
+  }
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500 pb-16">
@@ -513,7 +615,7 @@ export default function PurchaseHistoryPage() {
             <h1 className="text-3xl font-headline font-bold text-foreground">
               Purchase <span className="text-accent">History</span>
             </h1>
-            <p className="text-muted-foreground text-sm">All inward purchases grouped by billing date — latest first.</p>
+            <p className="text-muted-foreground text-sm">All inward purchases grouped by billing date — bill-wise totals &amp; SKU tracking.</p>
           </div>
         </div>
 
@@ -556,7 +658,7 @@ export default function PurchaseHistoryPage() {
             </div>
             <div>
               <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Total Bills</p>
-              <p className="text-xl font-bold font-headline">{purchases.length}</p>
+              <p className="text-xl font-bold font-headline">{totalBills}</p>
             </div>
           </div>
         </Card>
@@ -584,39 +686,158 @@ export default function PurchaseHistoryPage() {
         </Card>
       </div>
 
-      {/* Search */}
-      <div className="flex items-center gap-4">
-        <div className="relative w-full max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+      {/* Date Stepper & Filter Bar */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-card border border-border/60 p-3 rounded-2xl shadow-sm">
+        {/* Left: Interactive Date Stepper `< Date >` */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1 bg-secondary/30 border border-border/50 rounded-xl p-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={() => stepDate(-1)}
+              className="h-8 w-8 rounded-lg hover:bg-secondary text-foreground hover:text-accent shrink-0"
+              title="Previous Day (Yesterday / Earlier)"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </Button>
+
+            <div className="px-3 py-0.5 text-center min-w-[150px]">
+              {selectedDate === "ALL" ? (
+                <div>
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground block leading-tight">
+                    All History
+                  </span>
+                  <span className="text-xs font-bold font-code text-accent">
+                    All Dates
+                  </span>
+                </div>
+              ) : (
+                <div>
+                  <div className="flex items-center justify-center gap-1.5">
+                    <span className="text-xs font-bold font-code text-foreground">
+                      {formatToDDMMYYYY(selectedDate)}
+                    </span>
+                    {getRelativeDateLabel(selectedDate) && (
+                      <Badge className="text-[9px] bg-accent/20 text-accent hover:bg-accent/30 px-1.5 py-0 h-4 font-bold">
+                        {getRelativeDateLabel(selectedDate)}
+                      </Badge>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-muted-foreground font-code">
+                    {new Date(selectedDate).toLocaleDateString("en-IN", { weekday: "short" })}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={() => stepDate(1)}
+              disabled={selectedDate === "ALL" || selectedDate >= todayStr}
+              className="h-8 w-8 rounded-lg hover:bg-secondary text-foreground hover:text-accent disabled:opacity-20 shrink-0"
+              title="Next Day"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+          </div>
+
+          {/* Quick Date Toggles */}
+          <div className="flex items-center gap-1.5">
+            <Button
+              type="button"
+              variant={selectedDate === "ALL" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setSelectedDate("ALL")}
+              className={`h-9 px-3 text-xs font-bold rounded-xl transition-all ${
+                selectedDate === "ALL"
+                  ? "bg-accent text-accent-foreground shadow-sm"
+                  : "border-border/60 hover:bg-secondary/60 text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              All Dates
+            </Button>
+
+            {selectedDate !== todayStr && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setSelectedDate(todayStr)}
+                className="h-9 px-2.5 text-xs font-bold rounded-xl border-border/60 hover:bg-secondary/60 text-accent"
+              >
+                Today
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {/* Right: Search Input with text-base to prevent mobile auto-zoom */}
+        <div className="relative w-full md:max-w-xs">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
           <Input
-            placeholder="Search product, supplier, date..."
+            placeholder="Search item code, product, vendor..."
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            className="pl-9 h-10 bg-secondary/30 border-none rounded-xl text-sm"
+            className="pl-9 h-9 bg-secondary/30 border-border/40 rounded-xl text-base sm:text-sm focus-visible:ring-accent"
           />
         </div>
-        <p className="text-xs text-muted-foreground font-code hidden sm:block shrink-0">
-          {filteredGroups.length} date{filteredGroups.length !== 1 ? "s" : ""}
-        </p>
       </div>
 
-      {/* Date Groups */}
+      {/* Date Groups Listing */}
       {loading ? (
         <div className="flex justify-center py-24">
           <Loader2 className="w-10 h-10 animate-spin text-accent opacity-50" />
         </div>
-      ) : filteredGroups.length === 0 ? (
-        <Card className="border-none bg-card shadow-sm">
-          <div className="flex flex-col items-center gap-3 py-24 opacity-30">
-            <Package className="w-12 h-12" />
-            <p className="font-semibold">No purchase history found.</p>
+      ) : displayedGroups.length === 0 ? (
+        <Card className="border-none bg-card shadow-sm p-8 text-center">
+          <div className="flex flex-col items-center gap-3 py-12">
+            <div className="bg-secondary/40 p-4 rounded-full">
+              <Calendar className="w-8 h-8 text-muted-foreground" />
+            </div>
+            <div>
+              <p className="font-bold text-base text-foreground">
+                {selectedDate === "ALL"
+                  ? "No purchase history found"
+                  : `No purchases recorded on ${formatToDDMMYYYY(selectedDate)}${
+                      getRelativeDateLabel(selectedDate) ? ` (${getRelativeDateLabel(selectedDate)})` : ""
+                    }`}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {selectedDate === "ALL"
+                  ? "No inward purchase records exist matching your search."
+                  : "You can click '<' to view earlier days, jump to 'All Dates', or create a new entry."}
+              </p>
+            </div>
+            <div className="flex items-center gap-2 mt-2">
+              {selectedDate !== "ALL" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setSelectedDate("ALL")}
+                  className="text-xs font-bold rounded-xl"
+                >
+                  View All Dates
+                </Button>
+              )}
+              <Button
+                size="sm"
+                onClick={() => router.push("/purchases/purchase-entry")}
+                className="text-xs font-bold bg-accent text-accent-foreground rounded-xl"
+              >
+                + New Purchase
+              </Button>
+            </div>
           </div>
         </Card>
       ) : (
-        <div className="space-y-3">
-          {filteredGroups.map(group => {
+        <div className="space-y-4">
+          {displayedGroups.map(group => {
             const isExpanded = expandedDates.has(group.date)
-            const isToday = group.date === new Date().toISOString().split("T")[0]
+            const isToday = group.date === todayStr
+            const isYesterday = group.relativeLabel === "Yesterday"
 
             return (
               <Card
@@ -631,23 +852,27 @@ export default function PurchaseHistoryPage() {
                 >
                   <div className={`flex items-center justify-between gap-3 px-4 sm:px-6 py-4 transition-colors hover:bg-secondary/20 ${isExpanded ? "bg-secondary/20 border-b border-border/50" : "bg-card"}`}>
                     
-                    {/* Left: Date + badge */}
+                    {/* Left: Date + Badge */}
                     <div className="flex items-center gap-3 min-w-0">
                       <div className={`p-2.5 rounded-xl shrink-0 ${isToday ? "bg-accent/20" : "bg-secondary/40"}`}>
                         <Calendar className={`w-4 h-4 ${isToday ? "text-accent" : "text-muted-foreground"}`} />
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className={`font-bold text-base sm:text-lg ${isToday ? "text-accent" : "text-foreground"}`}>
+                          <span className={`font-bold font-code text-base sm:text-lg ${isToday ? "text-accent" : "text-foreground"}`}>
                             {group.displayDate}
                           </span>
-                          {isToday && (
-                            <Badge className="text-[9px] bg-accent/20 text-accent hover:bg-accent/30 px-2 py-0.5 h-5">
-                              Today
+                          {group.relativeLabel && (
+                            <Badge className={`text-[9px] px-2 py-0.5 h-5 font-bold ${
+                              isToday
+                                ? "bg-accent/20 text-accent hover:bg-accent/30"
+                                : "bg-blue-500/20 text-blue-400 hover:bg-blue-500/30"
+                            }`}>
+                              {group.relativeLabel}
                             </Badge>
                           )}
                           <span className="text-xs text-muted-foreground font-code hidden sm:inline">
-                            {group.date}
+                            ({new Date(group.date).toLocaleDateString("en-IN", { weekday: "short" })})
                           </span>
                         </div>
                         {/* Supplier names preview */}
@@ -672,7 +897,7 @@ export default function PurchaseHistoryPage() {
                         <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Products</p>
                         <p className="font-bold text-sm font-code">{group.purchases.length}</p>
                       </div>
-                      {/* Total Amount — always visible */}
+                      {/* Total Amount */}
                       <div className="text-right">
                         <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Day Total</p>
                         <p className={`font-bold text-base sm:text-lg font-code ${isToday ? "text-accent" : "text-emerald-400"}`}>
@@ -717,20 +942,22 @@ export default function PurchaseHistoryPage() {
                     </div>
 
                     <div className="overflow-x-auto">
-                      <Table className="min-w-[640px]">
+                      <Table className="min-w-[700px]">
                         <TableHeader className="bg-secondary/10">
                           <TableRow className="border-border/30 hover:bg-transparent">
-                            <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3 pl-5">#</TableHead>
+                            <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3 pl-5 w-[45px]">#</TableHead>
+                            <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3 w-[120px]">Item Code</TableHead>
                             <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3">Product Name</TableHead>
                             <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3">Supplier / Vendor</TableHead>
-                            <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3 text-center w-[80px]">Qty</TableHead>
-                            <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3 text-right w-[120px]">Purchase Cost</TableHead>
-                            <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3 text-right pr-5 w-[120px]">Subtotal</TableHead>
+                            <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3 text-center w-[75px]">Qty</TableHead>
+                            <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3 text-right w-[115px]">Purchase Cost</TableHead>
+                            <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3 text-right pr-5 w-[115px]">Subtotal</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
                           {group.purchases.map((p, i) => {
                             const sup = supplierMap.get(p.supplierId)
+                            const code = getItemCode(p)
                             return (
                               <TableRow
                                 key={p.id || i}
@@ -738,6 +965,11 @@ export default function PurchaseHistoryPage() {
                               >
                                 <TableCell className="py-3 pl-5 text-xs text-muted-foreground font-code">
                                   {i + 1}
+                                </TableCell>
+                                <TableCell className="py-3">
+                                  <span className="font-code text-xs font-semibold px-2 py-0.5 rounded bg-secondary/60 text-foreground border border-border/40 inline-block">
+                                    {code}
+                                  </span>
                                 </TableCell>
                                 <TableCell className="py-3">
                                   <div className="flex items-center gap-2">
@@ -768,9 +1000,9 @@ export default function PurchaseHistoryPage() {
 
                           {/* Day Total Row */}
                           <TableRow className="bg-secondary/20 border-t-2 border-border/60 hover:bg-secondary/20">
-                            <TableCell colSpan={3} className="py-3 pl-5">
+                            <TableCell colSpan={4} className="py-3 pl-5">
                               <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-                                Day Total — {group.displayDate}
+                                Day Total — {group.displayDate} {group.relativeLabel ? `(${group.relativeLabel})` : ""}
                               </span>
                             </TableCell>
                             <TableCell className="py-3 text-center">

@@ -51,13 +51,14 @@ export async function POST(request: Request) {
     const hasSupplier = !!supplierId && supplierId !== '';
     console.log("[DEBUG api/products] Check status:", { hasStock, hasSupplier, stockQty, supplierId });
 
-    if (hasStock && hasSupplier) {
+    if (hasStock && hasSupplier && !data.skipPurchase) {
       console.log("[DEBUG api/products] Creating Purchase record for supplierId:", supplierId);
       const purchaseRecord = await Purchase.create({
         userId,
         supplierId: supplierId,
         productId: newProduct._id.toString(),
         productName: newProduct.name,
+        itemCode: newProduct.sku,
         quantity: stockQty,
         purchasePrice: purchasePrice,
       });

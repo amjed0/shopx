@@ -776,6 +776,7 @@ export default function NewPurchasePage() {
               stock: Number(item.quantity),
               minStock: Number(item.minStock || 2),
               supplierId,
+              skipPurchase: true, // Prevents duplicate purchase creation since we create purchase below
             }),
           })
           if (!createRes.ok) throw new Error(`Failed to create product ${item.productName}`)
@@ -792,6 +793,7 @@ export default function NewPurchasePage() {
             supplierId,
             productId: finalProductId,
             productName: item.productName,
+            itemCode: item.sku || "",
             quantity: Number(item.quantity),
             purchasePrice: Number(item.purchasePrice), // Exactly preserved historical purchase cost
             billingDate,
