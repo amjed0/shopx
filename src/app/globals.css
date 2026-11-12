@@ -47,12 +47,29 @@
   * {
     @apply border-border;
   }
-  body {
+  html, body {
     @apply bg-background text-foreground;
     font-feature-settings: "rlig" 1, "calt" 1;
+    touch-action: manipulation;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    overflow-x: hidden;
+    max-width: 100%;
   }
   input, textarea, select {
     color: hsl(var(--foreground));
+  }
+
+  /* Prevent mobile Safari and Android Chrome from auto-zooming into inputs/search bars when keyboard appears */
+  @media screen and (max-width: 768px) {
+    input,
+    input:focus,
+    select,
+    select:focus,
+    textarea,
+    textarea:focus {
+      font-size: 16px !important;
+    }
   }
 
   /* Remove spin buttons from number inputs for clean spreadsheet look */
