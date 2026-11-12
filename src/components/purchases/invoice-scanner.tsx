@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge"
 import { toast } from "@/hooks/use-toast"
 
 export interface ScannedItem {
+  serialNumber?: string | number | null
   name: string
   itemCode?: string | null
   quantity: number
@@ -42,9 +43,10 @@ export interface ScanResult {
 interface InvoiceScannerProps {
   onScanComplete: (result: ScanResult) => void
   disabled?: boolean
+  existingCategories?: string[]
 }
 
-export function InvoiceScanner({ onScanComplete, disabled }: InvoiceScannerProps) {
+export function InvoiceScanner({ onScanComplete, disabled, existingCategories }: InvoiceScannerProps) {
   const [isScanning, setIsScanning] = React.useState(false)
   const [preview, setPreview] = React.useState<string | null>(null)
   const [fileName, setFileName] = React.useState<string>("")
@@ -125,6 +127,7 @@ export function InvoiceScanner({ onScanComplete, disabled }: InvoiceScannerProps
         body: JSON.stringify({
           image: base64,
           mimeType: mime,
+          existingCategories,
         }),
       })
 

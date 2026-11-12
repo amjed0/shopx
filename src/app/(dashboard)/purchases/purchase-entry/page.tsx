@@ -108,6 +108,54 @@ interface BillGroup {
   totalQty: number
 }
 
+function formatToDDMMYYYY(dateStr: string): string {
+  if (!dateStr || !dateStr.includes("-")) return dateStr
+  const [y, m, d] = dateStr.split("-")
+  return `${d.padStart(2, "0")}/${m.padStart(2, "0")}/${y}`
+}
+
+function normalizeCategoryName(rawCat: string, existingList?: string[]): string {
+  if (!rawCat || typeof rawCat !== "string") return "General"
+  let cat = rawCat.trim()
+  if (!cat) return "General"
+
+  const lower = cat.toLowerCase()
+  let singular = cat
+
+  // Remove plural endings 's', 'es', 'ies'
+  if (lower.endsWith("ies") && lower.length > 4) {
+    singular = cat.slice(0, -3) + "y"
+  } else if (lower.endsWith("es") && !["glasses", "shoes", "clothes"].includes(lower)) {
+    singular = cat.slice(0, -2)
+  } else if (lower.endsWith("s") && !["gas", "glass", "brass", "status", "electronics", "lens", "jeans"].includes(lower)) {
+    singular = cat.slice(0, -1)
+  }
+
+  // Title Case
+  singular = singular
+    .split(/\s+/)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(" ")
+
+  // Match against existing categories
+  if (existingList && Array.isArray(existingList) && existingList.length > 0) {
+    const clean = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "")
+    const targetNorm = clean(singular)
+    const rawNorm = clean(cat)
+
+    const exact = existingList.find(e => clean(e) === targetNorm || clean(e) === rawNorm)
+    if (exact) return exact
+
+    const stemMatch = existingList.find(e => {
+      const eNorm = clean(e)
+      return (eNorm.length >= 4 && targetNorm.includes(eNorm)) || (targetNorm.length >= 4 && eNorm.includes(targetNorm))
+    })
+    if (stemMatch) return stemMatch
+  }
+
+  return singular
+}
+
 export default function NewPurchasePage() {
   const router = useRouter()
   const { user } = useUser()
@@ -337,7 +385,12 @@ export default function NewPurchasePage() {
   }
 
   const handlePrevDate = () => {
-    if (pastBills.length === 0) return
+    if (currentBillIndex === -1 && pastBills.length === 0) {
+      const d = new Date(billingDate)
+      d.setDate(d.getDate() - 1)
+      setBillingDate(d.toISOString().split("T")[0])
+      return
+    }
     const dates = Array.from(new Set(pastBills.map(b => b.date))).sort()
     const currentIdx = dates.indexOf(billingDate)
     let targetDate = dates[0]
@@ -346,6 +399,11 @@ export default function NewPurchasePage() {
     } else if (currentIdx === -1) {
       const prevDates = dates.filter(d => d < billingDate)
       targetDate = prevDates.length > 0 ? prevDates[prevDates.length - 1] : dates[dates.length - 1]
+    } else {
+      const d = new Date(billingDate)
+      d.setDate(d.getDate() - 1)
+      setBillingDate(d.toISOString().split("T")[0])
+      return
     }
     const billIdx = pastBills.findIndex(b => b.date === targetDate)
     if (billIdx >= 0) {
@@ -357,7 +415,16 @@ export default function NewPurchasePage() {
   }
 
   const handleNextDate = () => {
-    if (pastBills.length === 0) return
+    const todayStr = new Date().toISOString().split("T")[0]
+    if (currentBillIndex === -1) {
+      const d = new Date(billingDate)
+      d.setDate(d.getDate() + 1)
+      const nextStr = d.toISOString().split("T")[0]
+      if (nextStr <= todayStr) {
+        setBillingDate(nextStr)
+      }
+      return
+    }
     const dates = Array.from(new Set(pastBills.map(b => b.date))).sort()
     const currentIdx = dates.indexOf(billingDate)
     if (currentIdx >= 0 && currentIdx < dates.length - 1) {
@@ -426,20 +493,45 @@ export default function NewPurchasePage() {
     category?: string
     minStock?: number
   }) => {
-    setPurchaseItems(prev => [
-      ...prev,
-      {
-        productId: product.id,
-        productName: product.name,
-        sku: product.sku,
-        quantity: 1,
-        purchasePrice: product.purchasePrice || 0,
-        sellingPrice: product.sellingPrice || Math.round((product.purchasePrice || 0) * 1.25),
-        category: product.category || "General",
-        minStock: product.minStock || 2,
-        isNewProduct: false,
+    setPurchaseItems(prev => {
+      // Check if product is already in the acquisition sheet by id, sku, or name
+      const pSku = (product.sku || "").trim().toLowerCase()
+      const pName = (product.name || "").trim().toLowerCase()
+      const existingIdx = prev.findIndex(item => {
+        if (item.productId === product.id) return true
+        const itSku = (item.sku || "").trim().toLowerCase()
+        if (pSku && itSku && pSku === itSku) return true
+        if (item.productName.trim().toLowerCase() === pName) return true
+        return false
+      })
+
+      if (existingIdx >= 0) {
+        toast({
+          title: "Product Already Added ✓",
+          description: `Increased quantity for "${product.name}" (#${existingIdx + 1}).`,
+        })
+        return prev.map((item, idx) =>
+          idx === existingIdx
+            ? { ...item, quantity: Number(item.quantity || 1) + 1 }
+            : item
+        )
       }
-    ])
+
+      return [
+        ...prev,
+        {
+          productId: product.id,
+          productName: product.name,
+          sku: product.sku,
+          quantity: 1,
+          purchasePrice: product.purchasePrice || 0,
+          sellingPrice: product.sellingPrice || Math.round((product.purchasePrice || 0) * 1.25),
+          category: product.category || "General",
+          minStock: product.minStock || 2,
+          isNewProduct: false,
+        }
+      ]
+    })
     setProductSearch("")
   }
 
@@ -503,9 +595,13 @@ export default function NewPurchasePage() {
   const handleScanComplete = async (result: ScanResult) => {
     if (!user?.uid) return
 
-    // 1. If billing date was extracted, apply it
+    // 1. If billing date was extracted from bill, apply it and show notification
     if (result.invoiceDate) {
       setBillingDate(result.invoiceDate)
+      toast({
+        title: "Bill Date Detected 📅",
+        description: `Set bill date to ${formatToDDMMYYYY(result.invoiceDate)} from scanned invoice.`,
+      })
     }
 
     // 2. Smart Supplier Matching: Normalize and match existing vendor
@@ -553,11 +649,32 @@ export default function NewPurchasePage() {
       }
     }
 
-    // 3. Process scanned items with Item Code / SKU matching & category auto-selection
+    // 3. Process scanned items with strict de-duplication (# serialNumber, itemCode, name) & category normalization
+    const dedupedScanItems: ScannedItem[] = []
+    const seenScanKeys = new Map<string, number>()
+
+    for (const rawItem of result.items) {
+      const sNum = rawItem.serialNumber !== undefined && rawItem.serialNumber !== null ? String(rawItem.serialNumber).trim() : ""
+      const sCode = (rawItem.itemCode || "").trim().toLowerCase()
+      const sName = (rawItem.name || "").trim().toLowerCase()
+
+      // Unique key: prefer serial number if present, else item code, else product name
+      const key = sNum ? `sn_${sNum}` : (sCode ? `code_${sCode}` : `name_${sName}`)
+
+      if (seenScanKeys.has(key)) {
+        // Merge quantity instead of adding a duplicate row!
+        const existingIdx = seenScanKeys.get(key)!
+        dedupedScanItems[existingIdx].quantity = (Number(dedupedScanItems[existingIdx].quantity) || 1) + (Number(rawItem.quantity) || 1)
+      } else {
+        seenScanKeys.set(key, dedupedScanItems.length)
+        dedupedScanItems.push({ ...rawItem })
+      }
+    }
+
     const newItems: PurchaseItem[] = []
 
-    for (const item of result.items) {
-      const scannedCode = (item.itemCode || item.sku || item.code || "").trim().toLowerCase()
+    for (const item of dedupedScanItems) {
+      const scannedCode = (item.itemCode || "").trim().toLowerCase()
       const scannedName = (item.name || "").trim().toLowerCase()
 
       // Match against existing inventory:
@@ -575,10 +692,10 @@ export default function NewPurchasePage() {
         return false
       })
 
-      // Add auto-detected category to list if present
-      if (item.category && item.category.trim()) {
-        const catClean = item.category.trim()
-        setCustomCategories(prev => Array.from(new Set([...prev, catClean])))
+      // Normalize category: ensure singular form and match existing categories
+      const matchedCat = normalizeCategoryName(item.category || existing?.category || "General", categories)
+      if (matchedCat && !categories.includes(matchedCat)) {
+        setCustomCategories(prev => Array.from(new Set([...prev, matchedCat])))
       }
 
       if (existing) {
@@ -590,7 +707,7 @@ export default function NewPurchasePage() {
           quantity: item.quantity || 1,
           purchasePrice: item.purchasePrice || existing.purchasePrice || 0,
           sellingPrice: item.sellingPrice || existing.sellingPrice || Math.round((item.purchasePrice || existing.purchasePrice || 0) * 1.25),
-          category: item.category || existing.category || "General",
+          category: matchedCat,
           minStock: existing.minStock || 2,
           isNewProduct: false,
         })
@@ -604,7 +721,7 @@ export default function NewPurchasePage() {
           quantity: item.quantity || 1,
           purchasePrice: item.purchasePrice || 0,
           sellingPrice: item.sellingPrice || Math.round((item.purchasePrice || 0) * 1.25),
-          category: item.category || "General",
+          category: matchedCat,
           minStock: 2,
           isNewProduct: true,
         })
@@ -618,7 +735,7 @@ export default function NewPurchasePage() {
       setPurchaseItems(newItems)
       toast({
         title: "Products Extracted ✨",
-        description: `Loaded ${newItems.length} product(s) into fresh acquisition sheet.`,
+        description: `Loaded ${newItems.length} unique product(s) into fresh acquisition sheet.`,
       })
     }
   }
@@ -929,33 +1046,54 @@ export default function NewPurchasePage() {
             </Button>
           </div>
 
-          {/* Date Stepper < Date > */}
-          <div className="flex items-center bg-secondary/40 border border-border/50 rounded-xl p-1 gap-1">
+          {/* Bill Date Stepper & Picker < Bill Date: DD/MM/YYYY > */}
+          <div className="flex items-center bg-secondary/40 border border-border/50 rounded-xl p-1 gap-1 relative group">
             <Button
               type="button"
               variant="ghost"
               size="icon"
-              className="h-7 w-7 rounded-lg hover:bg-secondary text-foreground hover:text-accent"
+              className="h-7 w-7 rounded-lg hover:bg-secondary text-foreground hover:text-accent shrink-0"
               onClick={handlePrevDate}
-              disabled={pastBills.length === 0}
-              title="Previous Date with Bills"
+              title="Previous Date"
             >
               <ChevronLeft className="w-4 h-4" />
             </Button>
-            <div className="px-2 text-center min-w-[100px]">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block leading-tight">Date</span>
-              <span className="text-xs font-bold font-code text-foreground">
-                {billingDate}
+            <div className="px-2 text-center min-w-[130px] relative cursor-pointer" title="Click to pick or change bill date">
+              <span className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground block leading-tight">
+                Bill Date
               </span>
+              <div className="flex items-center justify-center gap-1.5">
+                <Calendar className="w-3 h-3 text-accent" />
+                <span className="text-xs font-bold font-code text-foreground">
+                  {formatToDDMMYYYY(billingDate)}
+                </span>
+                {billingDate === new Date().toISOString().split("T")[0] ? (
+                  <Badge className="text-[8px] px-1 py-0 h-3.5 bg-accent/20 text-accent font-bold">
+                    Today
+                  </Badge>
+                ) : (
+                  <Badge className="text-[8px] px-1 py-0 h-3.5 bg-blue-500/20 text-blue-400 font-bold">
+                    Invoice
+                  </Badge>
+                )}
+              </div>
+              <input
+                type="date"
+                value={billingDate}
+                onChange={e => {
+                  if (e.target.value) setBillingDate(e.target.value)
+                }}
+                className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                title="Change bill date"
+              />
             </div>
             <Button
               type="button"
               variant="ghost"
               size="icon"
-              className="h-7 w-7 rounded-lg hover:bg-secondary text-foreground hover:text-accent"
+              className="h-7 w-7 rounded-lg hover:bg-secondary text-foreground hover:text-accent shrink-0"
               onClick={handleNextDate}
-              disabled={pastBills.length === 0}
-              title="Next Date with Bills"
+              title="Next Date"
             >
               <ChevronRight className="w-4 h-4" />
             </Button>
@@ -1011,28 +1149,10 @@ export default function NewPurchasePage() {
         </div>
       </div>
 
-      {/* ── 2. TOP CONTROLS ROW: 4 Responsive Cards Above the Acquisition Sheet ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 w-full">
+      {/* ── 2. TOP CONTROLS ROW: 3 Responsive Cards Above the Acquisition Sheet ── */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full">
 
-        {/* Card 1: Billing Date */}
-        <Card className="border-none bg-card shadow-sm flex flex-col justify-between">
-          <CardHeader className="pb-2 pt-4 px-4">
-            <CardTitle className="text-xs font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
-              <Calendar className="w-3.5 h-3.5 text-accent" /> Billing Date
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="px-4 pb-4 flex-1 flex flex-col justify-center">
-            <Input
-              type="date"
-              style={{ color: '#ffffff', backgroundColor: '#182030' }}
-              className="h-10 text-xs border border-slate-600 rounded-lg font-bold font-code"
-              value={billingDate}
-              onChange={e => setBillingDate(e.target.value)}
-            />
-          </CardContent>
-        </Card>
-
-        {/* Card 2: Supplier Selector */}
+        {/* Card 1: Supplier Selector */}
         <Card className="border-none bg-card shadow-sm flex flex-col">
           <CardHeader className="pb-2 pt-4 px-4 flex flex-row items-center justify-between">
             <CardTitle className="text-xs font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
@@ -1121,10 +1241,10 @@ export default function NewPurchasePage() {
           </CardContent>
         </Card>
 
-        {/* Card 3: AI Invoice Scanner */}
-        <InvoiceScanner key={scannerKey} onScanComplete={handleScanComplete} disabled={isSubmitting} />
+        {/* Card 2: AI Invoice Scanner */}
+        <InvoiceScanner key={scannerKey} onScanComplete={handleScanComplete} disabled={isSubmitting} existingCategories={categories} />
 
-        {/* Card 4: Fast Add Products (Only 5 Best Selling / Search Results) */}
+        {/* Card 3: Fast Add Products (Only 5 Best Selling / Search Results) */}
         <Card className="border-none bg-card shadow-sm flex flex-col">
           <CardHeader className="pb-2 pt-4 px-4 flex flex-row items-center justify-between">
             <CardTitle className="text-xs font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">

@@ -1,5 +1,92 @@
 import { NextResponse } from 'next/server';
 
+// Helper to normalize any date string to YYYY-MM-DD
+function normalizeToISODate(dateStr: any): string | null {
+  if (!dateStr || typeof dateStr !== 'string') return null;
+  const s = dateStr.trim();
+  if (!s || s.toLowerCase() === 'null') return null;
+
+  // Already YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+
+  // DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
+  const dmyMatch = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
+  if (dmyMatch) {
+    const day = dmyMatch[1].padStart(2, '0');
+    const month = dmyMatch[2].padStart(2, '0');
+    const year = dmyMatch[3];
+    return `${year}-${month}-${day}`;
+  }
+
+  // DD/MM/YY or DD-MM-YY
+  const dmyShortMatch = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2})$/);
+  if (dmyShortMatch) {
+    const day = dmyShortMatch[1].padStart(2, '0');
+    const month = dmyShortMatch[2].padStart(2, '0');
+    const year = '20' + dmyShortMatch[3];
+    return `${year}-${month}-${day}`;
+  }
+
+  // YYYY/MM/DD
+  const ymdSlash = s.match(/^(\d{4})[\/\.](\d{1,2})[\/\.](\d{1,2})$/);
+  if (ymdSlash) {
+    return `${ymdSlash[1]}-${ymdSlash[2].padStart(2, '0')}-${ymdSlash[3].padStart(2, '0')}`;
+  }
+
+  // Fallback to JS Date parser
+  const parsed = new Date(s);
+  if (!isNaN(parsed.getTime())) {
+    return parsed.toISOString().split('T')[0];
+  }
+
+  return null;
+}
+
+// Helper to normalize category to singular standard form and match existing categories
+function normalizeCategoryName(rawCat: string, existingList?: string[]): string {
+  if (!rawCat || typeof rawCat !== 'string') return 'General';
+  let cat = rawCat.trim();
+  if (!cat) return 'General';
+
+  const lower = cat.toLowerCase();
+
+  // Handle common plural words by removing trailing 's' / 'es' / 'ies'
+  let singular = cat;
+  if (lower.endsWith('ies') && lower.length > 4) {
+    singular = cat.slice(0, -3) + 'y';
+  } else if (lower.endsWith('es') && !['glasses', 'shoes', 'clothes'].includes(lower)) {
+    singular = cat.slice(0, -2);
+  } else if (lower.endsWith('s') && !['gas', 'glass', 'brass', 'status', 'electronics', 'lens', 'jeans'].includes(lower)) {
+    singular = cat.slice(0, -1);
+  }
+
+  // Capitalize first letter of each word (Title Case)
+  singular = singular
+    .split(/\s+/)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ');
+
+  // Match against existing categories if provided
+  if (existingList && Array.isArray(existingList) && existingList.length > 0) {
+    const clean = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const targetNorm = clean(singular);
+    const rawNorm = clean(cat);
+
+    // 1. Exact match
+    const exact = existingList.find(e => clean(e) === targetNorm || clean(e) === rawNorm);
+    if (exact) return exact;
+
+    // 2. Singular stem match (e.g. existing "Fragrance" matches "Fragrances")
+    const stemMatch = existingList.find(e => {
+      const eNorm = clean(e);
+      return (eNorm.length >= 4 && targetNorm.includes(eNorm)) || (targetNorm.length >= 4 && eNorm.includes(targetNorm));
+    });
+    if (stemMatch) return stemMatch;
+  }
+
+  return singular;
+}
+
 export async function POST(request: Request) {
   try {
     const apiKey = process.env.GEMINI_API_KEY;
@@ -11,7 +98,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { image, mimeType } = body;
+    const { image, mimeType, existingCategories } = body;
 
     if (!image) {
       return NextResponse.json(
@@ -23,44 +110,50 @@ export async function POST(request: Request) {
     // Clean up base64 — remove data URL prefix if present
     const base64Data = image.replace(/^data:[^;]+;base64,/, '');
 
+    const existingCatListStr = Array.isArray(existingCategories) && existingCategories.length > 0
+      ? `\nEXISTING CATEGORIES IN STORE (MUST PRIORITIZE MATCHING TO THESE IF RELEVANT):\n${existingCategories.slice(0, 40).join(', ')}\n`
+      : '';
+
     const prompt = `You are an expert invoice/bill parser. Analyze this purchase invoice/bill image and extract ALL product items listed.
 
 For EACH product item found, extract:
+- "serialNumber": The row number, serial number (#1, #2, etc., or integer 1, 2...) from the bill. Null if not numbered.
 - "name": Product name (as written on the bill)
 - "itemCode": Item Code, SKU, Product Code, HSN code, or Part No if printed on the bill (null if not shown)
 - "quantity": Number of units purchased (default to 1 if not clear)
 - "purchasePrice": Price per unit in INR (if only total is given, divide by quantity)
 - "sellingPrice": MRP or retail selling price per unit if visible (null if not shown)
-- "category": Accurate category based on product type (e.g. "Electronics", "Groceries", "Hardware", "Clothing", "Auto Parts", "Stationery", "Medicine", "Retail", "General", etc.)
+- "category": Accurate category based on product type.
 
-Also extract these invoice-level details if visible:
-- "supplierName": Name of the supplier/vendor/shop on the bill
-- "supplierPhone": Phone number of the supplier (null if not visible)
-- "supplierEmail": Email of the supplier (null if not visible)
-- "supplierAddress": Address of the supplier (null if not visible)
-- "supplierContactPerson": Contact person name (null if not visible)
-- "invoiceNumber": Invoice/bill number
-- "invoiceDate": Date on the invoice (in YYYY-MM-DD format)
-- "totalAmount": Grand total amount on the bill
+${existingCatListStr}
 
-IMPORTANT RULES:
-1. Extract ALL line items, even if partially visible
-2. Prices should be numbers only (no currency symbols)
-3. If an item code / SKU is present in a code, item no, or HSN column, put it in "itemCode"
-4. If a field is not readable, use null
-5. For handwritten bills, do your best to read the text
-6. Return valid JSON only, no markdown formatting
+CRITICAL RULES:
+1. CATEGORY NORMALIZATION:
+   - Always use standard SINGULAR categories (e.g. use "Fragrance" NEVER "Fragrances", use "Perfume" NEVER "Perfumes", use "Plumbing" NEVER "Plumbings", use "Cosmetic" NEVER "Cosmetics", "Beverage" NEVER "Beverages", "Toy" NEVER "Toys").
+   - NEVER add a trailing plural 's' or 'es' to category names.
+   - If an existing store category fits, use that EXACT category name!
+2. DEDUPLICATION (# SERIAL NUMBER & PRODUCT):
+   - Each product line must appear ONLY ONCE in the items list. Check serial numbers (#) and names.
+   - Do NOT output duplicate rows for the same product. If a product is listed multiple times, combine its total quantity into a single line item.
+3. INVOICE DATE:
+   - Extract the exact bill/invoice date printed on the bill.
+   - Format it strictly as YYYY-MM-DD (e.g. "2026-11-12"). If year is 2 digits like 26, convert to 2026.
+4. PRICES:
+   - Numbers only (no currency symbols).
+5. SUPPLIER:
+   - Extract vendor/supplier name, phone, address, invoice number, and grand total.
 
 Return ONLY this JSON structure:
 {
   "items": [
     {
+      "serialNumber": 1,
       "name": "Product Name",
       "itemCode": "ITM-001 or SKU or null",
       "quantity": 1,
       "purchasePrice": 100,
       "sellingPrice": 150,
-      "category": "Electronics"
+      "category": "Fragrance"
     }
   ],
   "supplierName": "Vendor Name or null",
@@ -69,7 +162,7 @@ Return ONLY this JSON structure:
   "supplierAddress": "Full address or null",
   "supplierContactPerson": "Contact name or null",
   "invoiceNumber": "INV-001 or null",
-  "invoiceDate": "2026-01-15 or null",
+  "invoiceDate": "2026-11-12 or null",
   "totalAmount": 1500
 }`;
 
@@ -120,11 +213,10 @@ Return ONLY this JSON structure:
 
     // Parse JSON from response (handle markdown code blocks)
     let cleanJson = responseText.trim();
-    // Remove markdown code fences if present
     cleanJson = cleanJson.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
     cleanJson = cleanJson.trim();
 
-    let parsed;
+    let parsed: any;
     try {
       parsed = JSON.parse(cleanJson);
     } catch {
@@ -135,15 +227,45 @@ Return ONLY this JSON structure:
       );
     }
 
-    // Validate and sanitize the response
-    const items = (parsed.items || []).map((item: any) => ({
-      name: String(item.name || 'Unknown Product'),
-      itemCode: item.itemCode ? String(item.itemCode).trim() : (item.sku ? String(item.sku).trim() : null),
-      quantity: Math.max(1, Number(item.quantity) || 1),
-      purchasePrice: Math.max(0, Number(item.purchasePrice) || 0),
-      sellingPrice: item.sellingPrice ? Math.max(0, Number(item.sellingPrice)) : null,
-      category: String(item.category || 'General'),
-    }));
+    // Validate, sanitize and strictly deduplicate items
+    const rawItems = Array.isArray(parsed.items) ? parsed.items : [];
+    const seenMap = new Map<string, any>();
+
+    for (const raw of rawItems) {
+      const name = String(raw.name || 'Product').trim();
+      const itemCode = raw.itemCode ? String(raw.itemCode).trim() : (raw.sku ? String(raw.sku).trim() : null);
+      const serialNumber = raw.serialNumber !== undefined && raw.serialNumber !== null ? String(raw.serialNumber).trim() : null;
+      const quantity = Math.max(1, Number(raw.quantity) || 1);
+      const purchasePrice = Math.max(0, Number(raw.purchasePrice) || 0);
+      const sellingPrice = raw.sellingPrice ? Math.max(0, Number(raw.sellingPrice)) : null;
+      const category = normalizeCategoryName(String(raw.category || 'General'), existingCategories);
+
+      // Deduplication Key: serialNumber if present, else itemCode, else lowercased name
+      const dedupKey = serialNumber
+        ? `sn_${serialNumber}`
+        : itemCode
+        ? `code_${itemCode.toLowerCase()}`
+        : `name_${name.toLowerCase()}`;
+
+      if (seenMap.has(dedupKey)) {
+        // Already seen this product/serial item: merge quantity instead of duplicating!
+        const existing = seenMap.get(dedupKey);
+        existing.quantity += quantity;
+      } else {
+        seenMap.set(dedupKey, {
+          serialNumber,
+          name,
+          itemCode,
+          quantity,
+          purchasePrice,
+          sellingPrice,
+          category,
+        });
+      }
+    }
+
+    const items = Array.from(seenMap.values());
+    const invoiceDate = normalizeToISODate(parsed.invoiceDate);
 
     return NextResponse.json({
       items,
@@ -153,8 +275,8 @@ Return ONLY this JSON structure:
       supplierAddress: parsed.supplierAddress || null,
       supplierContactPerson: parsed.supplierContactPerson || null,
       invoiceNumber: parsed.invoiceNumber || null,
-      invoiceDate: parsed.invoiceDate || null,
-      totalAmount: parsed.totalAmount || null,
+      invoiceDate,
+      totalAmount: parsed.totalAmount ? Number(parsed.totalAmount) : null,
     });
   } catch (error: any) {
     console.error('Invoice extraction error:', error);
@@ -164,4 +286,3 @@ Return ONLY this JSON structure:
     );
   }
 }
-
