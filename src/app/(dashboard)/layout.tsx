@@ -20,22 +20,23 @@ export default function DashboardLayout({
   const router = useRouter()
   const [mobileSearchOpen, setMobileSearchOpen] = React.useState(false)
 
+  // Immediate synchronous redirect if launched from phone shortcut saved on /purchases/suppliers
+  if (typeof window !== "undefined") {
+    const isLaunchedFresh = !sessionStorage.getItem("shopx_session_started")
+    if (isLaunchedFresh && window.location.pathname === "/purchases/suppliers") {
+      sessionStorage.setItem("shopx_session_started", "true")
+      window.location.replace("/dashboard")
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-background">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      )
+    }
+  }
+
   React.useEffect(() => {
     if (status === "unauthenticated") {
       router.push("/login")
-    }
-  }, [status, router])
-
-  // If launched from a phone Home Screen shortcut that was saved on /purchases/suppliers,
-  // automatically redirect fresh launches to the Dashboard for logged-in users.
-  React.useEffect(() => {
-    if (typeof window !== "undefined" && status === "authenticated") {
-      const isLaunchedFresh = !sessionStorage.getItem("shopx_session_started")
-      sessionStorage.setItem("shopx_session_started", "true")
-
-      if (isLaunchedFresh && window.location.pathname === "/purchases/suppliers") {
-        router.replace("/dashboard")
-      }
     }
   }, [status, router])
 

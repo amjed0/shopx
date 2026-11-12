@@ -25,7 +25,7 @@ const ProductSchema = new Schema(
     sellingPrice: { type: Number, required: true },
     stock: { type: Number, required: true },
     minStock: { type: Number, required: true },
-    userId: { type: String, required: true },
+    userId: { type: String, required: true, index: true },
     notes: { type: [NoteSubSchema], default: [] },
     remarks: { type: String, default: '' },
     createdAt: { type: Date, default: Date.now },
@@ -33,9 +33,8 @@ const ProductSchema = new Schema(
   { strict: false }
 );
 
-if (process.env.NODE_ENV === 'development' && mongoose.models.Product) {
-  delete mongoose.models.Product;
-}
+ProductSchema.index({ userId: 1, name: 1 });
+ProductSchema.index({ userId: 1, sku: 1 });
 
 const Product = mongoose.models.Product || mongoose.model('Product', ProductSchema);
 export default Product;

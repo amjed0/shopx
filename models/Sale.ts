@@ -58,10 +58,12 @@ const SaleSchema = new Schema<ISale>(
     status: { type: String, enum: ['paid', 'pending', 'returned'], required: true },
     paymentMethod: { type: String, enum: ['cash', 'upi', 'card', 'credit'], required: true },
     items: [SaleItemSchema],
-    userId: { type: String, required: true },
+    userId: { type: String, required: true, index: true },
   },
   { timestamps: true, strict: false }
 );
+
+SaleSchema.index({ userId: 1, date: -1 });
 
 const Sale = models.Sale || model<ISale>('Sale', SaleSchema);
 export default Sale;

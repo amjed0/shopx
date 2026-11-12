@@ -61,8 +61,35 @@ export interface Supplier {
 export default function SuppliersPage() {
   const router = useRouter()
   const { user } = useUser()
-  const [suppliers, setSuppliers] = React.useState<Supplier[]>([])
-  const [loading, setLoading] = React.useState(true)
+
+  // Guard against stale shortcut launches directly into suppliers page
+  React.useEffect(() => {
+    if (typeof window !== "undefined") {
+      const isLaunchedFresh = !sessionStorage.getItem("shopx_session_started")
+      if (isLaunchedFresh && window.location.pathname === "/purchases/suppliers") {
+        sessionStorage.setItem("shopx_session_started", "true")
+        window.location.replace("/dashboard")
+      }
+    }
+  }, [])
+
+  const [suppliers, setSuppliers] = React.useState<Supplier[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cached = sessionStorage.getItem("shopx_suppliers_cache")
+        if (cached) return JSON.parse(cached)
+      } catch {}
+    }
+    return []
+  })
+  const [loading, setLoading] = React.useState(() => {
+    if (typeof window !== "undefined") {
+      try {
+        return !sessionStorage.getItem("shopx_suppliers_cache")
+      } catch {}
+    }
+    return true
+  })
   const [searchQuery, setSearchQuery] = React.useState("")
   const [isAddOpen, setIsAddOpen] = React.useState(false)
   const [showHistory, setShowHistory] = React.useState<string | false>(false)
@@ -91,13 +118,17 @@ export default function SuppliersPage() {
     if (!user?.uid) return
     const fetchSuppliers = async () => {
       try {
-        setLoading(true)
+        if (suppliers.length === 0) setLoading(true)
         const res = await fetch("/api/suppliers", {
           headers: { "x-user-id": user.uid },
         })
         if (!res.ok) throw new Error("Failed to fetch suppliers")
         const data = await res.json()
-        setSuppliers(data)
+        const arr = Array.isArray(data) ? data : []
+        setSuppliers(arr)
+        try {
+          sessionStorage.setItem("shopx_suppliers_cache", JSON.stringify(arr))
+        } catch {}
       } catch (err) {
         console.error(err)
         toast({ title: "Error", description: "Could not load suppliers.", variant: "destructive" })

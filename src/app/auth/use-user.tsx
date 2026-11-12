@@ -3,8 +3,24 @@
 import { useState, useEffect } from 'react';
 
 export function useUser() {
-  const [user, setUser] = useState<{ uid: string; email: string } | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<{ uid: string; email: string } | null>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('shopx-user');
+        if (stored) return JSON.parse(stored);
+      } catch {}
+    }
+    return null;
+  });
+
+  const [loading, setLoading] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        return !localStorage.getItem('shopx-user');
+      } catch {}
+    }
+    return true;
+  });
 
   useEffect(() => {
     let isMounted = true;

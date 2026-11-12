@@ -49,14 +49,27 @@ interface ShopData {
 }
 
 function useShop(uid: string | null) {
-  const [data, setData] = React.useState<ShopData | null>(null)
-  const [loading, setLoading] = React.useState(true)
+  const [data, setData] = React.useState<ShopData | null>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cached = sessionStorage.getItem("shopx_shop_cache")
+        if (cached) return JSON.parse(cached)
+      } catch {}
+    }
+    return null
+  })
+  const [loading, setLoading] = React.useState(!data)
 
   React.useEffect(() => {
     if (!uid) { setLoading(false); return }
     fetch(`/api/shop_profiles/${uid}`)
       .then((r) => r.ok ? r.json() : null)
-      .then((json) => setData(json))
+      .then((json) => {
+        if (json) {
+          setData(json)
+          try { sessionStorage.setItem("shopx_shop_cache", JSON.stringify(json)) } catch {}
+        }
+      })
       .catch(() => setData(null))
       .finally(() => setLoading(false))
   }, [uid])
@@ -65,8 +78,16 @@ function useShop(uid: string | null) {
 }
 
 function useProducts(uid: string | null) {
-  const [data, setData] = React.useState<Product[]>([])
-  const [loading, setLoading] = React.useState(true)
+  const [data, setData] = React.useState<Product[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cached = sessionStorage.getItem("shopx_products_cache")
+        if (cached) return JSON.parse(cached)
+      } catch {}
+    }
+    return []
+  })
+  const [loading, setLoading] = React.useState(!data || data.length === 0)
 
   React.useEffect(() => {
     if (!uid) { setLoading(false); return }
@@ -75,7 +96,11 @@ function useProducts(uid: string | null) {
       credentials: "include",
     })
       .then((r) => r.ok ? r.json() : [])
-      .then((json) => setData(Array.isArray(json) ? json : []))
+      .then((json) => {
+        const arr = Array.isArray(json) ? json : []
+        setData(arr)
+        try { sessionStorage.setItem("shopx_products_cache", JSON.stringify(arr)) } catch {}
+      })
       .catch(() => setData([]))
       .finally(() => setLoading(false))
   }, [uid])
@@ -84,13 +109,23 @@ function useProducts(uid: string | null) {
     if (!uid) return
     console.log("Dashboard socket inventory update received:", socketData)
     if (socketData.action === "update" && socketData.product) {
-      setData(prev => prev.map(p => p.id === socketData.product.id ? socketData.product : p))
+      setData(prev => {
+        const next = prev.map(p => p.id === socketData.product.id ? socketData.product : p)
+        try { sessionStorage.setItem("shopx_products_cache", JSON.stringify(next)) } catch {}
+        return next
+      })
     } else if (socketData.action === "delete" && socketData.productId) {
-      setData(prev => prev.filter(p => p.id !== socketData.productId))
+      setData(prev => {
+        const next = prev.filter(p => p.id !== socketData.productId)
+        try { sessionStorage.setItem("shopx_products_cache", JSON.stringify(next)) } catch {}
+        return next
+      })
     } else if (socketData.action === "create" && socketData.product) {
       setData(prev => {
         if (prev.some(p => p.id === socketData.product.id)) return prev
-        return [...prev, socketData.product]
+        const next = [...prev, socketData.product]
+        try { sessionStorage.setItem("shopx_products_cache", JSON.stringify(next)) } catch {}
+        return next
       })
     }
   })
@@ -99,8 +134,16 @@ function useProducts(uid: string | null) {
 }
 
 function useSales(uid: string | null) {
-  const [data, setData] = React.useState<Sale[]>([])
-  const [loading, setLoading] = React.useState(true)
+  const [data, setData] = React.useState<Sale[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cached = sessionStorage.getItem("shopx_sales_cache")
+        if (cached) return JSON.parse(cached)
+      } catch {}
+    }
+    return []
+  })
+  const [loading, setLoading] = React.useState(!data || data.length === 0)
 
   React.useEffect(() => {
     if (!uid) { setLoading(false); return }
@@ -109,7 +152,11 @@ function useSales(uid: string | null) {
       credentials: "include",
     })
       .then((r) => r.ok ? r.json() : [])
-      .then((json) => setData(Array.isArray(json) ? json : []))
+      .then((json) => {
+        const arr = Array.isArray(json) ? json : []
+        setData(arr)
+        try { sessionStorage.setItem("shopx_sales_cache", JSON.stringify(arr)) } catch {}
+      })
       .catch(() => setData([]))
       .finally(() => setLoading(false))
   }, [uid])
@@ -119,7 +166,9 @@ function useSales(uid: string | null) {
     console.log("Dashboard socket new sale received:", sale)
     setData(prev => {
       if (prev.some(s => s.id === sale.id)) return prev
-      return [sale, ...prev]
+      const next = [sale, ...prev]
+      try { sessionStorage.setItem("shopx_sales_cache", JSON.stringify(next)) } catch {}
+      return next
     })
   })
 
