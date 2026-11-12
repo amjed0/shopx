@@ -1,3 +1,5 @@
+import { NextResponse } from 'next/server';
+
 // Helper to normalize any date string to YYYY-MM-DD
 function normalizeToISODate(dateStr: any): string | null {
   if (!dateStr || typeof dateStr !== 'string') return null;
@@ -264,10 +266,6 @@ Return JSON in this format:
   "totalAmount": 1500
 }`;
 
-    // Call Gemini API directly via REST with gemini-2.5-flash
-    const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-
     const geminiBody: any = {
       contents: [
         {
@@ -289,26 +287,59 @@ Return JSON in this format:
       },
     };
 
-    const geminiRes = await fetch(geminiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(geminiBody),
-    });
+    // Resilient Multi-Model Fallback:
+    // If a model has a 503 high-demand spike or 429 rate limit, automatically try the next model!
+    const preferredModel = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+    const modelsToTry = Array.from(new Set([
+      preferredModel,
+      'gemini-1.5-flash',
+      'gemini-2.0-flash',
+      'gemini-1.5-pro',
+    ]));
 
-    if (!geminiRes.ok) {
-      const errText = await geminiRes.text();
-      console.error('Gemini API error:', errText);
-      return NextResponse.json(
-        { error: 'AI processing failed. Please try again.' },
-        { status: 500 }
-      );
+    let responseText = '';
+    let lastError = '';
+
+    for (const model of modelsToTry) {
+      try {
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+        const geminiRes = await fetch(geminiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(geminiBody),
+        });
+
+        if (geminiRes.ok) {
+          const geminiData = await geminiRes.json();
+          responseText = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          if (responseText) {
+            console.log(`[Invoice Extract] Successfully extracted invoice using model: ${model}`);
+            break;
+          }
+        } else {
+          const errText = await geminiRes.text();
+          console.warn(`[Invoice Extract] Model ${model} returned error (${geminiRes.status}):`, errText);
+          lastError = errText;
+          if (geminiRes.status === 503 || geminiRes.status === 429 || geminiRes.status === 500) {
+            // High demand or temporary error — wait 500ms and try fallback model
+            await new Promise(r => setTimeout(r, 500));
+            continue;
+          }
+        }
+      } catch (callErr: any) {
+        console.warn(`[Invoice Extract] Failed call to ${model}:`, callErr.message);
+        lastError = callErr.message;
+        continue;
+      }
     }
 
-    const geminiData = await geminiRes.json();
-
-    // Extract text from Gemini response
-    const responseText =
-      geminiData?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    if (!responseText) {
+      console.error('All Gemini fallback models exhausted. Last error:', lastError);
+      return NextResponse.json(
+        { error: 'AI processing temporarily unavailable due to server demand. Please try again.' },
+        { status: 503 }
+      );
+    }
 
     let parsed: any;
     try {
