@@ -134,16 +134,14 @@ export default function SalesHistoryPage() {
   const todayStr = React.useMemo(() => new Date().toISOString().split("T")[0], [])
   const [selectedDate, setSelectedDate] = React.useState<string | "ALL">(todayStr)
 
-  // Export Modal State
+  // Export Modal State & Scope Controls
+  type ExportScope = "today" | "yesterday" | "month" | "year" | "custom" | "all"
   const [isExportOpen, setIsExportOpen] = React.useState(false)
-  const [exportData, setExportData] = React.useState<{
-    title: string
-    subtitle: string
-    filename: string
-    headers: string[]
-    rows: (string | number)[][]
-    summary?: { label: string; value: string }[]
-  } | null>(null)
+  const [exportScope, setExportScope] = React.useState<ExportScope>("today")
+  const [customExportStartDate, setCustomExportStartDate] = React.useState<string>(() => new Date().toISOString().split("T")[0])
+  const [customExportEndDate, setCustomExportEndDate] = React.useState<string>(() => new Date().toISOString().split("T")[0])
+  const [exportMonth, setExportMonth] = React.useState<string>(() => new Date().toISOString().slice(0, 7))
+  const [exportYear, setExportYear] = React.useState<string>(() => new Date().getFullYear().toString())
 
   // Fetch sales from MongoDB API
   React.useEffect(() => {
@@ -533,8 +531,56 @@ export default function SalesHistoryPage() {
     toast({ title: "WhatsApp Opened", description: `Sharing invoice with +91 ${cleanPhone}` })
   }
 
-  // Export All Sales
-  const handleExportAll = () => {
+  // ── Reactive Export Dataset (Calculated for selected scope) ──
+  const activeExportData = React.useMemo(() => {
+    const yesterdayStr = new Date(Date.now() - 86400000).toISOString().split("T")[0]
+
+    let filtered: Sale[] = []
+    let scopeLabel = ""
+    let filenameSuffix = ""
+
+    if (exportScope === "today") {
+      filtered = sales.filter(s => (s.date?.split("T")[0] || "") === todayStr)
+      scopeLabel = `Today (${formatToDDMMYYYY(todayStr)})`
+      filenameSuffix = `Today_${todayStr}`
+    } else if (exportScope === "yesterday") {
+      filtered = sales.filter(s => (s.date?.split("T")[0] || "") === yesterdayStr)
+      scopeLabel = `Yesterday (${formatToDDMMYYYY(yesterdayStr)})`
+      filenameSuffix = `Yesterday_${yesterdayStr}`
+    } else if (exportScope === "month") {
+      filtered = sales.filter(s => (s.date?.split("T")[0] || "").startsWith(exportMonth))
+      const [y, m] = exportMonth.split("-")
+      const monthDate = new Date(Number(y), Number(m) - 1, 1)
+      const monthName = !isNaN(monthDate.getTime())
+        ? monthDate.toLocaleString("en-IN", { month: "long", year: "numeric" })
+        : exportMonth
+      scopeLabel = `Monthly (${monthName})`
+      filenameSuffix = `Month_${exportMonth}`
+    } else if (exportScope === "year") {
+      filtered = sales.filter(s => (s.date?.split("T")[0] || "").startsWith(exportYear))
+      scopeLabel = `Yearly (Year ${exportYear})`
+      filenameSuffix = `Year_${exportYear}`
+    } else if (exportScope === "custom") {
+      filtered = sales.filter(s => {
+        const d = s.date?.split("T")[0] || ""
+        return d >= customExportStartDate && d <= customExportEndDate
+      })
+      scopeLabel = `Date Wise (${formatToDDMMYYYY(customExportStartDate)} to ${formatToDDMMYYYY(customExportEndDate)})`
+      filenameSuffix = `Range_${customExportStartDate}_to_${customExportEndDate}`
+    } else {
+      // "all"
+      filtered = sales
+      scopeLabel = "All Data (All Time)"
+      filenameSuffix = `All_${todayStr}`
+    }
+
+    const invoiceCount = filtered.length
+    const totalAmount = filtered.reduce((acc, s) => acc + (s.total || 0), 0)
+    const totalUnits = filtered.reduce(
+      (acc, s) => acc + (s.items || []).reduce((iq, it) => iq + (Number(it.quantity) || 1), 0),
+      0
+    )
+
     const headers = [
       "#",
       "Bill No",
@@ -546,7 +592,8 @@ export default function SalesHistoryPage() {
       "Items Count",
       "Total Amount (₹)",
     ]
-    const rows = sales.map((s, idx) => {
+
+    const rows = filtered.map((s, idx) => {
       const itemsQty = (s.items || []).reduce((iq, it) => iq + (Number(it.quantity) || 1), 0)
       return [
         idx + 1,
@@ -561,66 +608,37 @@ export default function SalesHistoryPage() {
       ]
     })
 
-    setExportData({
-      title: "All Sales History",
-      subtitle: `Total ${totalInvoicesCount} sales invoices (${totalUnitsSoldCount} items sold) recorded in ShopX`,
-      filename: `Sales_All_${todayStr}`,
+    return {
+      filtered,
+      scopeLabel,
+      invoiceCount,
+      totalUnits,
+      totalAmount,
+      title: `Sales Report — ${scopeLabel}`,
+      subtitle: `${invoiceCount} Invoices • ${totalUnits} Items Sold • Total Revenue: ₹${totalAmount.toLocaleString()}`,
+      filename: `Sales_${filenameSuffix}`,
       headers,
       rows,
       summary: [
-        { label: "Total Invoices", value: String(totalInvoicesCount) },
-        { label: "Total Units Sold", value: String(totalUnitsSoldCount) },
-        { label: "Gross Revenue", value: `₹${totalRevenueAmount.toLocaleString()}` },
+        { label: "Report Period", value: scopeLabel },
+        { label: "Total Invoices", value: String(invoiceCount) },
+        { label: "Total Units Sold", value: String(totalUnits) },
+        { label: "Gross Revenue", value: `₹${totalAmount.toLocaleString()}` },
       ],
-    })
+    }
+  }, [sales, exportScope, todayStr, exportMonth, exportYear, customExportStartDate, customExportEndDate])
+
+  // Open Export Modal
+  const handleExportAll = () => {
+    setExportScope("all")
     setIsExportOpen(true)
   }
 
-  // Export Single Date Group
+  // Export Single Date Group (opens export modal pre-selected to this date)
   const handleExportGroup = (group: DateGroup) => {
-    const headers = [
-      "#",
-      "Bill No",
-      "Customer",
-      "Phone",
-      "Time",
-      "Payment Mode",
-      "Status",
-      "Items Count",
-      "Total Amount (₹)",
-    ]
-    const rows = group.sales.map((s, idx) => {
-      const itemsQty = (s.items || []).reduce((iq, it) => iq + (Number(it.quantity) || 1), 0)
-      const timeStr = s.date?.includes("T")
-        ? new Date(s.date).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })
-        : "—"
-
-      return [
-        idx + 1,
-        `#${s.billNumber || s.id.slice(-6).toUpperCase()}`,
-        s.customerName || "Walk-in Customer",
-        s.customerPhone ? `+91 ${s.customerPhone}` : "—",
-        timeStr,
-        (s.paymentMethod || "cash").toUpperCase(),
-        (s.status || "paid").toUpperCase(),
-        `${itemsQty} items`,
-        `₹${(s.total || 0).toLocaleString()}`,
-      ]
-    })
-
-    setExportData({
-      title: `Sales — ${group.displayDate} ${group.relativeLabel ? `(${group.relativeLabel})` : ""}`,
-      subtitle: `Day Revenue: ₹${group.totalAmount.toLocaleString()} • ${group.totalUnits} items across ${group.sales.length} invoices`,
-      filename: `Sales_${group.date}`,
-      headers,
-      rows,
-      summary: [
-        { label: "Date", value: `${group.displayDate} (${group.date})` },
-        { label: "Total Invoices", value: String(group.sales.length) },
-        { label: "Total Units Sold", value: String(group.totalUnits) },
-        { label: "Day Total Revenue", value: `₹${group.totalAmount.toLocaleString()}` },
-      ],
-    })
+    setExportScope("custom")
+    setCustomExportStartDate(group.date)
+    setCustomExportEndDate(group.date)
     setIsExportOpen(true)
   }
 
@@ -1254,77 +1272,229 @@ export default function SalesHistoryPage() {
         </div>
       )}
 
-      {/* ── 5. EXPORT FORMAT SELECTOR MODAL (PDF / EXCEL / GOOGLE SHEETS) ── */}
+      {/* ── 5. EXPORT MODAL (RANGE SELECTOR + PDF / EXCEL / GOOGLE SHEETS) ── */}
       <Dialog open={isExportOpen} onOpenChange={setIsExportOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-lg font-bold">
               <Download className="w-5 h-5 text-primary" /> Export Sales Data
             </DialogTitle>
             <p className="text-xs text-muted-foreground">
-              Choose the format to export{" "}
-              <span className="font-semibold text-foreground">{exportData?.title}</span>:
+              Select what period to export and choose your download format.
             </p>
           </DialogHeader>
 
-          {exportData && (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 py-4">
-              {/* PDF Document */}
-              <button
-                type="button"
-                onClick={() => {
-                  exportToPDF(
-                    exportData.title,
-                    exportData.subtitle,
-                    exportData.headers,
-                    exportData.rows,
-                    exportData.summary,
-                    exportData.filename
-                  )
-                  setIsExportOpen(false)
-                }}
-                className="flex flex-col items-center justify-center p-4 rounded-xl border border-border/60 bg-secondary/20 hover:bg-rose-500/10 hover:border-rose-500/50 transition-all text-center group cursor-pointer"
-              >
-                <div className="w-12 h-12 rounded-full bg-rose-500/15 text-rose-500 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
-                  <FileText className="w-6 h-6" />
-                </div>
-                <span className="text-xs font-bold text-foreground">PDF Document</span>
-                <span className="text-[10px] text-muted-foreground mt-0.5">Download .pdf</span>
-              </button>
-
-              {/* Microsoft Excel */}
-              <button
-                type="button"
-                onClick={() => {
-                  exportToCSV(exportData.filename, exportData.headers, exportData.rows)
-                  setIsExportOpen(false)
-                }}
-                className="flex flex-col items-center justify-center p-4 rounded-xl border border-border/60 bg-secondary/20 hover:bg-emerald-500/10 hover:border-emerald-500/50 transition-all text-center group cursor-pointer"
-              >
-                <div className="w-12 h-12 rounded-full bg-emerald-500/15 text-emerald-500 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
-                  <FileSpreadsheet className="w-6 h-6" />
-                </div>
-                <span className="text-xs font-bold text-foreground">Excel Spreadsheet</span>
-                <span className="text-[10px] text-muted-foreground mt-0.5">Microsoft Excel .csv</span>
-              </button>
-
-              {/* Google Sheets */}
-              <button
-                type="button"
-                onClick={() => {
-                  exportToGoogleSheets(exportData.filename, exportData.headers, exportData.rows)
-                  setIsExportOpen(false)
-                }}
-                className="flex flex-col items-center justify-center p-4 rounded-xl border border-border/60 bg-secondary/20 hover:bg-blue-500/10 hover:border-blue-500/50 transition-all text-center group cursor-pointer"
-              >
-                <div className="w-12 h-12 rounded-full bg-blue-500/15 text-blue-500 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
-                  <ExternalLink className="w-6 h-6" />
-                </div>
-                <span className="text-xs font-bold text-foreground">Google Sheets</span>
-                <span className="text-[10px] text-muted-foreground mt-0.5">Open &amp; Import</span>
-              </button>
+          <div className="space-y-4 py-2">
+            {/* Step 1: Select Scope / Range */}
+            <div>
+              <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground block mb-2">
+                1. Select Export Period
+              </label>
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+                {[
+                  { id: "today", label: "Today" },
+                  { id: "yesterday", label: "Yesterday" },
+                  { id: "month", label: "Monthly" },
+                  { id: "year", label: "Yearly" },
+                  { id: "custom", label: "Date Wise" },
+                  { id: "all", label: "All Data" },
+                ].map(tab => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setExportScope(tab.id as any)}
+                    className={`py-2 px-2 text-xs font-bold rounded-xl border transition-all text-center ${
+                      exportScope === tab.id
+                        ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                        : "bg-secondary/20 hover:bg-secondary/50 text-foreground border-border/50"
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
             </div>
-          )}
+
+            {/* Sub-controls for specific scopes */}
+            {exportScope === "month" && (
+              <div className="p-3 bg-secondary/10 rounded-xl border border-border/40 space-y-1.5">
+                <label className="text-xs font-bold text-foreground block">Select Month:</label>
+                <Input
+                  type="month"
+                  value={exportMonth}
+                  onChange={e => e.target.value && setExportMonth(e.target.value)}
+                  className="h-9 text-xs font-code bg-card"
+                />
+              </div>
+            )}
+
+            {exportScope === "year" && (
+              <div className="p-3 bg-secondary/10 rounded-xl border border-border/40 space-y-1.5">
+                <label className="text-xs font-bold text-foreground block">Select Year:</label>
+                <div className="flex gap-2">
+                  {[
+                    new Date().getFullYear().toString(),
+                    (new Date().getFullYear() - 1).toString(),
+                    (new Date().getFullYear() - 2).toString(),
+                  ].map(y => (
+                    <Button
+                      key={y}
+                      type="button"
+                      variant={exportYear === y ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setExportYear(y)}
+                      className="h-8 text-xs font-bold font-code"
+                    >
+                      {y}
+                    </Button>
+                  ))}
+                  <Input
+                    type="number"
+                    min="2000"
+                    max="2100"
+                    value={exportYear}
+                    onChange={e => e.target.value && setExportYear(e.target.value)}
+                    className="h-8 w-24 text-xs font-code bg-card"
+                    placeholder="YYYY"
+                  />
+                </div>
+              </div>
+            )}
+
+            {exportScope === "custom" && (
+              <div className="p-3 bg-secondary/10 rounded-xl border border-border/40 space-y-2">
+                <label className="text-xs font-bold text-foreground block">Select Date Range (From - To):</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <span className="text-[10px] text-muted-foreground block mb-1">From Date</span>
+                    <Input
+                      type="date"
+                      value={customExportStartDate}
+                      onChange={e => e.target.value && setCustomExportStartDate(e.target.value)}
+                      className="h-9 text-xs font-code bg-card"
+                    />
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-muted-foreground block mb-1">To Date</span>
+                    <Input
+                      type="date"
+                      value={customExportEndDate}
+                      onChange={e => e.target.value && setCustomExportEndDate(e.target.value)}
+                      className="h-9 text-xs font-code bg-card"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Scope Summary Preview Box */}
+            <div className="p-3.5 rounded-xl border border-primary/20 bg-primary/5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+              <div>
+                <p className="text-[11px] font-bold text-primary uppercase tracking-wide">
+                  {activeExportData.scopeLabel}
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Ready to export{" "}
+                  <span className="font-bold text-foreground">{activeExportData.invoiceCount}</span> sales invoices
+                  ({activeExportData.totalUnits} items)
+                </p>
+              </div>
+              <div className="text-left sm:text-right shrink-0">
+                <span className="text-[10px] uppercase tracking-wider text-muted-foreground block">
+                  Period Revenue
+                </span>
+                <span className="font-bold font-code text-base text-emerald-400">
+                  ₹{activeExportData.totalAmount.toLocaleString()}
+                </span>
+              </div>
+            </div>
+
+            {activeExportData.invoiceCount === 0 && (
+              <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-center">
+                <p className="text-xs text-amber-400 font-bold">
+                  No sales invoices found for this period.
+                </p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Try selecting a different date range or "All Data".
+                </p>
+              </div>
+            )}
+
+            {/* Step 2: Format Selector */}
+            <div>
+              <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground block mb-2">
+                2. Choose Format &amp; Download
+              </label>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {/* PDF Document */}
+                <button
+                  type="button"
+                  disabled={activeExportData.invoiceCount === 0}
+                  onClick={() => {
+                    exportToPDF(
+                      activeExportData.title,
+                      activeExportData.subtitle,
+                      activeExportData.headers,
+                      activeExportData.rows,
+                      activeExportData.summary,
+                      activeExportData.filename
+                    )
+                    setIsExportOpen(false)
+                  }}
+                  className="flex flex-col items-center justify-center p-4 rounded-xl border border-border/60 bg-secondary/20 hover:bg-rose-500/10 hover:border-rose-500/50 transition-all text-center group cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <div className="w-12 h-12 rounded-full bg-rose-500/15 text-rose-500 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
+                    <FileText className="w-6 h-6" />
+                  </div>
+                  <span className="text-xs font-bold text-foreground">PDF Document</span>
+                  <span className="text-[10px] text-muted-foreground mt-0.5">Download .pdf</span>
+                </button>
+
+                {/* Microsoft Excel */}
+                <button
+                  type="button"
+                  disabled={activeExportData.invoiceCount === 0}
+                  onClick={() => {
+                    exportToCSV(
+                      activeExportData.filename,
+                      activeExportData.headers,
+                      activeExportData.rows
+                    )
+                    setIsExportOpen(false)
+                  }}
+                  className="flex flex-col items-center justify-center p-4 rounded-xl border border-border/60 bg-secondary/20 hover:bg-emerald-500/10 hover:border-emerald-500/50 transition-all text-center group cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <div className="w-12 h-12 rounded-full bg-emerald-500/15 text-emerald-500 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
+                    <FileSpreadsheet className="w-6 h-6" />
+                  </div>
+                  <span className="text-xs font-bold text-foreground">Excel Spreadsheet</span>
+                  <span className="text-[10px] text-muted-foreground mt-0.5">Microsoft Excel .csv</span>
+                </button>
+
+                {/* Google Sheets */}
+                <button
+                  type="button"
+                  disabled={activeExportData.invoiceCount === 0}
+                  onClick={() => {
+                    exportToGoogleSheets(
+                      activeExportData.filename,
+                      activeExportData.headers,
+                      activeExportData.rows
+                    )
+                    setIsExportOpen(false)
+                  }}
+                  className="flex flex-col items-center justify-center p-4 rounded-xl border border-border/60 bg-secondary/20 hover:bg-blue-500/10 hover:border-blue-500/50 transition-all text-center group cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <div className="w-12 h-12 rounded-full bg-blue-500/15 text-blue-500 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
+                    <ExternalLink className="w-6 h-6" />
+                  </div>
+                  <span className="text-xs font-bold text-foreground">Google Sheets</span>
+                  <span className="text-[10px] text-muted-foreground mt-0.5">Open &amp; Import</span>
+                </button>
+              </div>
+            </div>
+          </div>
 
           <DialogFooter>
             <Button
