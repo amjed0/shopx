@@ -1,5 +1,3 @@
-import { NextResponse } from 'next/server';
-
 // Helper to normalize any date string to YYYY-MM-DD
 function normalizeToISODate(dateStr: any): string | null {
   if (!dateStr || typeof dateStr !== 'string') return null;
@@ -87,6 +85,108 @@ function normalizeCategoryName(rawCat: string, existingList?: string[]): string 
   return singular;
 }
 
+// Robust JSON repair parser for complete or truncated Gemini responses
+function repairAndParseGeminiJson(rawText: string): any {
+  let text = (rawText || '').trim();
+  // Strip markdown code fences if present
+  text = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+
+  // 1. Direct parse attempt
+  try {
+    return JSON.parse(text);
+  } catch (err1) {
+    // Continue with repair attempts
+  }
+
+  // 2. If it truncated inside a string value (e.g. `"category": "Personal`), try closing quotes and braces
+  const quoteCount = (text.match(/(?<!\\)"/g) || []).length;
+  if (quoteCount % 2 !== 0) {
+    // Odd number of quotes: close open string and wrap up JSON
+    const withClosedQuote = text + '"\n  }\n  ]\n}';
+    try {
+      return JSON.parse(withClosedQuote);
+    } catch {
+      // Continue
+    }
+  }
+
+  // 3. Try wrapping up assuming unclosed objects and arrays
+  const closingCombinations = [
+    '\n  }\n  ]\n}',
+    '\n  ]\n}',
+    '\n}',
+    '"\n}',
+  ];
+  for (const ending of closingCombinations) {
+    try {
+      return JSON.parse(text + ending);
+    } catch {
+      // Continue
+    }
+  }
+
+  // 4. Truncate back to the last completely closed object '}' inside items array
+  const lastCloseBrace = text.lastIndexOf('}');
+  if (lastCloseBrace > 0) {
+    let truncated = text.substring(0, lastCloseBrace + 1);
+    // Remove any trailing commas
+    truncated = truncated.replace(/,\s*$/, '');
+    if (!truncated.includes(']')) {
+      truncated += '\n  ]\n}';
+    } else if (!truncated.endsWith('}')) {
+      truncated += '\n}';
+    }
+    try {
+      return JSON.parse(truncated);
+    } catch {
+      // Continue
+    }
+  }
+
+  // 5. Fallback: Extract every complete { ... } item block using regex
+  const items: any[] = [];
+  const objectRegex = /\{[^{}]*"name"\s*:\s*"[^"]+"[^{}]*\}/g;
+  let match;
+  while ((match = objectRegex.exec(text)) !== null) {
+    try {
+      const obj = JSON.parse(match[0]);
+      if (obj && obj.name) {
+        items.push(obj);
+      }
+    } catch {
+      // Ignore individual corrupted objects
+    }
+  }
+
+  // Extract top-level scalar fields
+  const extractString = (field: string) => {
+    const reg = new RegExp(`"${field}"\\s*:\\s*"([^"]+)"`);
+    const m = text.match(reg);
+    return m ? m[1] : null;
+  };
+  const extractNumber = (field: string) => {
+    const reg = new RegExp(`"${field}"\\s*:\\s*([0-9.]+)`);
+    const m = text.match(reg);
+    return m ? Number(m[1]) : null;
+  };
+
+  if (items.length > 0) {
+    return {
+      items,
+      supplierName: extractString('supplierName'),
+      supplierPhone: extractString('supplierPhone'),
+      supplierEmail: extractString('supplierEmail'),
+      supplierAddress: extractString('supplierAddress'),
+      supplierContactPerson: extractString('supplierContactPerson'),
+      invoiceNumber: extractString('invoiceNumber'),
+      invoiceDate: extractString('invoiceDate'),
+      totalAmount: extractNumber('totalAmount'),
+    };
+  }
+
+  throw new Error("Could not parse invoice items from AI response");
+}
+
 export async function POST(request: Request) {
   try {
     const apiKey = process.env.GEMINI_API_KEY;
@@ -138,12 +238,10 @@ CRITICAL RULES:
 3. INVOICE DATE:
    - Extract the exact bill/invoice date printed on the bill.
    - Format it strictly as YYYY-MM-DD (e.g. "2026-11-12"). If year is 2 digits like 26, convert to 2026.
-4. PRICES:
-   - Numbers only (no currency symbols).
-5. SUPPLIER:
-   - Extract vendor/supplier name, phone, address, invoice number, and grand total.
+4. OUTPUT PURE JSON:
+   - Return valid JSON only, no markdown formatting.
 
-Return ONLY this JSON structure:
+Return JSON in this format:
 {
   "items": [
     {
@@ -170,7 +268,7 @@ Return ONLY this JSON structure:
     const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
     const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
-    const geminiBody = {
+    const geminiBody: any = {
       contents: [
         {
           parts: [
@@ -186,7 +284,8 @@ Return ONLY this JSON structure:
       ],
       generationConfig: {
         temperature: 0.1,
-        maxOutputTokens: 4096,
+        maxOutputTokens: 16384, // 16k tokens allows large invoices with 50+ line items without truncation
+        responseMimeType: 'application/json',
       },
     };
 
@@ -211,16 +310,11 @@ Return ONLY this JSON structure:
     const responseText =
       geminiData?.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
-    // Parse JSON from response (handle markdown code blocks)
-    let cleanJson = responseText.trim();
-    cleanJson = cleanJson.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
-    cleanJson = cleanJson.trim();
-
     let parsed: any;
     try {
-      parsed = JSON.parse(cleanJson);
-    } catch {
-      console.error('Failed to parse Gemini response:', responseText);
+      parsed = repairAndParseGeminiJson(responseText);
+    } catch (parseErr: any) {
+      console.error('Failed to parse Gemini response:', responseText, parseErr);
       return NextResponse.json(
         { error: 'Could not parse invoice data. Please try a clearer image.' },
         { status: 422 }
