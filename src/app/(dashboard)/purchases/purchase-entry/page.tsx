@@ -30,6 +30,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Eye,
+  RotateCcw,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -126,6 +127,7 @@ export default function NewPurchasePage() {
   const [currentBillIndex, setCurrentBillIndex] = React.useState<number>(-1)  // -1 = new bill
   const [isBillViewOpen, setIsBillViewOpen] = React.useState(false)
   const [viewingBill, setViewingBill] = React.useState<BillGroup | null>(null)
+  const [scannerKey, setScannerKey] = React.useState(0)
 
   // Billing Date & Payment (Credit)
   const [billingDate, setBillingDate] = React.useState<string>(() => new Date().toISOString().split("T")[0])
@@ -377,7 +379,8 @@ export default function NewPurchasePage() {
     setSelectedSupplier(null)
     setBillingDate(new Date().toISOString().split("T")[0])
     setPaidAmount("")
-    toast({ title: "New Bill Entry", description: "Ready to scan or enter new purchase." })
+    setScannerKey(k => k + 1)
+    toast({ title: "New Bill Entry", description: "Sheet cleared for fresh purchase entry." })
   }
 
   const categories = React.useMemo(() => {
@@ -608,31 +611,13 @@ export default function NewPurchasePage() {
     }
 
     if (newItems.length > 0) {
-      setPurchaseItems(prev => {
-        const merged = [...prev]
-        for (const item of newItems) {
-          const idx = merged.findIndex(m =>
-            m.productId === item.productId ||
-            (m.sku && item.sku && m.sku.toLowerCase() === item.sku.toLowerCase()) ||
-            m.productName.toLowerCase() === item.productName.toLowerCase()
-          )
-          if (idx >= 0) {
-            merged[idx] = {
-              ...merged[idx],
-              quantity: Number(merged[idx].quantity || 0) + Number(item.quantity || 1),
-              purchasePrice: item.purchasePrice || merged[idx].purchasePrice,
-              sellingPrice: item.sellingPrice || merged[idx].sellingPrice,
-              category: item.category || merged[idx].category,
-            }
-          } else {
-            merged.push(item)
-          }
-        }
-        return merged
-      })
+      // Starting new bill entry: clear any previous/past items so new bill sheet is completely clean!
+      setCurrentBillIndex(-1)
+      setPaidAmount("")
+      setPurchaseItems(newItems)
       toast({
         title: "Products Extracted ✨",
-        description: `Added ${newItems.length} product(s) to the acquisition sheet.`,
+        description: `Loaded ${newItems.length} product(s) into fresh acquisition sheet.`,
       })
     }
   }
@@ -853,6 +838,7 @@ export default function NewPurchasePage() {
         title: "Purchase Completed ✓", 
         description: `Successfully processed ${purchaseItems.length} products.${isCredit ? ` Balance Due: ₹${balanceDue.toLocaleString()}` : ""}` 
       })
+      handleResetToNewBill()
       router.push("/purchases/purchase-history")
     } catch (err: any) {
       console.error("UPDATE ERROR:", err)
@@ -991,16 +977,33 @@ export default function NewPurchasePage() {
                 type="button"
                 size="sm"
                 variant="default"
-                className="h-8 text-xs font-bold bg-accent text-accent-foreground hover:brightness-110 rounded-xl shadow-sm"
+                className="h-8 text-xs font-bold bg-accent text-accent-foreground hover:brightness-110 rounded-xl shadow-sm gap-1"
                 onClick={handleResetToNewBill}
+                title="Exit review and start a clear new bill"
               >
-                + New Bill
+                <Plus className="w-3.5 h-3.5" />
+                New Bill (Clear)
               </Button>
             </div>
           ) : (
-            <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-400 text-xs py-1 px-2.5 font-bold">
-              ✓ New Bill Mode
-            </Badge>
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-400 text-xs py-1 px-2.5 font-bold">
+                ✓ New Bill Entry
+              </Badge>
+              {(purchaseItems.length > 0 || selectedSupplier) && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-8 text-xs font-bold border-border hover:bg-destructive/10 hover:text-destructive hover:border-destructive/40 rounded-xl gap-1 transition-colors"
+                  onClick={handleResetToNewBill}
+                  title="Clear entire sheet and start fresh"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 mr-1" />
+                  Clear Sheet
+                </Button>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -1116,7 +1119,7 @@ export default function NewPurchasePage() {
         </Card>
 
         {/* Card 3: AI Invoice Scanner */}
-        <InvoiceScanner onScanComplete={handleScanComplete} disabled={isSubmitting} />
+        <InvoiceScanner key={scannerKey} onScanComplete={handleScanComplete} disabled={isSubmitting} />
 
         {/* Card 4: Fast Add Products (Only 5 Best Selling / Search Results) */}
         <Card className="border-none bg-card shadow-sm flex flex-col">
@@ -1648,25 +1651,41 @@ export default function NewPurchasePage() {
                 </div>
 
                 <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    className="rounded-xl font-bold uppercase tracking-wider text-[10px] h-11 px-4"
-                    onClick={() => setPurchaseItems([])}
-                  >
-                    Clear
-                  </Button>
-                  <Button
-                    onClick={handleComplete}
-                    className="bg-accent text-accent-foreground font-bold px-6 sm:px-8 rounded-xl shadow-lg shadow-accent/25 h-11 text-sm sm:text-base hover:brightness-110 transition-all"
-                    disabled={purchaseItems.length === 0 || !selectedSupplier || isSubmitting}
-                  >
-                    {isSubmitting ? (
-                      <Loader2 className="w-5 h-5 animate-spin mr-2" />
-                    ) : (
-                      <Save className="w-5 h-5 mr-2" />
-                    )}
-                    Commit Entry
-                  </Button>
+                  {currentBillIndex !== -1 ? (
+                    <Button
+                      type="button"
+                      onClick={handleResetToNewBill}
+                      className="bg-accent text-accent-foreground font-bold px-6 sm:px-8 rounded-xl shadow-lg shadow-accent/25 h-11 text-sm sm:text-base hover:brightness-110 transition-all gap-2"
+                    >
+                      <Plus className="w-4 h-4" />
+                      Start New Bill (Clear)
+                    </Button>
+                  ) : (
+                    <>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="rounded-xl font-bold uppercase tracking-wider text-[10px] h-11 px-4 gap-1.5 hover:text-destructive hover:border-destructive/40"
+                        onClick={handleResetToNewBill}
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        Clear Sheet
+                      </Button>
+                      <Button
+                        type="button"
+                        onClick={handleComplete}
+                        className="bg-accent text-accent-foreground font-bold px-6 sm:px-8 rounded-xl shadow-lg shadow-accent/25 h-11 text-sm sm:text-base hover:brightness-110 transition-all"
+                        disabled={purchaseItems.length === 0 || !selectedSupplier || isSubmitting}
+                      >
+                        {isSubmitting ? (
+                          <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                        ) : (
+                          <Save className="w-5 h-5 mr-2" />
+                        )}
+                        Commit Entry
+                      </Button>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
