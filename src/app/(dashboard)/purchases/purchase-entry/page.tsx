@@ -26,6 +26,10 @@ import {
   TrendingUp,
   Edit2,
   Layers,
+  Receipt,
+  ChevronLeft,
+  ChevronRight,
+  Eye,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -86,6 +90,23 @@ interface PurchaseItem {
   isNewProduct?: boolean
 }
 
+interface BillGroup {
+  billNumber: number
+  date: string
+  supplierId: string
+  supplierName: string
+  supplierPhone: string
+  items: Array<{
+    productName: string
+    sku?: string
+    quantity: number
+    purchasePrice: number
+    category?: string
+  }>
+  totalAmount: number
+  totalQty: number
+}
+
 export default function NewPurchasePage() {
   const router = useRouter()
   const { user } = useUser()
@@ -99,6 +120,12 @@ export default function NewPurchasePage() {
   const [purchaseItems, setPurchaseItems] = React.useState<PurchaseItem[]>([])
   const [isSubmitting, setIsSubmitting] = React.useState(false)
   const [loadingData, setLoadingData] = React.useState(true)
+
+  // Bill Navigator State
+  const [pastBills, setPastBills] = React.useState<BillGroup[]>([])
+  const [currentBillIndex, setCurrentBillIndex] = React.useState<number>(-1)  // -1 = new bill
+  const [isBillViewOpen, setIsBillViewOpen] = React.useState(false)
+  const [viewingBill, setViewingBill] = React.useState<BillGroup | null>(null)
 
   // Billing Date & Payment (Credit)
   const [billingDate, setBillingDate] = React.useState<string>(() => new Date().toISOString().split("T")[0])
@@ -158,12 +185,17 @@ export default function NewPurchasePage() {
     const fetchAll = async () => {
       try {
         setLoadingData(true)
-        const [suppliersRes, productsRes, salesRes] = await Promise.all([
+        const [suppliersRes, productsRes, salesRes, purchasesRes] = await Promise.all([
           fetch("/api/suppliers", { headers, credentials: "include" }),
           fetch("/api/products", { headers, credentials: "include" }),
           fetch("/api/sales", { headers, credentials: "include" }).catch(() => null),
+          fetch("/api/purchases", { headers, credentials: "include" }).catch(() => null),
         ])
-        if (suppliersRes.ok) setSuppliers(await suppliersRes.json())
+        let fetchedSuppliers: Supplier[] = []
+        if (suppliersRes.ok) {
+          fetchedSuppliers = await suppliersRes.json()
+          setSuppliers(fetchedSuppliers)
+        }
         if (productsRes.ok) setProducts(await productsRes.json())
 
         // Calculate sales count per product to rank top sellers
@@ -184,6 +216,55 @@ export default function NewPurchasePage() {
           }
           setProductSalesCount(counts)
         }
+
+        // Group past purchases into sequential bills for Bill Navigator
+        if (purchasesRes && purchasesRes.ok) {
+          const purchasesData = await purchasesRes.json()
+          if (Array.isArray(purchasesData) && purchasesData.length > 0) {
+            // Sort oldest to newest
+            const sorted = [...purchasesData].sort((a, b) => {
+              const dateA = a.billingDate || (a.createdAt ? a.createdAt.split("T")[0] : "")
+              const dateB = b.billingDate || (b.createdAt ? b.createdAt.split("T")[0] : "")
+              if (dateA !== dateB) return dateA.localeCompare(dateB)
+              return (a.createdAt || "").localeCompare(b.createdAt || "")
+            })
+
+            const groups: { [key: string]: BillGroup } = {}
+            sorted.forEach(p => {
+              const d = p.billingDate || (p.createdAt ? p.createdAt.split("T")[0] : "Unknown")
+              const sId = p.supplierId || "unknown"
+              const key = `${d}_${sId}`
+              if (!groups[key]) {
+                const supp = fetchedSuppliers.find(s => s.id === sId || (s as any)._id === sId)
+                groups[key] = {
+                  billNumber: 0,
+                  date: d,
+                  supplierId: sId,
+                  supplierName: supp?.name || "Unknown Supplier",
+                  supplierPhone: supp?.phone || "",
+                  items: [],
+                  totalAmount: 0,
+                  totalQty: 0,
+                }
+              }
+              const qty = Number(p.quantity) || 1
+              const price = Number(p.purchasePrice) || 0
+              groups[key].items.push({
+                productName: p.productName || "Product",
+                quantity: qty,
+                purchasePrice: price,
+              })
+              groups[key].totalQty += qty
+              groups[key].totalAmount += qty * price
+            })
+
+            const billList = Object.values(groups).map((bg, idx) => ({
+              ...bg,
+              billNumber: idx + 1,
+            }))
+            setPastBills(billList)
+          }
+        }
       } catch (err) {
         console.error(err)
         toast({ variant: "destructive", title: "Failed to load data" })
@@ -193,6 +274,111 @@ export default function NewPurchasePage() {
     }
     fetchAll()
   }, [user?.uid])
+
+  const loadBillData = (bill: BillGroup) => {
+    setBillingDate(bill.date)
+    const supp = suppliers.find(s => s.id === bill.supplierId || (s as any)._id === bill.supplierId)
+    setSelectedSupplier(supp || {
+      id: bill.supplierId,
+      name: bill.supplierName,
+      phone: bill.supplierPhone,
+      contactPerson: "",
+      email: "",
+      address: "",
+    })
+
+    setPurchaseItems(bill.items.map(it => {
+      const prod = products.find(p =>
+        p.name.toLowerCase() === it.productName.toLowerCase() ||
+        (it.sku && p.sku && p.sku.toLowerCase() === it.sku.toLowerCase())
+      )
+      return {
+        productId: prod?.id || `past-${Math.random().toString(36).slice(2)}`,
+        productName: it.productName,
+        sku: it.sku || prod?.sku || "",
+        quantity: it.quantity,
+        purchasePrice: it.purchasePrice,
+        sellingPrice: prod?.sellingPrice || Math.round(it.purchasePrice * 1.25),
+        category: it.category || prod?.category || "General",
+        minStock: prod?.minStock || 2,
+        isNewProduct: false,
+      }
+    }))
+  }
+
+  const handlePrevBill = () => {
+    if (pastBills.length === 0) return
+    let targetIndex = currentBillIndex
+    if (targetIndex === -1) {
+      targetIndex = pastBills.length - 1
+    } else if (targetIndex > 0) {
+      targetIndex -= 1
+    } else {
+      return
+    }
+    setCurrentBillIndex(targetIndex)
+    loadBillData(pastBills[targetIndex])
+    toast({ title: `Viewing Bill #${pastBills[targetIndex].billNumber}`, description: `Date: ${pastBills[targetIndex].date} • ${pastBills[targetIndex].supplierName}` })
+  }
+
+  const handleNextBill = () => {
+    if (pastBills.length === 0 || currentBillIndex === -1) return
+    if (currentBillIndex < pastBills.length - 1) {
+      const targetIndex = currentBillIndex + 1
+      setCurrentBillIndex(targetIndex)
+      loadBillData(pastBills[targetIndex])
+      toast({ title: `Viewing Bill #${pastBills[targetIndex].billNumber}`, description: `Date: ${pastBills[targetIndex].date} • ${pastBills[targetIndex].supplierName}` })
+    } else {
+      handleResetToNewBill()
+    }
+  }
+
+  const handlePrevDate = () => {
+    if (pastBills.length === 0) return
+    const dates = Array.from(new Set(pastBills.map(b => b.date))).sort()
+    const currentIdx = dates.indexOf(billingDate)
+    let targetDate = dates[0]
+    if (currentIdx > 0) {
+      targetDate = dates[currentIdx - 1]
+    } else if (currentIdx === -1) {
+      const prevDates = dates.filter(d => d < billingDate)
+      targetDate = prevDates.length > 0 ? prevDates[prevDates.length - 1] : dates[dates.length - 1]
+    }
+    const billIdx = pastBills.findIndex(b => b.date === targetDate)
+    if (billIdx >= 0) {
+      setCurrentBillIndex(billIdx)
+      loadBillData(pastBills[billIdx])
+    } else {
+      setBillingDate(targetDate)
+    }
+  }
+
+  const handleNextDate = () => {
+    if (pastBills.length === 0) return
+    const dates = Array.from(new Set(pastBills.map(b => b.date))).sort()
+    const currentIdx = dates.indexOf(billingDate)
+    if (currentIdx >= 0 && currentIdx < dates.length - 1) {
+      const targetDate = dates[currentIdx + 1]
+      const billIdx = pastBills.findIndex(b => b.date === targetDate)
+      if (billIdx >= 0) {
+        setCurrentBillIndex(billIdx)
+        loadBillData(pastBills[billIdx])
+      } else {
+        setBillingDate(targetDate)
+      }
+    } else {
+      handleResetToNewBill()
+    }
+  }
+
+  const handleResetToNewBill = () => {
+    setCurrentBillIndex(-1)
+    setPurchaseItems([])
+    setSelectedSupplier(null)
+    setBillingDate(new Date().toISOString().split("T")[0])
+    setPaidAmount("")
+    toast({ title: "New Bill Entry", description: "Ready to scan or enter new purchase." })
+  }
 
   const categories = React.useMemo(() => {
     const list = Array.from(new Set([...products.map(p => p.category), ...customCategories])).filter(Boolean).sort()
@@ -679,16 +865,143 @@ export default function NewPurchasePage() {
   return (
     <div className="space-y-6 w-full max-w-full pb-10 animate-in fade-in duration-500">
 
-      {/* ── 1. HEADER (Top buttons removed per user request) ── */}
-      <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => router.back()} className="rounded-full shrink-0">
-          <ArrowLeft className="w-5 h-5" />
-        </Button>
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-headline font-bold">
-            Inward <span className="text-accent">Bulk Terminal</span>
-          </h1>
-          <p className="text-xs sm:text-sm text-muted-foreground">Sheet interface for procurement with AI scanning & credit tracking.</p>
+      {/* ── 1. HEADER & QUICK NAVIGATION ── */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="icon" onClick={() => router.back()} className="rounded-full shrink-0">
+            <ArrowLeft className="w-5 h-5" />
+          </Button>
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-headline font-bold">
+              Inward <span className="text-accent">Bulk Terminal</span>
+            </h1>
+            <p className="text-xs sm:text-sm text-muted-foreground">Sheet interface for procurement with AI scanning & credit tracking.</p>
+          </div>
+        </div>
+
+        {/* Quick Nav Buttons: History & Suppliers */}
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => router.push("/purchases/purchase-history")}
+            className="h-9 px-3 text-xs font-bold gap-1.5 rounded-xl border-border/60 hover:bg-secondary/60 hover:text-accent shadow-sm"
+          >
+            <Receipt className="w-4 h-4 text-accent" />
+            <span>History</span>
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => router.push("/purchases/suppliers")}
+            className="h-9 px-3 text-xs font-bold gap-1.5 rounded-xl border-border/60 hover:bg-secondary/60 hover:text-accent shadow-sm"
+          >
+            <Truck className="w-4 h-4 text-accent" />
+            <span>Suppliers</span>
+          </Button>
+        </div>
+      </div>
+
+      {/* ── BILL NAVIGATOR BAR: Date & Bill Number Steppers ── */}
+      <div className="bg-card border border-border/60 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-3 shadow-md">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-4">
+          
+          {/* Bill Number Stepper < Bill #N > */}
+          <div className="flex items-center bg-secondary/40 border border-border/50 rounded-xl p-1 gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 rounded-lg hover:bg-secondary text-foreground hover:text-accent"
+              onClick={handlePrevBill}
+              disabled={pastBills.length === 0 || currentBillIndex === 0}
+              title="Previous Past Bill"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </Button>
+            <div className="px-2 text-center min-w-[90px]">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block leading-tight">Bill No</span>
+              <span className="text-xs font-bold font-code text-accent">
+                {currentBillIndex === -1 ? `New Entry` : `Bill #${pastBills[currentBillIndex]?.billNumber}`}
+              </span>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 rounded-lg hover:bg-secondary text-foreground hover:text-accent"
+              onClick={handleNextBill}
+              disabled={currentBillIndex === -1}
+              title="Next Bill (or New Bill)"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+          </div>
+
+          {/* Date Stepper < Date > */}
+          <div className="flex items-center bg-secondary/40 border border-border/50 rounded-xl p-1 gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 rounded-lg hover:bg-secondary text-foreground hover:text-accent"
+              onClick={handlePrevDate}
+              disabled={pastBills.length === 0}
+              title="Previous Date with Bills"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </Button>
+            <div className="px-2 text-center min-w-[100px]">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block leading-tight">Date</span>
+              <span className="text-xs font-bold font-code text-foreground">
+                {billingDate}
+              </span>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 rounded-lg hover:bg-secondary text-foreground hover:text-accent"
+              onClick={handleNextDate}
+              disabled={pastBills.length === 0}
+              title="Next Date with Bills"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+          </div>
+
+          {/* Past Bills Count */}
+          {pastBills.length > 0 && (
+            <Badge variant="outline" className="text-[10px] font-code h-7 px-2.5 bg-secondary/20">
+              {pastBills.length} Past Bill{pastBills.length === 1 ? "" : "s"}
+            </Badge>
+          )}
+        </div>
+
+        {/* Current State / Reset to New Bill */}
+        <div className="flex items-center gap-2">
+          {currentBillIndex !== -1 ? (
+            <div className="flex items-center gap-2">
+              <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/40 text-xs py-1 px-2.5 font-bold">
+                Reviewing Bill #{pastBills[currentBillIndex]?.billNumber} • {pastBills[currentBillIndex]?.supplierName}
+              </Badge>
+              <Button
+                type="button"
+                size="sm"
+                variant="default"
+                className="h-8 text-xs font-bold bg-accent text-accent-foreground hover:brightness-110 rounded-xl shadow-sm"
+                onClick={handleResetToNewBill}
+              >
+                + New Bill
+              </Button>
+            </div>
+          ) : (
+            <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-400 text-xs py-1 px-2.5 font-bold">
+              ✓ New Bill Mode
+            </Badge>
+          )}
         </div>
       </div>
 
@@ -1108,12 +1421,25 @@ export default function NewPurchasePage() {
                   <TableRow key={item.productId} className="border-border/30 group hover:bg-secondary/10">
                     <TableCell className="text-center font-code text-xs text-muted-foreground py-2.5 px-2">{index + 1}</TableCell>
                     <TableCell className="py-2.5 px-2">
-                      <p className="font-bold text-xs text-foreground">{item.productName}</p>
-                      <div className="flex items-center gap-1.5 mt-0.5">
-                        <span className="font-code text-[10px] text-muted-foreground">{item.sku}</span>
+                      <p className="font-bold text-xs text-foreground leading-snug">{item.productName}</p>
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-tight">Code:</span>
+                        <input
+                          type="text"
+                          placeholder="Code / SKU"
+                          value={item.sku || ""}
+                          onChange={e => updateItem(item.productId, "sku", e.target.value)}
+                          style={{
+                            color: '#38bdf8',
+                            backgroundColor: '#0f172a',
+                            WebkitTextFillColor: '#38bdf8',
+                          }}
+                          className="h-5 px-1.5 text-[10px] font-code font-bold border border-slate-600 rounded focus:border-cyan-400 focus:outline-none w-28"
+                          title="Item Code / SKU (used for customer search & inventory)"
+                        />
                         {item.isNewProduct && (
-                          <Badge className="text-[8px] bg-accent/20 text-accent hover:bg-accent/30 px-1 py-0 h-3.5">
-                            Auto Add
+                          <Badge className="text-[8px] bg-accent/20 text-accent hover:bg-accent/30 px-1 py-0 h-4">
+                            New
                           </Badge>
                         )}
                       </div>
@@ -1126,7 +1452,7 @@ export default function NewPurchasePage() {
                           value={item.category}
                           onValueChange={val => updateItem(item.productId, "category", val)}
                         >
-                          <SelectTrigger className="h-9 text-xs bg-[#182030] border border-slate-600 text-foreground flex-1 rounded-lg">
+                          <SelectTrigger className="h-9 text-xs bg-[#0f172a] border border-slate-600 text-foreground flex-1 rounded-lg">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -1161,50 +1487,66 @@ export default function NewPurchasePage() {
 
                     {/* Qty */}
                     <TableCell className="py-2.5 px-2 text-center">
-                      <Input
+                      <input
                         type="number"
                         min={1}
-                        style={{ color: '#ffffff', backgroundColor: '#182030' }}
-                        className="w-16 h-9 px-2 text-xs border border-slate-600 font-bold text-center rounded-lg shadow-sm focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 mx-auto"
-                        value={item.quantity ?? ""}
+                        style={{
+                          color: '#ffffff',
+                          backgroundColor: '#0f172a',
+                          WebkitTextFillColor: '#ffffff',
+                        }}
+                        className="w-16 h-9 px-2 text-xs border-2 border-slate-600 font-bold text-center rounded-lg shadow-sm focus:border-cyan-400 focus:outline-none mx-auto block"
+                        value={item.quantity ?? 1}
                         onChange={e => updateItem(item.productId, "quantity", e.target.value === "" ? "" : Number(e.target.value))}
                       />
                     </TableCell>
 
                     {/* Purchase Price (Cost) */}
                     <TableCell className="py-2.5 px-2 text-right">
-                      <Input
+                      <input
                         type="number"
                         min={0}
                         step="any"
-                        style={{ color: '#fbbf24', backgroundColor: '#182030' }}
-                        className="w-24 h-9 px-2 text-xs border border-slate-600 font-bold text-right font-code rounded-lg shadow-sm focus:border-amber-400 focus:ring-1 focus:ring-amber-400 ml-auto"
-                        value={item.purchasePrice ?? ""}
+                        style={{
+                          color: '#fbbf24',
+                          backgroundColor: '#0f172a',
+                          WebkitTextFillColor: '#fbbf24',
+                        }}
+                        className="w-24 h-9 px-2 text-xs border-2 border-slate-600 font-bold text-right font-code rounded-lg shadow-sm focus:border-amber-400 focus:outline-none ml-auto block"
+                        value={item.purchasePrice ?? 0}
                         onChange={e => updateItem(item.productId, "purchasePrice", e.target.value === "" ? "" : Number(e.target.value))}
                       />
                     </TableCell>
 
                     {/* MRP (Selling Price) */}
                     <TableCell className="py-2.5 px-2 text-right">
-                      <Input
+                      <input
                         type="number"
                         min={0}
                         step="any"
-                        style={{ color: '#34d399', backgroundColor: '#182030' }}
-                        className="w-24 h-9 px-2 text-xs border border-slate-600 font-bold text-right font-code rounded-lg shadow-sm focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 ml-auto"
-                        value={item.sellingPrice ?? ""}
+                        style={{
+                          color: '#34d399',
+                          backgroundColor: '#0f172a',
+                          WebkitTextFillColor: '#34d399',
+                        }}
+                        className="w-24 h-9 px-2 text-xs border-2 border-slate-600 font-bold text-right font-code rounded-lg shadow-sm focus:border-emerald-400 focus:outline-none ml-auto block"
+                        value={item.sellingPrice ?? 0}
                         onChange={e => updateItem(item.productId, "sellingPrice", e.target.value === "" ? "" : Number(e.target.value))}
                       />
                     </TableCell>
 
                     {/* Alert Level (minStock) */}
                     <TableCell className="py-2.5 px-2 text-center">
-                      <Input
+                      <input
                         type="number"
                         min={0}
-                        style={{ color: '#ffffff', backgroundColor: '#182030' }}
-                        className="w-16 h-9 px-2 text-xs border border-slate-600 font-bold text-center rounded-lg shadow-sm focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 mx-auto"
-                        value={item.minStock ?? ""}
+                        style={{
+                          color: '#38bdf8',
+                          backgroundColor: '#0f172a',
+                          WebkitTextFillColor: '#38bdf8',
+                        }}
+                        className="w-16 h-9 px-2 text-xs border-2 border-slate-600 font-bold text-center rounded-lg shadow-sm focus:border-cyan-400 focus:outline-none mx-auto block"
+                        value={item.minStock ?? 2}
                         onChange={e => updateItem(item.productId, "minStock", e.target.value === "" ? "" : Number(e.target.value))}
                       />
                     </TableCell>

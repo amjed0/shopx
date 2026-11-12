@@ -20,6 +20,7 @@ import { toast } from "@/hooks/use-toast"
 
 export interface ScannedItem {
   name: string
+  itemCode?: string | null
   quantity: number
   purchasePrice: number
   sellingPrice?: number | null

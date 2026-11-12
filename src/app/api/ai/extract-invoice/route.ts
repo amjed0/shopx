@@ -138,6 +138,7 @@ Return ONLY this JSON structure:
     // Validate and sanitize the response
     const items = (parsed.items || []).map((item: any) => ({
       name: String(item.name || 'Unknown Product'),
+      itemCode: item.itemCode ? String(item.itemCode).trim() : (item.sku ? String(item.sku).trim() : null),
       quantity: Math.max(1, Number(item.quantity) || 1),
       purchasePrice: Math.max(0, Number(item.purchasePrice) || 0),
       sellingPrice: item.sellingPrice ? Math.max(0, Number(item.sellingPrice)) : null,
