@@ -310,6 +310,7 @@ export default function DashboardPage() {
           isHidden={hideAmounts}
           showEyeToggle={true}
           onToggleHide={toggleHideAmounts}
+          onClick={() => router.push("/sales/sales-history?mode=day")}
         />
         <StatCard
           title="Monthly Sales"
@@ -320,6 +321,7 @@ export default function DashboardPage() {
           isHidden={hideAmounts}
           showEyeToggle={true}
           onToggleHide={toggleHideAmounts}
+          onClick={() => router.push("/sales/sales-history?mode=month")}
         />
         <StatCard
           title="Stock Value"
@@ -330,6 +332,7 @@ export default function DashboardPage() {
           isHidden={hideAmounts}
           showEyeToggle={true}
           onToggleHide={toggleHideAmounts}
+          onClick={() => router.push("/inventory")}
         />
         <StatCard
           title="Low Stock"
@@ -337,6 +340,7 @@ export default function DashboardPage() {
           icon={AlertTriangle}
           trend={{ value: "Alert", positive: false }}
           colorClass="bg-orange-500/10 text-orange-400"
+          onClick={() => router.push("/inventory/stock-alert")}
         />
       </div>
 
@@ -402,7 +406,7 @@ export default function DashboardPage() {
                       <p className="text-xs text-muted-foreground">In Stock: {item.stock}</p>
                     </div>
                     <Button
-                      onClick={() => router.push("/inventory")}
+                      onClick={() => router.push("/inventory/stock-alert")}
                       variant="ghost"
                       size="sm"
                       className="h-7 text-[10px] text-destructive hover:bg-destructive/10 uppercase tracking-widest font-bold shrink-0"

@@ -25,6 +25,8 @@ import {
   Clock,
   RotateCcw,
   Sparkles,
+  Copy,
+  Boxes,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -36,11 +38,13 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog"
 import { useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { useUser } from "@/app/auth/use-user"
+import { useShop } from "@/hooks/useShop"
 import { toast } from "@/hooks/use-toast"
 
 export interface SaleItem {
@@ -123,6 +127,10 @@ function cleanIndianPhone(rawPhone?: string): string | null {
 export default function SalesHistoryPage() {
   const router = useRouter()
   const { user } = useUser()
+  const { data: shopData } = useShop(user?.uid)
+  const companyName = shopData?.companyName?.trim() || shopData?.ownerName?.trim() || "ShopX"
+  const companyContact = [shopData?.location, shopData?.phone].filter(Boolean).join(" • ")
+  const safeCompany = companyName.replace(/[^a-zA-Z0-9_-]/g, "_")
 
   const [sales, setSales] = React.useState<Sale[]>([])
   const [loading, setLoading] = React.useState(true)
@@ -134,14 +142,38 @@ export default function SalesHistoryPage() {
   const todayStr = React.useMemo(() => new Date().toISOString().split("T")[0], [])
   const [selectedDate, setSelectedDate] = React.useState<string | "ALL">(todayStr)
 
+  // View Mode: Day, Monthly, Yearly, Selected Dates (Custom Range), All
+  type ViewMode = "day" | "month" | "year" | "custom" | "all"
+  const [viewMode, setViewMode] = React.useState<ViewMode>("day")
+  const [selectedMonth, setSelectedMonth] = React.useState<string>(() => new Date().toISOString().slice(0, 7))
+  const [selectedYear, setSelectedYear] = React.useState<string>(() => new Date().getFullYear().toString())
+  const [customStartDate, setCustomStartDate] = React.useState<string>(() => new Date().toISOString().split("T")[0])
+  const [customEndDate, setCustomEndDate] = React.useState<string>(() => new Date().toISOString().split("T")[0])
+
   // Export Modal State & Scope Controls
   type ExportScope = "today" | "yesterday" | "month" | "year" | "custom" | "all"
   const [isExportOpen, setIsExportOpen] = React.useState(false)
+  const [isGoogleSheetsGuideOpen, setIsGoogleSheetsGuideOpen] = React.useState(false)
+  const [copiedForSheets, setCopiedForSheets] = React.useState(false)
   const [exportScope, setExportScope] = React.useState<ExportScope>("today")
   const [customExportStartDate, setCustomExportStartDate] = React.useState<string>(() => new Date().toISOString().split("T")[0])
   const [customExportEndDate, setCustomExportEndDate] = React.useState<string>(() => new Date().toISOString().split("T")[0])
   const [exportMonth, setExportMonth] = React.useState<string>(() => new Date().toISOString().slice(0, 7))
   const [exportYear, setExportYear] = React.useState<string>(() => new Date().getFullYear().toString())
+
+  // Sync initial view mode from URL search param (?mode=day | month | year | custom | all)
+  React.useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search)
+      const modeParam = params.get("mode") as ViewMode | null
+      if (modeParam && ["day", "month", "year", "custom", "all"].includes(modeParam)) {
+        setViewMode(modeParam)
+        if (modeParam === "day") {
+          setSelectedDate(todayStr)
+        }
+      }
+    }
+  }, [todayStr])
 
   // Fetch sales from MongoDB API
   React.useEffect(() => {
@@ -259,18 +291,38 @@ export default function SalesHistoryPage() {
     link.setAttribute("download", `${filename}.csv`)
     document.body.appendChild(link)
     link.click()
-    document.body.removeChild(link)
-    URL.revokeObjectURL(url)
+
+    setTimeout(() => {
+      if (document.body.contains(link)) {
+        document.body.removeChild(link)
+      }
+      URL.revokeObjectURL(url)
+    }, 2000)
+
     toast({ title: "Excel / CSV Exported ✓", description: `Downloaded ${filename}.csv` })
+  }
+
+  const copyTableDataToClipboard = () => {
+    const tsvContent = [
+      activeExportData.headers.join("\t"),
+      ...activeExportData.rows.map(r => r.map(c => String(c ?? "").replace(/\t/g, " ").replace(/\r?\n/g, " ")).join("\t"))
+    ].join("\r\n")
+
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(tsvContent).then(() => {
+        setCopiedForSheets(true)
+        setTimeout(() => setCopiedForSheets(false), 3000)
+        toast({ title: "Copied! ✓", description: "Table data copied. Now press Ctrl + V in cell A1 of Google Sheets." })
+      }).catch((err) => {
+        console.warn("Clipboard copy failed:", err)
+      })
+    }
   }
 
   const exportToGoogleSheets = (filename: string, headers: string[], rows: (string | number)[][]) => {
     exportToCSV(filename, headers, rows)
-    window.open("https://sheets.new", "_blank")
-    toast({
-      title: "Google Sheets Export ✓",
-      description: "Downloaded CSV and opened Google Sheets (Import -> Upload).",
-    })
+    copyTableDataToClipboard()
+    setIsGoogleSheetsGuideOpen(true)
   }
 
   const exportToPDF = async (
@@ -409,12 +461,6 @@ export default function SalesHistoryPage() {
     return Object.values(map).sort((a, b) => b.date.localeCompare(a.date))
   }, [sales])
 
-  // Auto-expand all dates by default
-  React.useEffect(() => {
-    const allDates = new Set(dateGroups.map(g => g.date))
-    setExpandedDates(allDates)
-  }, [dateGroups])
-
   // Apply search query filter
   const filteredGroups = React.useMemo((): DateGroup[] => {
     const q = searchQuery.trim().toLowerCase()
@@ -458,13 +504,46 @@ export default function SalesHistoryPage() {
       }))
   }, [dateGroups, searchQuery])
 
-  // Filter groups according to Date Stepper (selectedDate)
-  const displayedGroups = React.useMemo(() => {
-    if (selectedDate === "ALL") return filteredGroups
-    return filteredGroups.filter(g => g.date === selectedDate)
-  }, [filteredGroups, selectedDate])
+  // Keep all date accordions closed by default; auto-expand only when user searches
+  React.useEffect(() => {
+    if (searchQuery.trim().length > 0) {
+      setExpandedDates(new Set(filteredGroups.map(g => g.date)))
+    }
+  }, [searchQuery, filteredGroups])
 
-  // Date Stepper Handlers
+  // Filter groups according to View Mode & Selected Parameters
+  const displayedGroups = React.useMemo(() => {
+    if (viewMode === "all") return filteredGroups
+    if (viewMode === "day") {
+      if (selectedDate === "ALL") return filteredGroups
+      return filteredGroups.filter(g => g.date === selectedDate)
+    }
+    if (viewMode === "month") {
+      return filteredGroups.filter(g => g.date.startsWith(selectedMonth))
+    }
+    if (viewMode === "year") {
+      return filteredGroups.filter(g => g.date.startsWith(selectedYear))
+    }
+    if (viewMode === "custom") {
+      return filteredGroups.filter(g => g.date >= customStartDate && g.date <= customEndDate)
+    }
+    return filteredGroups
+  }, [filteredGroups, viewMode, selectedDate, selectedMonth, selectedYear, customStartDate, customEndDate])
+
+  // Active Period Metrics (Reactive to active filter)
+  const periodSales = React.useMemo(() => {
+    return displayedGroups.flatMap(g => g.sales)
+  }, [displayedGroups])
+
+  const periodInvoicesCount = periodSales.length
+  const periodRevenueAmount = React.useMemo(() => periodSales.reduce((acc, s) => acc + (s.total || 0), 0), [periodSales])
+  const periodUnitsCount = React.useMemo(() => {
+    return periodSales.reduce((acc, s) => {
+      return acc + (s.items || []).reduce((iq, it) => iq + (Number(it.quantity) || 1), 0)
+    }, 0)
+  }, [periodSales])
+
+  // Date & Period Stepper Handlers
   const stepDate = (deltaDays: number) => {
     const base = selectedDate === "ALL" ? new Date() : new Date(selectedDate)
     base.setDate(base.getDate() + deltaDays)
@@ -473,6 +552,34 @@ export default function SalesHistoryPage() {
       setSelectedDate(newDateStr)
     }
   }
+
+  const stepMonth = (deltaMonths: number) => {
+    const [y, m] = selectedMonth.split("-").map(Number)
+    const d = new Date(y, m - 1 + deltaMonths, 1)
+    const currentMonthStr = new Date().toISOString().slice(0, 7)
+    const newMonthStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`
+    if (newMonthStr <= currentMonthStr) {
+      setSelectedMonth(newMonthStr)
+      setExportMonth(newMonthStr)
+    }
+  }
+
+  const stepYear = (deltaYears: number) => {
+    const y = Number(selectedYear) + deltaYears
+    const currentYear = new Date().getFullYear()
+    if (y <= currentYear) {
+      setSelectedYear(String(y))
+      setExportYear(String(y))
+    }
+  }
+
+  const selectedMonthLabel = React.useMemo(() => {
+    const [y, m] = selectedMonth.split("-").map(Number)
+    const d = new Date(y, m - 1, 1)
+    return !isNaN(d.getTime())
+      ? d.toLocaleDateString("en-IN", { month: "long", year: "numeric" })
+      : selectedMonth
+  }, [selectedMonth])
 
   const toggleDate = (date: string) => {
     setExpandedDates(prev => {
@@ -608,29 +715,56 @@ export default function SalesHistoryPage() {
       ]
     })
 
+    const companyHeader = companyContact ? `${companyContact} • ` : ""
+
     return {
       filtered,
       scopeLabel,
       invoiceCount,
       totalUnits,
       totalAmount,
-      title: `Sales Report — ${scopeLabel}`,
-      subtitle: `${invoiceCount} Invoices • ${totalUnits} Items Sold • Total Revenue: ₹${totalAmount.toLocaleString()}`,
-      filename: `Sales_${filenameSuffix}`,
+      title: `${companyName} — Sales Report (${scopeLabel})`,
+      subtitle: `${companyHeader}${invoiceCount} Invoices • ${totalUnits} Items Sold • Total Revenue: ₹${totalAmount.toLocaleString()}`,
+      filename: `${safeCompany}_Sales_${filenameSuffix}`,
       headers,
       rows,
       summary: [
+        { label: "Company", value: companyName },
         { label: "Report Period", value: scopeLabel },
         { label: "Total Invoices", value: String(invoiceCount) },
         { label: "Total Units Sold", value: String(totalUnits) },
         { label: "Gross Revenue", value: `₹${totalAmount.toLocaleString()}` },
       ],
     }
-  }, [sales, exportScope, todayStr, exportMonth, exportYear, customExportStartDate, customExportEndDate])
+  }, [sales, exportScope, todayStr, exportMonth, exportYear, customExportStartDate, customExportEndDate, companyName, companyContact, safeCompany])
 
   // Open Export Modal
   const handleExportAll = () => {
     setExportScope("all")
+    setIsExportOpen(true)
+  }
+
+  // One-click report openers for Monthly, Yearly, and Selected Dates
+  const handleOpenMonthlyReport = (m?: string) => {
+    const targetMonth = m || selectedMonth
+    setExportMonth(targetMonth)
+    setExportScope("month")
+    setIsExportOpen(true)
+  }
+
+  const handleOpenYearlyReport = (y?: string) => {
+    const targetYear = y || selectedYear
+    setExportYear(targetYear)
+    setExportScope("year")
+    setIsExportOpen(true)
+  }
+
+  const handleOpenCustomReport = (start?: string, end?: string) => {
+    const s = start || customStartDate
+    const e = end || customEndDate
+    setCustomExportStartDate(s)
+    setCustomExportEndDate(e)
+    setExportScope("custom")
     setIsExportOpen(true)
   }
 
@@ -665,15 +799,54 @@ export default function SalesHistoryPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Monthly Report Button */}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => handleOpenMonthlyReport()}
+            className="h-9 px-3 text-xs font-bold gap-1.5 rounded-xl border-border/60 hover:bg-secondary/60 hover:text-primary shadow-sm"
+            title="Download or View Monthly Sales Report"
+          >
+            <Calendar className="w-4 h-4 text-primary" />
+            <span>Monthly Report</span>
+          </Button>
+
+          {/* Yearly Report Button */}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => handleOpenYearlyReport()}
+            className="h-9 px-3 text-xs font-bold gap-1.5 rounded-xl border-border/60 hover:bg-secondary/60 hover:text-primary shadow-sm"
+            title="Download or View Yearly Sales Report"
+          >
+            <Download className="w-4 h-4 text-emerald-400" />
+            <span>Yearly Report</span>
+          </Button>
+
+          {/* Selected Dates Report Button */}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => handleOpenCustomReport()}
+            className="h-9 px-3 text-xs font-bold gap-1.5 rounded-xl border-border/60 hover:bg-secondary/60 hover:text-primary shadow-sm"
+            title="Download or View Selected Dates Range Report"
+          >
+            <Receipt className="w-4 h-4 text-cyan-400" />
+            <span>Selected Dates Report</span>
+          </Button>
+
           <Button
             variant="outline"
             size="sm"
-            onClick={handleExportAll}
+            onClick={() => router.push("/sales/sales-return")}
             className="h-9 px-3 text-xs font-bold gap-1.5 rounded-xl border-border/60 hover:bg-secondary/60 hover:text-primary shadow-sm"
           >
-            <Download className="w-4 h-4 text-primary" />
-            <span>Export History</span>
+            <RotateCcw className="w-4 h-4 text-primary" />
+            <span>Sales Return</span>
           </Button>
           <Button
             onClick={() => router.push("/sales/new")}
@@ -693,8 +866,18 @@ export default function SalesHistoryPage() {
               <Calendar className="w-5 h-5 text-primary" />
             </div>
             <div>
-              <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Today's Sales</p>
-              <p className="text-xl font-bold font-headline text-primary">₹{todayRevenueAmount.toLocaleString()}</p>
+              <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
+                {viewMode === "day" && selectedDate === todayStr
+                  ? "Today's Sales"
+                  : viewMode === "month"
+                  ? "Month Sales"
+                  : viewMode === "year"
+                  ? "Year Sales"
+                  : viewMode === "custom"
+                  ? "Range Sales"
+                  : "Total Sales"}
+              </p>
+              <p className="text-xl font-bold font-headline text-primary">₹{periodRevenueAmount.toLocaleString()}</p>
             </div>
           </div>
         </Card>
@@ -705,8 +888,10 @@ export default function SalesHistoryPage() {
               <Receipt className="w-5 h-5 text-blue-400" />
             </div>
             <div>
-              <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Total Invoices</p>
-              <p className="text-xl font-bold font-headline">{totalInvoicesCount}</p>
+              <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
+                {viewMode === "all" ? "Total Invoices" : "Invoices (Period)"}
+              </p>
+              <p className="text-xl font-bold font-headline">{periodInvoicesCount}</p>
             </div>
           </div>
         </Card>
@@ -717,8 +902,10 @@ export default function SalesHistoryPage() {
               <Package className="w-5 h-5 text-purple-400" />
             </div>
             <div>
-              <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Units Sold</p>
-              <p className="text-xl font-bold font-headline">{totalUnitsSoldCount}</p>
+              <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
+                {viewMode === "all" ? "Units Sold" : "Units (Period)"}
+              </p>
+              <p className="text-xl font-bold font-headline">{periodUnitsCount}</p>
             </div>
           </div>
         </Card>
@@ -729,39 +916,126 @@ export default function SalesHistoryPage() {
               <IndianRupee className="w-5 h-5 text-emerald-400" />
             </div>
             <div>
-              <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Gross Revenue</p>
-              <p className="text-xl font-bold font-headline text-emerald-400">₹{totalRevenueAmount.toLocaleString()}</p>
+              <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
+                {viewMode === "all" ? "Gross Revenue" : "Revenue (Period)"}
+              </p>
+              <p className="text-xl font-bold font-headline text-emerald-400">₹{periodRevenueAmount.toLocaleString()}</p>
             </div>
           </div>
         </Card>
       </div>
 
       {/* ── 3. DATE STEPPER & FILTER BAR ── */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-card border border-border/60 p-3 rounded-2xl shadow-sm">
-        {/* Left: Interactive Date Stepper `< Date >` */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1 bg-secondary/30 border border-border/50 rounded-xl p-1">
-            <Button
+      <div className="flex flex-col gap-3 bg-card border border-border/60 p-3 rounded-2xl shadow-sm">
+        {/* Top line of filter bar: View Mode Switcher Tabs + Search Input */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          {/* View Mode Tabs: Day, Monthly, Yearly, Selected Dates, All */}
+          <div className="flex items-center gap-1 bg-secondary/30 border border-border/50 rounded-xl p-1 overflow-x-auto">
+            <button
               type="button"
-              variant="ghost"
-              size="icon"
-              onClick={() => stepDate(-1)}
-              className="h-8 w-8 rounded-lg hover:bg-secondary text-foreground hover:text-primary shrink-0"
-              title="Previous Day (Yesterday / Earlier)"
+              onClick={() => setViewMode("day")}
+              className={cn(
+                "px-3 py-1.5 text-xs font-bold rounded-lg transition-all whitespace-nowrap",
+                viewMode === "day"
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+              )}
             >
-              <ChevronLeft className="w-4 h-4" />
-            </Button>
+              Day
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setViewMode("month")
+                setExportMonth(selectedMonth)
+              }}
+              className={cn(
+                "px-3 py-1.5 text-xs font-bold rounded-lg transition-all whitespace-nowrap",
+                viewMode === "month"
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+              )}
+            >
+              Monthly
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setViewMode("year")
+                setExportYear(selectedYear)
+              }}
+              className={cn(
+                "px-3 py-1.5 text-xs font-bold rounded-lg transition-all whitespace-nowrap",
+                viewMode === "year"
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+              )}
+            >
+              Yearly
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setViewMode("custom")
+                setCustomExportStartDate(customStartDate)
+                setCustomExportEndDate(customEndDate)
+              }}
+              className={cn(
+                "px-3 py-1.5 text-xs font-bold rounded-lg transition-all whitespace-nowrap",
+                viewMode === "custom"
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+              )}
+            >
+              Selected Dates
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setViewMode("all")
+                setSelectedDate("ALL")
+              }}
+              className={cn(
+                "px-3 py-1.5 text-xs font-bold rounded-lg transition-all whitespace-nowrap",
+                viewMode === "all"
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+              )}
+            >
+              All Dates
+            </button>
+          </div>
 
-            <div className="px-3 py-0.5 text-center min-w-[150px]">
-              {selectedDate === "ALL" ? (
-                <div>
-                  <span className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground block leading-tight">
-                    All History
-                  </span>
-                  <span className="text-xs font-bold font-code text-primary">All Dates</span>
-                </div>
-              ) : (
-                <div>
+          {/* Right: Search Input */}
+          <div className="relative w-full md:max-w-xs">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+            <Input
+              placeholder="Search bill no, customer, phone, item..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="pl-9 h-9 bg-secondary/30 border-border/40 rounded-xl text-base sm:text-sm focus-visible:ring-primary"
+            />
+          </div>
+        </div>
+
+        {/* Bottom line of filter bar: Active Mode Controls & Quick Report Triggers */}
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-border/40">
+          {/* Day Mode Stepper */}
+          {viewMode === "day" && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-1 bg-secondary/30 border border-border/50 rounded-xl p-1 relative">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => stepDate(-1)}
+                  className="h-8 w-8 rounded-lg hover:bg-secondary text-foreground hover:text-primary shrink-0"
+                  title="Previous Day"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </Button>
+
+                <div className="px-3 py-0.5 text-center min-w-[150px] relative cursor-pointer" title="Click to pick specific date">
                   <div className="flex items-center justify-center gap-1.5">
                     <span className="text-xs font-bold font-code text-foreground">
                       {formatToDDMMYYYY(selectedDate)}
@@ -775,62 +1049,247 @@ export default function SalesHistoryPage() {
                   <span className="text-[10px] text-muted-foreground font-code">
                     {new Date(selectedDate).toLocaleDateString("en-IN", { weekday: "short" })}
                   </span>
+                  <input
+                    type="date"
+                    value={selectedDate === "ALL" ? todayStr : selectedDate}
+                    max={todayStr}
+                    onChange={e => e.target.value && setSelectedDate(e.target.value)}
+                    className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                  />
                 </div>
+
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => stepDate(1)}
+                  disabled={selectedDate === "ALL" || selectedDate >= todayStr}
+                  className="h-8 w-8 rounded-lg hover:bg-secondary text-foreground hover:text-primary disabled:opacity-20 shrink-0"
+                  title="Next Day"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+              </div>
+
+              {selectedDate !== todayStr && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setSelectedDate(todayStr)}
+                  className="h-9 px-2.5 text-xs font-bold rounded-xl border-border/60 hover:bg-secondary/60 text-primary"
+                >
+                  Today
+                </Button>
               )}
-            </div>
 
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={() => stepDate(1)}
-              disabled={selectedDate === "ALL" || selectedDate >= todayStr}
-              className="h-8 w-8 rounded-lg hover:bg-secondary text-foreground hover:text-primary disabled:opacity-20 shrink-0"
-              title="Next Day"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </Button>
-          </div>
-
-          {/* Quick Date Toggles */}
-          <div className="flex items-center gap-1.5">
-            <Button
-              type="button"
-              variant={selectedDate === "ALL" ? "default" : "outline"}
-              size="sm"
-              onClick={() => setSelectedDate("ALL")}
-              className={`h-9 px-3 text-xs font-bold rounded-xl transition-all ${
-                selectedDate === "ALL"
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "border-border/60 hover:bg-secondary/60 text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              All Dates
-            </Button>
-
-            {selectedDate !== todayStr && (
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => setSelectedDate(todayStr)}
-                className="h-9 px-2.5 text-xs font-bold rounded-xl border-border/60 hover:bg-secondary/60 text-primary"
+                onClick={() => {
+                  setExportScope("today")
+                  setIsExportOpen(true)
+                }}
+                className="h-9 px-3 text-xs font-bold gap-1.5 rounded-xl border-border/60 hover:bg-secondary/60 text-foreground"
               >
-                Today
+                <FileText className="w-3.5 h-3.5 text-primary" />
+                <span>Day Report</span>
               </Button>
-            )}
-          </div>
-        </div>
+            </div>
+          )}
 
-        {/* Right: Search Input (text-base prevents mobile keyboard auto-zoom) */}
-        <div className="relative w-full md:max-w-xs">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-          <Input
-            placeholder="Search bill no, customer, phone, item..."
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            className="pl-9 h-9 bg-secondary/30 border-border/40 rounded-xl text-base sm:text-sm focus-visible:ring-primary"
-          />
+          {/* Monthly Mode Stepper */}
+          {viewMode === "month" && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-1 bg-secondary/30 border border-border/50 rounded-xl p-1 relative">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => stepMonth(-1)}
+                  className="h-8 w-8 rounded-lg hover:bg-secondary text-foreground hover:text-primary shrink-0"
+                  title="Previous Month"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </Button>
+
+                <div className="px-3 py-0.5 text-center min-w-[150px] relative cursor-pointer" title="Click to pick month">
+                  <div className="flex items-center justify-center gap-1.5">
+                    <span className="text-xs font-bold font-code text-foreground">
+                      {selectedMonthLabel}
+                    </span>
+                    {selectedMonth === todayStr.slice(0, 7) && (
+                      <Badge className="text-[9px] bg-primary/20 text-primary px-1.5 py-0 h-4 font-bold">
+                        Current Month
+                      </Badge>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-muted-foreground font-code">
+                    {displayedGroups.length} Active Days
+                  </span>
+                  <input
+                    type="month"
+                    value={selectedMonth}
+                    max={todayStr.slice(0, 7)}
+                    onChange={e => {
+                      if (e.target.value) {
+                        setSelectedMonth(e.target.value)
+                        setExportMonth(e.target.value)
+                      }
+                    }}
+                    className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                  />
+                </div>
+
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => stepMonth(1)}
+                  disabled={selectedMonth >= todayStr.slice(0, 7)}
+                  className="h-8 w-8 rounded-lg hover:bg-secondary text-foreground hover:text-primary disabled:opacity-20 shrink-0"
+                  title="Next Month"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+              </div>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => handleOpenMonthlyReport(selectedMonth)}
+                className="h-9 px-3 text-xs font-bold gap-1.5 rounded-xl border-border/60 hover:bg-secondary/60 text-primary shadow-sm"
+              >
+                <Calendar className="w-4 h-4 text-primary" />
+                <span>Monthly Report</span>
+              </Button>
+            </div>
+          )}
+
+          {/* Yearly Mode Stepper */}
+          {viewMode === "year" && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-1 bg-secondary/30 border border-border/50 rounded-xl p-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => stepYear(-1)}
+                  className="h-8 w-8 rounded-lg hover:bg-secondary text-foreground hover:text-primary shrink-0"
+                  title="Previous Year"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </Button>
+
+                <div className="px-4 py-0.5 text-center min-w-[130px]">
+                  <span className="text-xs font-bold font-code text-foreground block">
+                    Year {selectedYear}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground font-code">
+                    {displayedGroups.length} Billing Days
+                  </span>
+                </div>
+
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => stepYear(1)}
+                  disabled={Number(selectedYear) >= new Date().getFullYear()}
+                  className="h-8 w-8 rounded-lg hover:bg-secondary text-foreground hover:text-primary disabled:opacity-20 shrink-0"
+                  title="Next Year"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+              </div>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => handleOpenYearlyReport(selectedYear)}
+                className="h-9 px-3 text-xs font-bold gap-1.5 rounded-xl border-border/60 hover:bg-secondary/60 text-emerald-400 shadow-sm"
+              >
+                <Download className="w-4 h-4 text-emerald-400" />
+                <span>Yearly Report</span>
+              </Button>
+            </div>
+          )}
+
+          {/* Selected Dates (Custom Date Range) Mode */}
+          {viewMode === "custom" && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-2 bg-secondary/30 border border-border/50 rounded-xl px-3 py-1.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-bold uppercase text-muted-foreground">From:</span>
+                  <input
+                    type="date"
+                    value={customStartDate}
+                    max={customEndDate || todayStr}
+                    onChange={e => {
+                      if (e.target.value) {
+                        setCustomStartDate(e.target.value)
+                        setCustomExportStartDate(e.target.value)
+                      }
+                    }}
+                    className="h-7 text-xs font-code font-bold bg-background border border-border/60 rounded px-1.5 text-foreground"
+                  />
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-bold uppercase text-muted-foreground">To:</span>
+                  <input
+                    type="date"
+                    value={customEndDate}
+                    min={customStartDate}
+                    max={todayStr}
+                    onChange={e => {
+                      if (e.target.value) {
+                        setCustomEndDate(e.target.value)
+                        setCustomExportEndDate(e.target.value)
+                      }
+                    }}
+                    className="h-7 text-xs font-code font-bold bg-background border border-border/60 rounded px-1.5 text-foreground"
+                  />
+                </div>
+              </div>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => handleOpenCustomReport(customStartDate, customEndDate)}
+                className="h-9 px-3 text-xs font-bold gap-1.5 rounded-xl border-border/60 hover:bg-secondary/60 text-cyan-400 shadow-sm"
+              >
+                <Receipt className="w-4 h-4 text-cyan-400" />
+                <span>Selected Dates Report</span>
+              </Button>
+            </div>
+          )}
+
+          {/* All Dates Mode */}
+          {viewMode === "all" && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <Badge variant="outline" className="text-xs font-code px-3 py-1 bg-secondary/20">
+                All Time History • {filteredGroups.length} Recorded Dates
+              </Badge>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleExportAll}
+                className="h-9 px-3 text-xs font-bold gap-1.5 rounded-xl border-border/60 hover:bg-secondary/60 text-primary shadow-sm"
+              >
+                <Download className="w-4 h-4 text-primary" />
+                <span>Full History Report</span>
+              </Button>
+            </div>
+          )}
+
+          <div className="text-xs text-muted-foreground font-code">
+            Showing <span className="font-bold text-foreground">{periodSales.length}</span> invoices (₹{periodRevenueAmount.toLocaleString()})
+          </div>
         </div>
       </div>
 
@@ -847,24 +1306,33 @@ export default function SalesHistoryPage() {
             </div>
             <div>
               <p className="font-bold text-base text-foreground">
-                {selectedDate === "ALL"
+                {viewMode === "all"
                   ? "No sales transactions found"
+                  : viewMode === "month"
+                  ? `No sales recorded in ${selectedMonthLabel}`
+                  : viewMode === "year"
+                  ? `No sales recorded in Year ${selectedYear}`
+                  : viewMode === "custom"
+                  ? `No sales recorded between ${formatToDDMMYYYY(customStartDate)} and ${formatToDDMMYYYY(customEndDate)}`
                   : `No sales recorded on ${formatToDDMMYYYY(selectedDate)}${
                       getRelativeDateLabel(selectedDate) ? ` (${getRelativeDateLabel(selectedDate)})` : ""
                     }`}
               </p>
               <p className="text-xs text-muted-foreground mt-1">
-                {selectedDate === "ALL"
+                {viewMode === "all"
                   ? "No sales records match your search filter."
-                  : "Click '<' to view earlier days, jump to 'All Dates', or create a new sale."}
+                  : "Try choosing another period, jumping to 'All Dates', or creating a new bill."}
               </p>
             </div>
             <div className="flex items-center gap-2 mt-2">
-              {selectedDate !== "ALL" && (
+              {viewMode !== "all" && (
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setSelectedDate("ALL")}
+                  onClick={() => {
+                    setViewMode("all")
+                    setSelectedDate("ALL")
+                  }}
                   className="text-xs font-bold rounded-xl"
                 >
                   View All Dates
@@ -1473,10 +1941,15 @@ export default function SalesHistoryPage() {
                 </button>
 
                 {/* Google Sheets */}
-                <button
-                  type="button"
-                  disabled={activeExportData.invoiceCount === 0}
-                  onClick={() => {
+                <a
+                  href="https://sheets.new"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => {
+                    if (activeExportData.invoiceCount === 0) {
+                      e.preventDefault()
+                      return
+                    }
                     exportToGoogleSheets(
                       activeExportData.filename,
                       activeExportData.headers,
@@ -1484,14 +1957,17 @@ export default function SalesHistoryPage() {
                     )
                     setIsExportOpen(false)
                   }}
-                  className="flex flex-col items-center justify-center p-4 rounded-xl border border-border/60 bg-secondary/20 hover:bg-blue-500/10 hover:border-blue-500/50 transition-all text-center group cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  className={cn(
+                    "flex flex-col items-center justify-center p-4 rounded-xl border border-border/60 bg-secondary/20 hover:bg-blue-500/10 hover:border-blue-500/50 transition-all text-center group cursor-pointer",
+                    activeExportData.invoiceCount === 0 && "opacity-40 pointer-events-none cursor-not-allowed"
+                  )}
                 >
                   <div className="w-12 h-12 rounded-full bg-blue-500/15 text-blue-500 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
                     <ExternalLink className="w-6 h-6" />
                   </div>
                   <span className="text-xs font-bold text-foreground">Google Sheets</span>
-                  <span className="text-[10px] text-muted-foreground mt-0.5">Open &amp; Import</span>
-                </button>
+                  <span className="text-[10px] text-muted-foreground mt-0.5">Open &amp; Paste (Ctrl+V)</span>
+                </a>
               </div>
             </div>
           </div>
@@ -1505,6 +1981,86 @@ export default function SalesHistoryPage() {
               onClick={() => setIsExportOpen(false)}
             >
               Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Google Sheets Assistant Dialog */}
+      <Dialog open={isGoogleSheetsGuideOpen} onOpenChange={setIsGoogleSheetsGuideOpen}>
+        <DialogContent className="sm:max-w-[480px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base font-bold text-foreground">
+              <Boxes className="w-5 h-5 text-blue-500" />
+              <span>How to View in Google Sheets</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Google Sheets always opens with an empty blank grid. Follow either of the 2 easy methods below to populate it with your data:
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            {/* Download Status */}
+            <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 font-semibold">
+                <CheckCircle2 className="w-4 h-4" />
+                <span>Spreadsheet file downloaded to Downloads</span>
+              </div>
+              <span className="font-mono text-[10px] opacity-75">{activeExportData.filename}.csv</span>
+            </div>
+
+            {/* Method 1: Instant Paste (Fastest) */}
+            <div className="p-3.5 bg-muted/40 border border-border/50 rounded-xl space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Badge className="bg-blue-600 hover:bg-blue-600 text-white text-[10px] uppercase font-bold">Fastest</Badge>
+                  <span className="text-xs font-bold text-foreground">Method 1: Instant Paste (Ctrl + V)</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => copyTableDataToClipboard()}
+                  className="text-xs font-bold gap-1.5 h-9 rounded-lg border-border shadow-sm hover:bg-secondary/70"
+                >
+                  <Copy className="w-3.5 h-3.5 text-primary" />
+                  <span>{copiedForSheets ? "✓ Copied!" : "1. Copy Table Data"}</span>
+                </Button>
+
+                <a
+                  href="https://sheets.new"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center justify-center gap-1.5 h-9 px-3 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow-sm transition-all text-center"
+                >
+                  <span>2. Open Google Sheets</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              </div>
+
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                👉 Once Google Sheets opens, simply click cell <strong>A1</strong> and press <kbd className="px-1.5 py-0.5 text-[10px] bg-secondary rounded border border-border font-mono font-bold text-foreground">Ctrl + V</kbd> (or Cmd + V). All sales invoices and totals will paste instantly!
+              </p>
+            </div>
+
+            {/* Method 2: Import File */}
+            <div className="p-3 bg-secondary/30 border border-border/40 rounded-xl space-y-1 text-xs">
+              <span className="font-bold text-foreground">Method 2: Import Downloaded File</span>
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                In the Google Sheets top menu: Click <strong>File</strong> → <strong>Import</strong> → <strong>Upload</strong> tab, then select the downloaded file <strong>{activeExportData.filename}.csv</strong>.
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter className="flex flex-row justify-between items-center sm:justify-between pt-1">
+            <span className="text-[11px] text-muted-foreground">
+              Tip: Excel (.csv) opens directly in Microsoft Excel.
+            </span>
+            <Button size="sm" onClick={() => setIsGoogleSheetsGuideOpen(false)}>
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>

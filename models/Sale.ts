@@ -29,6 +29,7 @@ export interface ISale extends Document {
   customerId: string;
   customerName: string;
   customerPhone?: string;
+  customerEmail?: string;
   subtotal?: number;
   discount?: number;
   taxRate?: number;
@@ -50,6 +51,7 @@ const SaleSchema = new Schema<ISale>(
     customerId: { type: String, required: true },
     customerName: { type: String, required: true },
     customerPhone: { type: String },
+    customerEmail: { type: String },
     subtotal: { type: Number },
     discount: { type: Number, default: 0 },
     taxRate: { type: Number, default: 0 },

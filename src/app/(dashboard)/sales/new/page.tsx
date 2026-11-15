@@ -47,6 +47,7 @@ import {
 } from "@/components/ui/dialog"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { cn } from "@/lib/utils"
+import { useRouter } from "next/navigation"
 import { useUser } from "@/app/auth/use-user"
 import { Product } from "../../inventory/page"
 import { useSocket } from "@/hooks/useSocket"
@@ -116,6 +117,7 @@ function cleanIndianPhone(rawPhone?: string): string | null {
 }
 
 export default function NewBillPage() {
+  const router = useRouter()
   const { user } = useUser()
 
   // ── Shop Profile ──
@@ -131,6 +133,7 @@ export default function NewBillPage() {
   const [selectedCustomer, setSelectedCustomer] = React.useState<Customer | null>(null)
   const [manualCustomerName, setManualCustomerName] = React.useState("")
   const [manualCustomerPhone, setManualCustomerPhone] = React.useState("")
+  const [manualCustomerEmail, setManualCustomerEmail] = React.useState("")
   const [isCustomerDialogOpen, setIsCustomerDialogOpen] = React.useState(false)
   const [isAddingCustomer, setIsAddingCustomer] = React.useState(false)
 
@@ -242,6 +245,7 @@ export default function NewBillPage() {
   // Customer resolution: Picked from DB or manually typed in form
   const resolvedCustomerName = selectedCustomer?.name || manualCustomerName.trim() || "Walk-in Customer"
   const resolvedCustomerPhone = selectedCustomer?.phone || manualCustomerPhone.trim() || ""
+  const resolvedCustomerEmail = selectedCustomer?.email || manualCustomerEmail.trim() || ""
   const customerPreviousBalance = selectedCustomer?.outstandingBalance || 0
 
   const filteredCustomers = customerSearch.length > 0
@@ -351,7 +355,41 @@ export default function NewBillPage() {
   const grandTotal = Math.max(preDiscountTotal - discountAmount, 0)
   const totalWithPreviousDue = grandTotal + customerPreviousBalance
 
-  // Register new customer dialog submission
+  // Save customer directly from quick input fields
+  const handleSaveCustomerDirect = async () => {
+    if (!user?.uid) return
+    const name = manualCustomerName.trim()
+    const phone = manualCustomerPhone.trim()
+    const email = manualCustomerEmail.trim()
+
+    if (!name) {
+      toast({ variant: "destructive", title: "Customer Name Required", description: "Please enter a customer name to save." })
+      return
+    }
+
+    const custData = { name, phone: phone || "0000000000", email: email || "", outstandingBalance: 0 }
+
+    try {
+      setIsAddingCustomer(true)
+      const res = await fetch("/api/customers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-user-id": user.uid },
+        body: JSON.stringify(custData),
+      })
+      if (!res.ok) throw new Error("Failed to save customer")
+      const newCustomer = await res.json()
+      setCustomers(prev => [...prev, newCustomer])
+      setSelectedCustomer(newCustomer)
+      setManualCustomerEmail(newCustomer.email || "")
+      toast({ title: "Customer Saved ✓", description: `${name} added to customer details.` })
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Error", description: err.message })
+    } finally {
+      setIsAddingCustomer(false)
+    }
+  }
+
+  // Register new customer dialog submission (fallback)
   const handleAddCustomer = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     if (!user?.uid) return
@@ -419,6 +457,7 @@ export default function NewBillPage() {
     setBillingDate(sale.date ? sale.date.split("T")[0] : new Date().toISOString().split("T")[0])
     setManualCustomerName(sale.customerName || "")
     setManualCustomerPhone(sale.customerPhone || "")
+    setManualCustomerEmail((sale as any).customerEmail || (cust as any)?.email || "")
     const cust = customers.find(c => c.name === sale.customerName || c.id === (sale as any).customerId)
     setSelectedCustomer(cust || null)
     setPaymentMethod(sale.paymentMethod || "cash")
@@ -462,6 +501,7 @@ export default function NewBillPage() {
     setSelectedCustomer(null)
     setManualCustomerName("")
     setManualCustomerPhone("")
+    setManualCustomerEmail("")
     setCustomerSearch("")
     setProductSearch("")
     setBillingDate(new Date().toISOString().split("T")[0])
@@ -480,6 +520,7 @@ export default function NewBillPage() {
       setSelectedCustomer(null)
       setManualCustomerName("")
       setManualCustomerPhone("")
+      setManualCustomerEmail("")
       setCustomerSearch("")
       setProductSearch("")
       setBillingDate(new Date().toISOString().split("T")[0])
@@ -624,6 +665,7 @@ export default function NewBillPage() {
       rawDate: billingDate,
       customerName: resolvedCustomerName,
       customerPhone: resolvedCustomerPhone,
+      customerEmail: resolvedCustomerEmail,
       items: billItems.map(i => ({
         name: i.product.name,
         sku: i.product.sku,
@@ -650,11 +692,43 @@ export default function NewBillPage() {
   const handleCompleteSale = async () => {
     if (billItems.length === 0 || !user?.uid) return
 
-    if (paymentMethod === "credit" && !selectedCustomer) {
+    // Auto-save customer if typed manually and not already selected
+    let activeCustomer = selectedCustomer
+    if (!activeCustomer && manualCustomerName.trim() && manualCustomerName.trim().toLowerCase() !== "walk-in customer") {
+      const match = customers.find(c => 
+        (manualCustomerPhone.trim() && c.phone === manualCustomerPhone.trim()) ||
+        c.name.toLowerCase() === manualCustomerName.trim().toLowerCase()
+      )
+      if (match) {
+        activeCustomer = match
+      } else {
+        try {
+          const newCustRes = await fetch("/api/customers", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-user-id": user.uid },
+            body: JSON.stringify({
+              name: manualCustomerName.trim(),
+              phone: manualCustomerPhone.trim() || "0000000000",
+              email: manualCustomerEmail.trim() || "",
+              outstandingBalance: 0,
+            }),
+          })
+          if (newCustRes.ok) {
+            const savedCust = await newCustRes.json()
+            activeCustomer = savedCust
+            setCustomers(prev => [...prev, savedCust])
+          }
+        } catch (e) {
+          console.error("Auto customer creation error:", e)
+        }
+      }
+    }
+
+    if (paymentMethod === "credit" && !activeCustomer) {
       toast({
         variant: "destructive",
         title: "Customer Required",
-        description: "Please select or register a customer before billing on Shop Credit.",
+        description: "Please enter customer details before billing on Shop Credit.",
       })
       return
     }
@@ -662,9 +736,10 @@ export default function NewBillPage() {
     const saleData = {
       billNumber: activeBillNumber,
       date: new Date(billingDate).toISOString(),
-      customerId: selectedCustomer?.id || "walk-in",
-      customerName: resolvedCustomerName,
-      customerPhone: resolvedCustomerPhone,
+      customerId: activeCustomer?.id || "walk-in",
+      customerName: activeCustomer?.name || resolvedCustomerName,
+      customerPhone: activeCustomer?.phone || resolvedCustomerPhone,
+      customerEmail: activeCustomer?.email || resolvedCustomerEmail,
       subtotal: itemsSubtotal,
       taxAmount: totalTaxAmount,
       discount: discountAmount,
@@ -706,11 +781,11 @@ export default function NewBillPage() {
       )
 
       // Step 3: Update customer outstanding balance if credit sale
-      if (paymentMethod === "credit" && selectedCustomer) {
-        await fetch(`/api/customers/${selectedCustomer.id}`, {
+      if (paymentMethod === "credit" && activeCustomer) {
+        await fetch(`/api/customers/${activeCustomer.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json", "x-user-id": user.uid },
-          body: JSON.stringify({ outstandingBalance: selectedCustomer.outstandingBalance + grandTotal }),
+          body: JSON.stringify({ outstandingBalance: (activeCustomer.outstandingBalance || 0) + grandTotal }),
         })
       }
 
@@ -722,7 +797,7 @@ export default function NewBillPage() {
           body: JSON.stringify({
             type: "income",
             category: "Sales Revenue",
-            description: `Sale #${activeBillNumber} to ${resolvedCustomerName}`,
+            description: `Sale #${activeBillNumber} to ${activeCustomer?.name || resolvedCustomerName}`,
             amount: grandTotal,
             paymentMode: paymentMethod.toUpperCase(),
             note: `Bill #${activeBillNumber}`,
@@ -738,8 +813,9 @@ export default function NewBillPage() {
         storeLocation: shopProfile?.location || "",
         billNumber: activeBillNumber,
         date: formatToDDMMYYYY(billingDate),
-        customerName: resolvedCustomerName,
-        customerPhone: resolvedCustomerPhone,
+        customerName: activeCustomer?.name || resolvedCustomerName,
+        customerPhone: activeCustomer?.phone || resolvedCustomerPhone,
+        customerEmail: activeCustomer?.email || resolvedCustomerEmail,
         items: billItems.map(i => ({
           name: i.product.name,
           sku: i.product.sku,
@@ -793,14 +869,39 @@ export default function NewBillPage() {
           </div>
         </div>
 
-        {/* Store GST indicator badge */}
-        <div className="flex items-center gap-2">
+        {/* Header Actions & Navigation */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Sales History Page Button */}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => router.push("/sales/sales-history")}
+            className="h-9 px-3 text-xs font-bold gap-1.5 rounded-xl border-border/60 hover:bg-secondary/60 hover:text-primary shadow-sm"
+          >
+            <Receipt className="w-4 h-4 text-primary" />
+            <span>Sales History</span>
+          </Button>
+
+          {/* Sales Return Page Button */}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => router.push("/sales/sales-return")}
+            className="h-9 px-3 text-xs font-bold gap-1.5 rounded-xl border-border/60 hover:bg-secondary/60 hover:text-primary shadow-sm"
+          >
+            <RotateCcw className="w-4 h-4 text-primary" />
+            <span>Sales Return</span>
+          </Button>
+
+          {/* Store GST indicator badge */}
           {shopProfile?.gstNumber ? (
-            <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-400 text-[11px] font-code font-bold py-1 px-2.5">
+            <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-400 text-[11px] font-code font-bold py-1 px-2.5 h-9 flex items-center">
               Shop GST: {shopProfile.gstNumber}
             </Badge>
           ) : (
-            <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-400 text-[10px] font-semibold py-1 px-2">
+            <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-400 text-[10px] font-semibold py-1 px-2 h-9 flex items-center">
               No Shop GST (Add in Profile)
             </Badge>
           )}
@@ -948,7 +1049,7 @@ export default function NewBillPage() {
       <div className="grid gap-4 sm:gap-6 grid-cols-1 lg:grid-cols-3">
         {/* Customer Input & Credit Card */}
         <Card className="lg:col-span-1 border border-border/60 shadow-sm flex flex-col justify-between">
-          <CardHeader className="flex flex-row justify-between items-center p-4 sm:p-5 pb-2">
+          <CardHeader className="p-4 sm:p-5 pb-2">
             <div>
               <CardTitle className="text-sm sm:text-base font-bold flex items-center gap-2">
                 <UserCheck className="w-4 h-4 text-primary" /> Customer &amp; Billing Info
@@ -957,48 +1058,6 @@ export default function NewBillPage() {
                 Search customer or type directly (+91).
               </CardDescription>
             </div>
-            {!selectedCustomer && (
-              <Dialog open={isCustomerDialogOpen} onOpenChange={setIsCustomerDialogOpen}>
-                <DialogTrigger asChild>
-                  <Button variant="outline" size="sm" className="rounded-full text-xs h-7 px-2.5">
-                    <UserPlus className="w-3 h-3 mr-1" /> New
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="w-[95vw] max-w-md rounded-2xl p-4 sm:p-6">
-                  <form onSubmit={handleAddCustomer}>
-                    <DialogHeader>
-                      <DialogTitle>Register New Customer</DialogTitle>
-                      <DialogDescription>Save customer details with Indian phone number for credit tracking and WhatsApp billing.</DialogDescription>
-                    </DialogHeader>
-                    <div className="grid gap-3 py-4">
-                      <div className="space-y-1">
-                        <Label className="text-xs font-semibold">Customer Full Name *</Label>
-                        <Input name="name" placeholder="e.g. Rahul Sharma" required />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs font-semibold">10-Digit Mobile Phone *</Label>
-                        <div className="flex">
-                          <span className="inline-flex items-center px-3 text-xs font-code font-bold bg-secondary/50 border border-r-0 border-border rounded-l-md text-muted-foreground">
-                            +91
-                          </span>
-                          <Input name="phone" placeholder="9876543210" className="rounded-l-none font-code font-bold" required />
-                        </div>
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs font-semibold">Email (Optional)</Label>
-                        <Input name="email" type="email" placeholder="customer@example.com" />
-                      </div>
-                    </div>
-                    <DialogFooter>
-                      <Button type="submit" className="w-full" disabled={isAddingCustomer}>
-                        {isAddingCustomer && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
-                        Save &amp; Select Customer
-                      </Button>
-                    </DialogFooter>
-                  </form>
-                </DialogContent>
-              </Dialog>
-            )}
           </CardHeader>
 
           <CardContent className="p-4 sm:p-5 pt-1 space-y-3">
@@ -1024,6 +1083,7 @@ export default function NewBillPage() {
                             setSelectedCustomer(c)
                             setManualCustomerName(c.name)
                             setManualCustomerPhone(c.phone)
+                            setManualCustomerEmail(c.email || "")
                             setCustomerSearch("")
                           }}
                         >
@@ -1042,26 +1102,55 @@ export default function NewBillPage() {
                   )}
                 </div>
 
-                {/* Direct quick fields if user does not want to search */}
-                <div className="grid grid-cols-2 gap-2 pt-1 border-t border-border/30">
+                {/* Direct quick fields under search bar */}
+                <div className="space-y-2 pt-1 border-t border-border/30">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-[10px] font-bold uppercase text-muted-foreground">Customer Name</Label>
+                      <Input
+                        placeholder="Customer name"
+                        className="h-8 text-xs bg-secondary/20"
+                        value={manualCustomerName}
+                        onChange={e => setManualCustomerName(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] font-bold uppercase text-muted-foreground">Phone (+91)</Label>
+                      <Input
+                        placeholder="10-digit number"
+                        className="h-8 text-xs font-code font-bold bg-secondary/20"
+                        value={manualCustomerPhone}
+                        onChange={e => setManualCustomerPhone(e.target.value)}
+                      />
+                    </div>
+                  </div>
                   <div className="space-y-1">
-                    <Label className="text-[10px] font-bold uppercase text-muted-foreground">Customer Name</Label>
+                    <Label className="text-[10px] font-bold uppercase text-muted-foreground">Email (Optional)</Label>
                     <Input
-                      placeholder="Customer name"
+                      type="email"
+                      placeholder="customer@example.com (optional)"
                       className="h-8 text-xs bg-secondary/20"
-                      value={manualCustomerName}
-                      onChange={e => setManualCustomerName(e.target.value)}
+                      value={manualCustomerEmail}
+                      onChange={e => setManualCustomerEmail(e.target.value)}
                     />
                   </div>
-                  <div className="space-y-1">
-                    <Label className="text-[10px] font-bold uppercase text-muted-foreground">Phone (+91)</Label>
-                    <Input
-                      placeholder="10-digit number"
-                      className="h-8 text-xs font-code font-bold bg-secondary/20"
-                      value={manualCustomerPhone}
-                      onChange={e => setManualCustomerPhone(e.target.value)}
-                    />
-                  </div>
+                  {manualCustomerName.trim().length > 0 && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      disabled={isAddingCustomer}
+                      onClick={handleSaveCustomerDirect}
+                      className="w-full h-7 text-xs font-bold gap-1 rounded-lg border border-primary/30 text-primary hover:bg-primary/10 transition-colors"
+                    >
+                      {isAddingCustomer ? (
+                        <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                      ) : (
+                        <UserPlus className="w-3 h-3 mr-1" />
+                      )}
+                      Save to Customer Details
+                    </Button>
+                  )}
                 </div>
               </div>
             ) : (
@@ -1072,6 +1161,11 @@ export default function NewBillPage() {
                     <p className="text-[11px] font-code font-bold text-primary mt-0.5">
                       📞 +91 {selectedCustomer.phone}
                     </p>
+                    {selectedCustomer.email && (
+                      <p className="text-[10px] text-muted-foreground font-code mt-0.5">
+                        ✉️ {selectedCustomer.email}
+                      </p>
+                    )}
                   </div>
                   <Button
                     variant="ghost"
@@ -1081,6 +1175,7 @@ export default function NewBillPage() {
                       setSelectedCustomer(null)
                       setManualCustomerName("")
                       setManualCustomerPhone("")
+                      setManualCustomerEmail("")
                     }}
                   >
                     Change
@@ -1529,6 +1624,11 @@ export default function NewBillPage() {
                     {generatedInvoiceData.customerPhone && (
                       <p className="text-xs font-code text-primary font-bold">
                         📞 +91 {generatedInvoiceData.customerPhone}
+                      </p>
+                    )}
+                    {generatedInvoiceData.customerEmail && (
+                      <p className="text-[11px] font-code text-muted-foreground mt-0.5">
+                        ✉️ {generatedInvoiceData.customerEmail}
                       </p>
                     )}
                   </div>

@@ -3,6 +3,22 @@ import dbConnect from '../../../../lib/mongodb';
 import Product from '../../../../models/Product';
 import Purchase from '../../../../models/Purchase';
 
+// Convert numeric fields to numbers, default MRP to 0, strip fields the client must not set
+function cleanProductPayload(data: any) {
+  const out: any = { ...data };
+  delete out._id;
+  delete out.id;
+  delete out.userId;
+
+  for (const f of ['purchasePrice', 'sellingPrice', 'mrp', 'stock', 'minStock']) {
+    if (out[f] !== undefined && out[f] !== null && out[f] !== '') {
+      const n = Number(out[f]);
+      out[f] = Number.isFinite(n) ? n : 0;
+    }
+  }
+  if (out.mrp === undefined || out.mrp === null || out.mrp === '') out.mrp = 0;
+  return out;
+}
 
 export async function GET(request: Request) {
   try {
@@ -31,17 +47,14 @@ export async function POST(request: Request) {
     if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    const data = await request.json();
-    console.log("[DEBUG api/products] Received data:", data);
+    const data = cleanProductPayload(await request.json());
 
     const newProduct = new Product({
       ...data,
       userId,
     });
-    console.log("[DEBUG api/products] Created Mongoose document before save:", newProduct.toObject());
 
     await newProduct.save();
-    console.log("[DEBUG api/products] Saved Mongoose document:", newProduct.toObject());
 
     const stockQty = Number(data.stock !== undefined ? data.stock : newProduct.stock);
     const supplierId = data.supplierId || newProduct.supplierId;
@@ -49,11 +62,9 @@ export async function POST(request: Request) {
 
     const hasStock = stockQty > 0;
     const hasSupplier = !!supplierId && supplierId !== '';
-    console.log("[DEBUG api/products] Check status:", { hasStock, hasSupplier, stockQty, supplierId });
 
     if (hasStock && hasSupplier && !data.skipPurchase) {
-      console.log("[DEBUG api/products] Creating Purchase record for supplierId:", supplierId);
-      const purchaseRecord = await Purchase.create({
+      await Purchase.create({
         userId,
         supplierId: supplierId,
         productId: newProduct._id.toString(),
@@ -62,7 +73,6 @@ export async function POST(request: Request) {
         quantity: stockQty,
         purchasePrice: purchasePrice,
       });
-      console.log("[DEBUG api/products] Created Purchase record:", purchaseRecord.toObject());
     }
 
     const obj = newProduct.toObject();

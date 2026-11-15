@@ -1,14 +1,14 @@
 "use client"
 
 import * as React from "react"
-import { 
-  Truck, 
-  Search, 
-  Plus, 
-  Trash2, 
-  ArrowLeft, 
-  Loader2, 
-  Package, 
+import {
+  Truck,
+  Search,
+  Plus,
+  Trash2,
+  ArrowLeft,
+  Loader2,
+  Package,
   Calculator,
   Save,
   CheckCircle2,
@@ -40,12 +40,12 @@ import { Badge } from "@/components/ui/badge"
 import { Label } from "@/components/ui/label"
 import { useRouter } from "next/navigation"
 import { toast } from "@/hooks/use-toast"
-import { 
-  Dialog, 
-  DialogContent, 
-  DialogFooter, 
-  DialogHeader, 
-  DialogTitle, 
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
 import {
@@ -57,6 +57,7 @@ import {
 } from "@/components/ui/select"
 import { useUser } from "@/app/auth/use-user"
 import { InvoiceScanner, ScanResult } from "@/components/purchases/invoice-scanner"
+import { findBestProductMatch } from "@/lib/product-fuzzy-matcher"
 
 interface Supplier {
   id: string
@@ -75,20 +76,26 @@ interface Product {
   sku: string
   purchasePrice: number
   sellingPrice: number
+  mrp?: number                     // printed MRP from supplier bill
   stock: number
   minStock: number
   category: string
 }
 
 interface PurchaseItem {
+  rowId: string                    // unique per sheet row (used for React key, edit, delete)
   productId: string
   productName: string
   sku: string
   billItemCode?: string
+  hsnCode?: string
   generatedSku?: string
+  isManuallyEditedSku?: boolean
   quantity: number | string
   purchasePrice: number | string
-  sellingPrice: number | string    // MRP
+  sellingPrice: number | string    // SELLING PRICE (typed manually or auto margin)
+  mrp?: number | string            // MRP printed on the bill (reference)
+  sellingManual?: boolean          // true when user typed the selling price by hand
   category: string
   minStock: number | string        // Alert Level
   taxRate?: number | string        // GST %
@@ -114,6 +121,12 @@ interface BillGroup {
   totalAmount: number
   totalQty: number
 }
+
+// Item shape returned by the AI invoice scanner
+type ScannedItem = ScanResult["items"][number]
+
+// Unique id for every row in the acquisition sheet
+const newRowId = () => `row-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 
 function formatToDDMMYYYY(dateStr: string): string {
   if (!dateStr || !dateStr.includes("-")) return dateStr
@@ -184,13 +197,84 @@ export default function NewPurchasePage() {
   const [viewingBill, setViewingBill] = React.useState<BillGroup | null>(null)
   const [scannerKey, setScannerKey] = React.useState(0)
 
-  // Invoice Item Code Preference: Use supplier's bill item code vs auto-generated SX code
-  const [useBillItemCode, setUseBillItemCode] = React.useState<boolean>(true)
+  // Invoice Item Code Preference: False by default (first use app codes SX-XXXX). User can tick to use bill item codes.
+  const [useBillItemCode, setUseBillItemCode] = React.useState<boolean>(false)
+
+  // Bill-level discount (typed manually) and round-off
+  const [discountInput, setDiscountInput] = React.useState<string>("")
+  const [roundOffEnabled, setRoundOffEnabled] = React.useState(false)
+
+  const round2 = (n: number) => Number(n.toFixed(2))
 
   // Billing Date & Payment (Credit)
   const [billingDate, setBillingDate] = React.useState<string>(() => new Date().toISOString().split("T")[0])
   const [paidAmount, setPaidAmount] = React.useState<string>("")
   const [paymentMode, setPaymentMode] = React.useState<string>("Cash")
+
+  // Autocomplete suggestions state for Item Name & Code inputs
+  const [activeSuggestionRowId, setActiveSuggestionRowId] = React.useState<string | null>(null)
+  const [activeSuggestionField, setActiveSuggestionField] = React.useState<"name" | "sku" | null>(null)
+  const [activeSuggestionQuery, setActiveSuggestionQuery] = React.useState<string>("")
+  const [highlightedSuggestionIndex, setHighlightedSuggestionIndex] = React.useState<number>(0)
+
+  // Compute matching products for autocomplete dropdown
+  const matchingSuggestions = React.useMemo(() => {
+    if (!activeSuggestionRowId || !activeSuggestionQuery.trim()) return []
+    const q = activeSuggestionQuery.trim().toLowerCase()
+    const qClean = q.replace(/[^a-z0-9]/g, "")
+
+    return products
+      .filter(p => {
+        const pName = (p.name || "").toLowerCase()
+        const pSku = (p.sku || "").toLowerCase()
+        const pNameClean = pName.replace(/[^a-z0-9]/g, "")
+        const pSkuClean = pSku.replace(/[^a-z0-9]/g, "")
+
+        if (activeSuggestionField === "sku") {
+          return pSku.includes(q) || pSkuClean.includes(qClean) || pName.includes(q)
+        }
+        return pName.includes(q) || pNameClean.includes(qClean) || pSku.includes(q)
+      })
+      .slice(0, 8)
+  }, [products, activeSuggestionRowId, activeSuggestionQuery, activeSuggestionField])
+
+  // Apply existing product details to a sheet row
+  const applyProductToRow = (rowId: string, product: Product) => {
+    setPurchaseItems(prev => prev.map(item => {
+      if (item.rowId !== rowId) return item
+
+      const cost = Number(product.purchasePrice) || 0
+      const qty = Number(item.quantity) || 1
+      const mrp = Number(product.mrp || product.sellingPrice || 0)
+      const selling = Number(product.sellingPrice) || (mrp > 0 ? mrp : Math.round(cost * 1.25))
+      const taxRate = Number(item.taxRate) || 0
+      const taxAmount = taxRate > 0 ? Number(((qty * cost * taxRate) / 100).toFixed(2)) : (Number(item.taxAmount) || 0)
+
+      return {
+        ...item,
+        productId: product.id,
+        productName: product.name,
+        sku: product.sku,
+        generatedSku: product.sku,
+        category: product.category || item.category || "General",
+        purchasePrice: cost,
+        mrp: mrp,
+        sellingPrice: selling,
+        minStock: Number(product.minStock) || 2,
+        taxRate: taxRate,
+        taxAmount: taxAmount,
+        isNewProduct: false,
+        isManuallyEditedSku: false,
+      }
+    }))
+
+    setActiveSuggestionRowId(null)
+    setActiveSuggestionQuery("")
+    toast({
+      title: "Product Loaded ✓",
+      description: `${product.name} (${product.sku}) - In Stock: ${product.stock}`,
+    })
+  }
 
   // Fast Add Product Dialog State
   const [isAddProductOpen, setIsAddProductOpen] = React.useState(false)
@@ -364,6 +448,7 @@ export default function NewPurchasePage() {
         (it.sku && p.sku && p.sku.toLowerCase() === it.sku.toLowerCase())
       )
       return {
+        rowId: newRowId(),
         productId: prod?.id || `past-${Math.random().toString(36).slice(2)}`,
         productName: it.productName,
         sku: it.sku || prod?.sku || "",
@@ -372,6 +457,7 @@ export default function NewPurchasePage() {
         taxRate: it.taxRate || 0,
         taxAmount: it.taxAmount || 0,
         sellingPrice: prod?.sellingPrice || Math.round(it.purchasePrice * 1.25),
+        mrp: prod?.mrp || 0,
         category: it.category || prod?.category || "General",
         minStock: prod?.minStock || 2,
         isNewProduct: false,
@@ -465,11 +551,12 @@ export default function NewPurchasePage() {
 
   const handleResetToNewBill = () => {
     setCurrentBillIndex(-1)
-    setPurchaseItems([])
+    setPurchaseItems([createBlankRow()])
     setSelectedSupplier(null)
     setDetectedGstForSupplier(null)
     setBillingDate(new Date().toISOString().split("T")[0])
     setPaidAmount("")
+    setDiscountInput("")
     setScannerKey(k => k + 1)
     toast({ title: "New Bill Entry", description: "Sheet cleared for fresh purchase entry." })
   }
@@ -513,6 +600,7 @@ export default function NewPurchasePage() {
     sku: string
     purchasePrice: number
     sellingPrice?: number
+    mrp?: number
     category?: string
     minStock?: number
   }) => {
@@ -540,33 +628,197 @@ export default function NewPurchasePage() {
         )
       }
 
-      return [
-        ...prev,
-        {
-          productId: product.id,
-          productName: product.name,
-          sku: product.sku,
-          quantity: 1,
-          purchasePrice: product.purchasePrice || 0,
-          sellingPrice: product.sellingPrice || Math.round((product.purchasePrice || 0) * 1.25),
-          category: product.category || "General",
-          minStock: product.minStock || 2,
-          taxRate: 0,
-          taxAmount: 0,
-          isNewProduct: false,
-        }
-      ]
+      const newItem: PurchaseItem = {
+        rowId: newRowId(),
+        productId: product.id,
+        productName: product.name,
+        sku: product.sku,
+        quantity: 1,
+        purchasePrice: product.purchasePrice || 0,
+        mrp: product.mrp || 0,
+        sellingPrice: product.sellingPrice || (product.mrp && product.mrp > 0 ? product.mrp : Math.round((product.purchasePrice || 0) * 1.25)),
+        category: product.category || "General",
+        minStock: product.minStock || 2,
+        taxRate: 0,
+        taxAmount: 0,
+        isNewProduct: false,
+      }
+
+      // If the sheet currently only has 1 blank row, replace it with the selected product
+      if (prev.length === 1 && !prev[0].productName.trim() && Number(prev[0].purchasePrice || 0) === 0) {
+        return [newItem]
+      }
+
+      return [...prev, newItem]
     })
     setProductSearch("")
   }
 
-  const removeItem = (id: string) =>
-    setPurchaseItems(prev => prev.filter(i => i.productId !== id))
+  // Helper to create a clean blank row for fast manual entry
+  const createBlankRow = (cat?: string): PurchaseItem => {
+    const autoSku = generateSKU()
+    return {
+      rowId: newRowId(),
+      productId: `temp-${Math.random().toString(36).slice(2)}`,
+      productName: "",
+      sku: autoSku,
+      generatedSku: autoSku,
+      billItemCode: "",
+      quantity: 1,
+      purchasePrice: 0,
+      mrp: 0,
+      sellingPrice: 0,
+      category: cat || categories[0] || "General",
+      minStock: 2,
+      taxRate: 0,
+      taxAmount: 0,
+      isNewProduct: true,
+    }
+  }
 
-  const updateItem = (id: string, field: keyof PurchaseItem, value: any) => {
+  const [pendingFocusCell, setPendingFocusCell] = React.useState<string | null>(null)
+
+  React.useEffect(() => {
+    if (pendingFocusCell) {
+      const raf = requestAnimationFrame(() => {
+        const el = document.getElementById(pendingFocusCell) as HTMLInputElement | null
+        if (el) {
+          el.focus()
+          el.select?.()
+          setPendingFocusCell(null)
+        }
+      })
+      return () => cancelAnimationFrame(raf)
+    }
+  }, [purchaseItems, pendingFocusCell])
+
+  // Ensure there is always at least one row in the acquisition sheet for immediate manual entry
+  React.useEffect(() => {
+    if (!loadingData && purchaseItems.length === 0) {
+      setPurchaseItems([createBlankRow()])
+    }
+  }, [loadingData, purchaseItems.length])
+
+  const TOTAL_INPUT_COLS = 9
+
+  const handleCellKeyDown = (
+    e: React.KeyboardEvent<HTMLInputElement>,
+    rowIndex: number,
+    colIndex: number
+  ) => {
+    const item = purchaseItems[rowIndex]
+    const isThisRowSuggesting = activeSuggestionRowId === item?.rowId && matchingSuggestions.length > 0
+
+    // 1. Intercept navigation when autocomplete suggestions popup is active
+    if (isThisRowSuggesting) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault()
+        setHighlightedSuggestionIndex(prev => (prev + 1) % matchingSuggestions.length)
+        return
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault()
+        setHighlightedSuggestionIndex(prev => (prev - 1 + matchingSuggestions.length) % matchingSuggestions.length)
+        return
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        const selectedProduct = matchingSuggestions[highlightedSuggestionIndex]
+        if (selectedProduct) {
+          e.preventDefault()
+          applyProductToRow(item.rowId, selectedProduct)
+          // Focus Qty column
+          const nextEl = document.getElementById(`cell-${rowIndex}-2`) as HTMLInputElement | null
+          nextEl?.focus()
+          nextEl?.select?.()
+          return
+        }
+      }
+      if (e.key === "Escape") {
+        e.preventDefault()
+        setActiveSuggestionRowId(null)
+        return
+      }
+    }
+
+    // 2. Code column (colIndex 1) Enter check: If user typed an existing product code, auto-link it!
+    if (colIndex === 1 && e.key === "Enter") {
+      const typedSku = (item?.sku || "").trim().toLowerCase()
+      if (typedSku) {
+        const matched = products.find(p => p.sku.trim().toLowerCase() === typedSku || p.name.trim().toLowerCase() === typedSku)
+        if (matched) {
+          applyProductToRow(item.rowId, matched)
+        }
+      }
+    }
+
+    if (e.key === "Enter") {
+      e.preventDefault()
+
+      if (e.shiftKey) {
+        if (colIndex > 0) {
+          const prevEl = document.getElementById(`cell-${rowIndex}-${colIndex - 1}`) as HTMLInputElement | null
+          prevEl?.focus()
+          prevEl?.select?.()
+        } else if (rowIndex > 0) {
+          const prevRowEl = document.getElementById(`cell-${rowIndex - 1}-${TOTAL_INPUT_COLS - 1}`) as HTMLInputElement | null
+          prevRowEl?.focus()
+          prevRowEl?.select?.()
+        }
+        return
+      }
+
+      if (colIndex < TOTAL_INPUT_COLS - 1) {
+        const nextEl = document.getElementById(`cell-${rowIndex}-${colIndex + 1}`) as HTMLInputElement | null
+        if (nextEl) {
+          nextEl.focus()
+          nextEl.select?.()
+        }
+      } else {
+        // Last column completed!
+        if (rowIndex < purchaseItems.length - 1) {
+          const nextRowEl = document.getElementById(`cell-${rowIndex + 1}-0`) as HTMLInputElement | null
+          if (nextRowEl) {
+            nextRowEl.focus()
+            nextRowEl.select?.()
+          }
+        } else {
+          // Last row completed: AUTO CREATE NEW ROW and focus its first cell!
+          const currentCat = purchaseItems[rowIndex]?.category || categories[0] || "General"
+          const newRow = createBlankRow(currentCat)
+          setPurchaseItems(prev => [...prev, newRow])
+          setPendingFocusCell(`cell-${rowIndex + 1}-0`)
+        }
+      }
+    } else if (e.key === "ArrowDown") {
+      if (rowIndex < purchaseItems.length - 1) {
+        e.preventDefault()
+        const downEl = document.getElementById(`cell-${rowIndex + 1}-${colIndex}`) as HTMLInputElement | null
+        downEl?.focus()
+        downEl?.select?.()
+      }
+    } else if (e.key === "ArrowUp") {
+      if (rowIndex > 0) {
+        e.preventDefault()
+        const upEl = document.getElementById(`cell-${rowIndex - 1}-${colIndex}`) as HTMLInputElement | null
+        upEl?.focus()
+        upEl?.select?.()
+      }
+    }
+  }
+
+  const removeItem = (rowId: string) =>
+    setPurchaseItems(prev => {
+      const filtered = prev.filter(i => i.rowId !== rowId)
+      return filtered.length === 0 ? [createBlankRow()] : filtered
+    })
+
+  const updateItem = (rowId: string, field: keyof PurchaseItem, value: any) => {
     setPurchaseItems(prev => prev.map(i => {
-      if (i.productId !== id) return i
+      if (i.rowId !== rowId) return i
       const updated = { ...i, [field]: value }
+      if (field === "sku") {
+        updated.isManuallyEditedSku = true
+      }
       const qty = Number(updated.quantity) || 0
       const cost = Number(updated.purchasePrice) || 0
 
@@ -685,66 +937,100 @@ export default function NewPurchasePage() {
 
       if (match) {
         setSelectedSupplier(match)
-        toast({ 
-          title: "Supplier Auto-Selected ✓", 
-          description: `Matched existing vendor: ${match.name} (${match.phone})` 
+        toast({
+          title: "Supplier Auto-Selected ✓",
+          description: `Matched existing vendor: ${match.name} (${match.phone})`
         })
       } else {
-        // Only prompt to register new supplier if not matched in existing list
-        setScannedSupplierForm({
-          name: result.supplierName || "",
-          contactPerson: result.supplierContactPerson || "",
-          phone: result.supplierPhone || "",
-          email: result.supplierEmail || "",
-          address: result.supplierAddress || "",
-          gstNumber: result.supplierGst || "",
-        })
-        setScannedSupplierOpen(true)
+        // Auto-create supplier in database so user is never blocked from saving!
+        const suppPayload = {
+          name: result.supplierName.trim(),
+          contactPerson: result.supplierContactPerson?.trim() || result.supplierName.trim(),
+          phone: result.supplierPhone?.trim() || "",
+          email: result.supplierEmail?.trim() || "",
+          address: result.supplierAddress?.trim() || "",
+          gstNumber: result.supplierGst?.trim() || "",
+        }
+        try {
+          const sRes = await fetch("/api/suppliers", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-user-id": user.uid },
+            credentials: "include",
+            body: JSON.stringify(suppPayload),
+          })
+          if (sRes.ok) {
+            const newSupp = await sRes.json()
+            setSuppliers(prev => [newSupp, ...prev])
+            setSelectedSupplier(newSupp)
+            toast({
+              title: "Supplier Registered & Selected ✓",
+              description: `${newSupp.name} linked to this purchase bill.`,
+            })
+          } else {
+            setScannedSupplierForm(suppPayload)
+            setScannedSupplierOpen(true)
+          }
+        } catch {
+          setScannedSupplierForm(suppPayload)
+          setScannedSupplierOpen(true)
+        }
       }
     }
 
-    // 3. Process scanned items with strict de-duplication (# serialNumber, itemCode, name) & category normalization
+    // 4. Process scanned items with strict de-duplication:
+    // Identify products by full clean name and size.
+    // Different sizes (e.g. 110 MM vs 75 MM) are NEVER combined!
     const dedupedScanItems: ScannedItem[] = []
-    const seenScanKeys = new Map<string, number>()
+    const seenScanMap = new Map<string, number>()
 
     for (const rawItem of result.items) {
-      const sNum = rawItem.serialNumber !== undefined && rawItem.serialNumber !== null ? String(rawItem.serialNumber).trim() : ""
       const sCode = (rawItem.itemCode || "").trim().toLowerCase()
       const sName = (rawItem.name || "").trim().toLowerCase()
+      const cleanName = sName.replace(/[^a-z0-9]/g, "")
 
-      // Unique key: prefer serial number if present, else item code, else product name
-      const key = sNum ? `sn_${sNum}` : (sCode ? `code_${sCode}` : `name_${sName}`)
+      // Product name (with dimensions/size) MUST match for items to be considered duplicates!
+      const dedupKey = sCode ? `${cleanName}__${sCode}` : cleanName
 
-      if (seenScanKeys.has(key)) {
-        // Merge quantity instead of adding a duplicate row!
-        const existingIdx = seenScanKeys.get(key)!
-        dedupedScanItems[existingIdx].quantity = (Number(dedupedScanItems[existingIdx].quantity) || 1) + (Number(rawItem.quantity) || 1)
+      let matchedIdx: number | undefined = undefined
+      if (cleanName && seenScanMap.has(dedupKey)) {
+        matchedIdx = seenScanMap.get(dedupKey)
+      }
+
+      if (matchedIdx !== undefined) {
+        // Merge duplicate line on the bill into one single row!
+        const existingItem = dedupedScanItems[matchedIdx]
+        existingItem.quantity = (Number(existingItem.quantity) || 1) + (Number(rawItem.quantity) || 1)
+        existingItem.taxAmount = Number(((Number(existingItem.taxAmount) || 0) + (Number(rawItem.taxAmount) || 0)).toFixed(2))
+        if (!existingItem.itemCode && rawItem.itemCode) {
+          existingItem.itemCode = rawItem.itemCode
+        }
+        if (!existingItem.hsnCode && (rawItem as any).hsnCode) {
+          existingItem.hsnCode = (rawItem as any).hsnCode
+        }
+        if (Number(rawItem.mrp) > Number(existingItem.mrp || 0)) {
+          existingItem.mrp = rawItem.mrp
+        }
       } else {
-        seenScanKeys.set(key, dedupedScanItems.length)
+        const newIdx = dedupedScanItems.length
+        if (cleanName) seenScanMap.set(dedupKey, newIdx)
         dedupedScanItems.push({ ...rawItem })
       }
     }
 
     const newItems: PurchaseItem[] = []
+    // Single-entry tracker: ensure NO product ever appears twice or 3 times in the acquisition sheet!
+    const sheetMap = new Map<string, number>()
 
     for (const item of dedupedScanItems) {
       const scannedCode = (item.itemCode || "").trim().toLowerCase()
       const scannedName = (item.name || "").trim().toLowerCase()
+      const cleanScanName = scannedName.replace(/[^a-z0-9]/g, "")
+      const billCode = (item.itemCode || (item as any).hsnCode || "").trim()
 
-      // Match against existing inventory:
-      // 1. Direct Item Code == Existing SKU match
-      // 2. Exact product name match
-      // 3. Clean alphanumeric string match
-      const existing = products.find(p => {
-        const pSku = (p.sku || "").trim().toLowerCase()
-        const pName = (p.name || "").trim().toLowerCase()
-        if (scannedCode && pSku && scannedCode === pSku) return true
-        if (scannedName && pName && scannedName === pName) return true
-        const cleanP = pName.replace(/[^a-z0-9]/g, "")
-        const cleanS = scannedName.replace(/[^a-z0-9]/g, "")
-        if (cleanP && cleanS && cleanP.length > 3 && cleanS.length > 3 && (cleanP === cleanS || cleanP.includes(cleanS) || cleanS.includes(cleanP))) return true
-        return false
-      })
+      // Match against existing inventory in stock:
+      // Intelligent fuzzy matching (typo tolerant, order independent, size safe)
+      const matchResult = findBestProductMatch(item.name || scannedName, scannedCode, products)
+      const existing = matchResult?.product || null
 
       // Normalize category: ensure singular form and match existing categories
       const matchedCat = normalizeCategoryName(item.category || existing?.category || "General", categories)
@@ -752,52 +1038,82 @@ export default function NewPurchasePage() {
         setCustomCategories(prev => Array.from(new Set([...prev, matchedCat])))
       }
 
-      const itemQty = item.quantity || 1
+      const itemQty = Number(item.quantity) || 1
       const itemCost = item.purchasePrice || (existing?.purchasePrice || 0)
       const itemTaxRate = item.taxRate !== undefined && item.taxRate !== null ? Number(item.taxRate) : 0
       let itemTaxAmount = item.taxAmount !== undefined && item.taxAmount !== null ? Number(item.taxAmount) : 0
       if (itemTaxRate > 0 && itemTaxAmount === 0) {
-        itemTaxAmount = Number(((itemQty * itemCost * itemTaxRate) / 100).toFixed(2))
+        itemTaxAmount = Number(((itemQty * Number(itemCost) * itemTaxRate) / 100).toFixed(2))
       }
 
+      const billMrp = Number((item as any).mrp ?? item.sellingPrice ?? 0) || 0
+      const itemSelling = existing?.sellingPrice || (billMrp > 0 ? billMrp : Math.round(Number(itemCost) * 1.25))
+
+      // Check if this product was ALREADY added to this bill sheet (merge if already present)
+      const sheetDedupKey = existing ? `prod_${existing.id}` : `name_${cleanScanName}`
+      let sheetRowIndex: number | undefined = undefined
+      if (sheetMap.has(sheetDedupKey)) {
+        sheetRowIndex = sheetMap.get(sheetDedupKey)
+      }
+
+      if (sheetRowIndex !== undefined) {
+        // ALREADY IN SHEET: Merge into the single existing line!
+        const targetRow = newItems[sheetRowIndex]
+        targetRow.quantity = Number(targetRow.quantity || 0) + itemQty
+        targetRow.taxAmount = Number(((Number(targetRow.taxAmount) || 0) + itemTaxAmount).toFixed(2))
+        continue
+      }
+
+      const targetIdx = newItems.length
+
       if (existing) {
-        // USE EXISTING PRODUCT: Keep established name & SKU in stock to prevent duplicates!
+        // USE EXISTING PRODUCT: MUST ALWAYS USE EXISTING PRODUCT'S ESTABLISHED CODE IN DATABASE!
         newItems.push({
+          rowId: newRowId(),
           productId: existing.id,
           productName: existing.name,
-          sku: existing.sku,
-          billItemCode: (item.itemCode || "").trim(),
+          sku: existing.sku,           // Established code in stock (SX-XXXX)
+          billItemCode: billCode,
+          hsnCode: (item as any).hsnCode || "",
+          generatedSku: existing.sku,  // Locked to existing SKU
+          isManuallyEditedSku: false,
           quantity: itemQty,
           purchasePrice: itemCost,
-          sellingPrice: item.sellingPrice || existing.sellingPrice || Math.round(itemCost * 1.25),
+          mrp: billMrp > 0 ? billMrp : (existing.mrp || 0),
+          sellingPrice: itemSelling,
           category: existing.category || matchedCat,
           minStock: existing.minStock || 2,
           taxRate: itemTaxRate,
           taxAmount: itemTaxAmount,
           isNewProduct: false,
         })
+        sheetMap.set(sheetDedupKey, targetIdx)
       } else {
         // TRULY NEW PRODUCT:
-        // If useBillItemCode tickbox is checked, use bill itemCode; otherwise generate normal SX code
-        const billCode = (item.itemCode || "").trim()
+        // By default use app code (SX-XXXX); if user ticks useBillItemCode, it switches to bill itemCode
         const autoSku = generateSKU()
         const finalSku = (useBillItemCode && billCode) ? billCode : autoSku
 
         newItems.push({
+          rowId: newRowId(),
           productId: `temp-${Math.random().toString(36).slice(2)}`,
           productName: item.name,
           sku: finalSku,
           billItemCode: billCode,
+          hsnCode: (item as any).hsnCode || "",
           generatedSku: autoSku,
+          isManuallyEditedSku: false,
           quantity: itemQty,
           purchasePrice: itemCost,
-          sellingPrice: item.sellingPrice || Math.round(itemCost * 1.25),
+          mrp: billMrp,
+          sellingPrice: billMrp > 0 ? billMrp : Math.round(Number(itemCost) * 1.25),
           category: matchedCat,
           minStock: 2,
           taxRate: itemTaxRate,
           taxAmount: itemTaxAmount,
           isNewProduct: true,
         })
+        sheetMap.set(sheetDedupKey, targetIdx)
       }
     }
 
@@ -805,36 +1121,104 @@ export default function NewPurchasePage() {
       // Starting new bill entry: clear any previous/past items so new bill sheet is completely clean!
       setCurrentBillIndex(-1)
       setPaidAmount("")
+      setDiscountInput("")
       setPurchaseItems(newItems)
       toast({
         title: "Products Extracted ✨",
-        description: `Loaded ${newItems.length} unique product(s) into fresh acquisition sheet.`,
+        description: `Loaded ${newItems.length} unique product(s) into fresh acquisition sheet without duplicates.`,
       })
     }
   }
 
-  // Toggle Use Bill Item Code
+  // Toggle Use Bill Item Code:
+  // - Already existing products in stock ALWAYS KEEP their established code!
+  // - Only new items switch between their bill code and app-generated SX code.
+  // - If multiple new items share the same code (e.g. HSN code), make them unique (e.g. 39174000-1).
   const handleToggleUseBillItemCode = (checked: boolean) => {
     setUseBillItemCode(checked)
-    setPurchaseItems(prev => prev.map(item => {
-      // Existing products in stock keep their established code & name!
-      if (!item.isNewProduct) return item
+    let appliedCount = 0
+    let noCodeCount = 0
 
-      const billCode = item.billItemCode?.trim()
-      const autoCode = item.generatedSku || generateSKU()
-      return {
-        ...item,
-        sku: (checked && billCode) ? billCode : autoCode,
-        generatedSku: autoCode,
+    setPurchaseItems(prev => {
+      // First pass: count how many items have each billCode to ensure uniqueness
+      const codeUsage = new Map<string, number>()
+      const totalCountPerCode = new Map<string, number>()
+      if (checked) {
+        prev.forEach(it => {
+          if (it.isNewProduct && !it.isManuallyEditedSku) {
+            const bCode = it.billItemCode?.trim()
+            if (bCode) {
+              totalCountPerCode.set(bCode, (totalCountPerCode.get(bCode) || 0) + 1)
+            }
+          }
+        })
       }
-    }))
-    toast({
-      title: checked ? "Using Bill Item Codes ✓" : "Using Normal Generated Codes ✓",
-      description: checked
-        ? "New products use supplier invoice codes."
-        : "New products use auto-generated ShopX codes (SX-XXXX).",
+
+      return prev.map(item => {
+        // 1. Existing products in inventory MUST NEVER have their established code changed!
+        if (!item.isNewProduct) {
+          return item
+        }
+
+        // 2. If user has typed a custom SKU manually in the table, don't overwrite it!
+        if (item.isManuallyEditedSku) {
+          return item
+        }
+
+        const billCode = item.billItemCode?.trim()
+        const autoCode = item.generatedSku || generateSKU()
+
+        if (checked) {
+          if (billCode) {
+            appliedCount++
+            const occurrences = totalCountPerCode.get(billCode) || 1
+            let uniqueSku = billCode
+            if (occurrences > 1) {
+              const currentNum = (codeUsage.get(billCode) || 0) + 1
+              codeUsage.set(billCode, currentNum)
+              uniqueSku = `${billCode}-${currentNum}`
+            }
+            return {
+              ...item,
+              sku: uniqueSku,
+              generatedSku: autoCode,
+            }
+          } else {
+            noCodeCount++
+            return {
+              ...item,
+              sku: autoCode,
+              generatedSku: autoCode,
+            }
+          }
+        } else {
+          return {
+            ...item,
+            sku: autoCode,
+            generatedSku: autoCode,
+          }
+        }
+      })
     })
-  }
+
+    if (checked) {
+      if (appliedCount > 0) {
+        toast({
+          title: "Using Bill Item Codes ✓",
+          description: `Applied supplier bill codes to ${appliedCount} new item(s). Existing products keep their established codes.`,
+        })
+      } else {
+        toast({
+          title: "No Supplier Codes on Bill",
+          description: "No separate item codes were found on this invoice. Items keep their ShopX app codes (SX-XXXX). You can type custom codes directly in the Code column.",
+        })
+      }
+    } else {
+      toast({
+        title: "Using App Codes (SX-XXXX) ✓",
+        description: "New items switched to auto-generated ShopX codes. Existing products keep their established codes.",
+      })
+    }
   }
 
   // Bulk Category Application: Change all products to a selected category in one click
@@ -951,7 +1335,7 @@ export default function NewPurchasePage() {
     setCustomCategories(prev => Array.from(new Set([...prev, cat])))
     if (inlineNewCategoryItemIndex !== null && purchaseItems[inlineNewCategoryItemIndex]) {
       const item = purchaseItems[inlineNewCategoryItemIndex]
-      updateItem(item.productId, "category", cat)
+      updateItem(item.rowId, "category", cat)
     }
     setInlineCategoryInput("")
     setInlineNewCategoryOpen(false)
@@ -959,79 +1343,158 @@ export default function NewPurchasePage() {
   }
 
   const totalTax = purchaseItems.reduce((acc, i) => acc + (Number(i.taxAmount) || 0), 0)
-  const total = purchaseItems.reduce((acc, i) => {
+
+  // Sum of all lines (cost x qty + GST)
+  const subTotal = purchaseItems.reduce((acc, i) => {
     const base = (Number(i.quantity) || 0) * (Number(i.purchasePrice) || 0)
-    const tax = Number(i.taxAmount) || 0
-    return acc + base + tax
+    return acc + base + (Number(i.taxAmount) || 0)
   }, 0)
+
+  // Manual discount (₹), cannot be negative or more than the subtotal
+  const discountAmt = Math.min(Math.max(Number(discountInput) || 0, 0), subTotal)
+  const afterDiscount = subTotal - discountAmt
+
+  // Round off to the nearest rupee (1192.69 -> 1193.00, round off +0.31)
+  const grandTotal = roundOffEnabled ? Math.round(afterDiscount) : afterDiscount
+  const roundOffAmt = Number((grandTotal - afterDiscount).toFixed(2))
+
+  // Keep the name "total" so Paid, Balance and Commit still work
+  const total = Number(grandTotal.toFixed(2))
+
   const numPaid = paidAmount === "" ? total : Number(paidAmount) || 0
   const balanceDue = Math.max(0, total - numPaid)
   const isCredit = balanceDue > 0
 
   // Commit purchase
   const handleComplete = async () => {
-    if (!selectedSupplier || purchaseItems.length === 0 || !user?.uid) return
+    if (purchaseItems.length === 0 || !user?.uid) return
     setIsSubmitting(true)
     try {
-      const supplierId = (selectedSupplier as any)._id || selectedSupplier.id
+      // Ensure a supplier is selected; if not, automatically select or create a default Cash / Counter supplier
+      let currentSupplier = selectedSupplier
+      if (!currentSupplier) {
+        let defaultSupp = suppliers.find(s =>
+          s.name.toLowerCase().includes("cash") ||
+          s.name.toLowerCase().includes("counter") ||
+          s.name.toLowerCase().includes("direct")
+        )
+        if (!defaultSupp) {
+          const suppRes = await fetch("/api/suppliers", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-user-id": user.uid },
+            credentials: "include",
+            body: JSON.stringify({
+              name: "Cash / Counter Purchase",
+              contactPerson: "Counter",
+              phone: "",
+              email: "",
+              address: "",
+            }),
+          })
+          if (suppRes.ok) {
+            defaultSupp = await suppRes.json()
+            setSuppliers(prev => [defaultSupp!, ...prev])
+          }
+        }
+        if (defaultSupp) {
+          currentSupplier = defaultSupp
+          setSelectedSupplier(defaultSupp)
+        }
+      }
+
+      const supplierId = (currentSupplier as any)?._id || currentSupplier?.id || ""
+
+      // Local copy of stock so rows for the same product add up correctly,
+      // and a product created earlier in this loop is never created twice
+      const knownProducts: Product[] = [...products]
+      const stockAdded: Record<string, number> = {}
 
       for (const item of purchaseItems) {
+        const itemQty = Math.max(1, Number(item.quantity) || 1)
+        const itemCost = Math.max(0, Number(item.purchasePrice) || 0)
+        const itemSelling = Math.max(0, Number(item.sellingPrice) || Math.round(itemCost * 1.25))
+        const itemMrp = Math.max(0, Number(item.mrp) || 0)
+        const itemMinStock = Math.max(0, Number(item.minStock) || 2)
+        const itemCategory = (item.category || "General").trim()
+        const itemName = (item.productName || "").trim() || "Item"
+        const itemSku = (item.sku || "").trim() || generateSKU()
+
         let finalProductId = item.productId
 
         // Strict de-duplication: match by existing ID, or matching SKU / Item Code, or matching product name
-        const itemSku = (item.sku || "").trim().toLowerCase()
-        const itemName = (item.productName || "").trim().toLowerCase()
+        const lowerSku = itemSku.toLowerCase()
+        const lowerName = itemName.toLowerCase()
 
-        const existing = products.find(p => {
-          if (p.id === item.productId) return true
+        const existing = knownProducts.find(p => {
+          if (p.id === item.productId && !item.productId.startsWith('temp-') && !item.productId.startsWith('past-')) return true
           const pSku = (p.sku || "").trim().toLowerCase()
-          if (itemSku && pSku && itemSku === pSku) return true
+          if (lowerSku && pSku && lowerSku === pSku) return true
           const pName = (p.name || "").trim().toLowerCase()
-          if (itemName && pName && itemName === pName) return true
+          if (lowerName && pName && lowerName === pName) return true
           return false
         })
 
-        if (existing) {
+        const isValidExistingId = existing && existing.id && !existing.id.startsWith('temp-') && !existing.id.startsWith('past-')
+
+        if (existing && isValidExistingId) {
           // EXISTING PRODUCT IN STOCK:
-          // Keep established code & name in stock! Only update stock, latest cost (purchasePrice) and latest rate (sellingPrice) in product master.
+          // Update all edited fields: name, sku, category, stock, purchasePrice, sellingPrice, mrp, minStock
           finalProductId = existing.id
           const patchRes = await fetch(`/api/products/${existing.id}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json", "x-user-id": user.uid },
             credentials: "include",
             body: JSON.stringify({
-              stock: Number(existing.stock || 0) + Number(item.quantity),
-              purchasePrice: Number(item.purchasePrice), // Updates latest cost in product master
-              sellingPrice: Number(item.sellingPrice),   // Updates latest rate/MRP in product master
-              category: existing.category || item.category,
-              minStock: Number(item.minStock || existing.minStock || 2),
+              name: itemName,
+              sku: itemSku,
+              category: itemCategory,
+              stock: Number(existing.stock || 0) + (stockAdded[existing.id] || 0) + itemQty,
+              purchasePrice: itemCost,
+              sellingPrice: itemSelling,
+              mrp: itemMrp,
+              minStock: itemMinStock,
             }),
           })
-          if (!patchRes.ok) throw new Error(`Failed updating ${existing.name}`)
+          if (!patchRes.ok) throw new Error(`Failed updating ${itemName}`)
+          stockAdded[existing.id] = (stockAdded[existing.id] || 0) + itemQty
         } else {
-          // TRULY NEW PRODUCT: Create once in inventory
+          // TRULY NEW PRODUCT: Create once in inventory in MongoDB Atlas
           const createRes = await fetch("/api/products", {
             method: "POST",
             headers: { "Content-Type": "application/json", "x-user-id": user.uid },
             credentials: "include",
             body: JSON.stringify({
-              name: item.productName,
-              sku: item.sku || generateSKU(),
-              category: item.category || "General",
-              purchasePrice: Number(item.purchasePrice),
-              sellingPrice: Number(item.sellingPrice),
-              stock: Number(item.quantity),
-              minStock: Number(item.minStock || 2),
+              name: itemName,
+              sku: itemSku,
+              category: itemCategory,
+              purchasePrice: itemCost,
+              sellingPrice: itemSelling,
+              mrp: itemMrp,
+              stock: itemQty,
+              minStock: itemMinStock,
               supplierId,
-              skipPurchase: true, // Prevents duplicate purchase creation since we create purchase below
+              skipPurchase: true,
             }),
           })
-          if (!createRes.ok) throw new Error(`Failed to create product ${item.productName}`)
+          if (!createRes.ok) throw new Error(`Failed to create product ${itemName}`)
           const created = await createRes.json()
           finalProductId = created.id || created._id
+
+          // Remember it so a later row with the same product updates it instead of creating another
+          knownProducts.push({
+            id: finalProductId,
+            name: itemName,
+            sku: itemSku,
+            purchasePrice: itemCost,
+            sellingPrice: itemSelling,
+            mrp: itemMrp,
+            stock: itemQty,
+            minStock: itemMinStock,
+            category: itemCategory,
+          })
         }
 
-        // Always save a new purchase log for THIS bill in Purchase History (never alters past bills)
+        // Always save a new purchase log for THIS bill in Purchase History in MongoDB Atlas
         const purchaseRes = await fetch("/api/purchases", {
           method: "POST",
           headers: { "Content-Type": "application/json", "x-user-id": user.uid },
@@ -1039,21 +1502,20 @@ export default function NewPurchasePage() {
           body: JSON.stringify({
             supplierId,
             productId: finalProductId,
-            productName: existing ? existing.name : item.productName,
-            itemCode: existing ? existing.sku : (item.sku || ""),
-            quantity: Number(item.quantity),
-            purchasePrice: Number(item.purchasePrice), // Exactly preserved historical purchase cost
+            productName: itemName,
+            itemCode: itemSku,
+            quantity: itemQty,
+            purchasePrice: itemCost,
             taxRate: Number(item.taxRate) || 0,
             taxAmount: Number(item.taxAmount) || 0,
             billingDate,
           }),
         })
-            taxAmount: Number(item.taxAmount) || 0,
-            billingDate,
-          }),
-        })
+
         if (!purchaseRes.ok) {
-          console.error("Purchase save failed for", item.productName)
+          const errBody = await purchaseRes.json().catch(() => ({}))
+          console.error("Purchase save failed:", purchaseRes.status, errBody)
+          throw new Error(errBody.error || `Purchase save failed for ${itemName} (${purchaseRes.status})`)
         }
       }
 
@@ -1079,7 +1541,7 @@ export default function NewPurchasePage() {
             body: JSON.stringify({
               type: "expense",
               category: "Purchase / Stock",
-              description: `Payment to ${selectedSupplier.name} (Bill ${billingDate})`,
+              description: `Payment to ${currentSupplier?.name || selectedSupplier?.name || "Supplier"} (Bill ${billingDate})`,
               amount: numPaid,
               paymentMode,
               note: isCredit ? `Partial payment. Due Balance: ₹${balanceDue.toLocaleString()}` : "Fully paid bill",
@@ -1090,9 +1552,9 @@ export default function NewPurchasePage() {
         }
       }
 
-      toast({ 
-        title: "Purchase Completed ✓", 
-        description: `Successfully processed ${purchaseItems.length} products.${isCredit ? ` Balance Due: ₹${balanceDue.toLocaleString()}` : ""}` 
+      toast({
+        title: "Purchase Completed ✓",
+        description: `Successfully processed ${purchaseItems.length} products.${isCredit ? ` Balance Due: ₹${balanceDue.toLocaleString()}` : ""}`
       })
       handleResetToNewBill()
       fetchAll()
@@ -1149,7 +1611,7 @@ export default function NewPurchasePage() {
       {/* ── BILL NAVIGATOR BAR: Date & Bill Number Steppers ── */}
       <div className="bg-card border border-border/60 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-3 shadow-md">
         <div className="flex flex-wrap items-center gap-2 sm:gap-4">
-          
+
           {/* Bill Number Stepper < Bill #N > */}
           <div className="flex items-center bg-secondary/40 border border-border/50 rounded-xl p-1 gap-1">
             <Button
@@ -1299,7 +1761,7 @@ export default function NewPurchasePage() {
               size="sm"
               className="h-6 text-[10px] font-bold text-accent uppercase tracking-widest hover:bg-accent/10 px-1.5"
               onClick={() => {
-                setScannedSupplierForm({ name: "", contactPerson: "", phone: "", email: "", address: "" })
+                setScannedSupplierForm({ name: "", contactPerson: "", phone: "", email: "", address: "", gstNumber: "" })
                 setScannedSupplierOpen(true)
               }}
             >
@@ -1530,7 +1992,7 @@ export default function NewPurchasePage() {
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Selling ₹ (MRP)</p>
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Selling ₹</p>
                         <Input
                           type="number" placeholder="Price"
                           className="h-11 bg-secondary/20 border-none rounded-xl"
@@ -1617,18 +2079,18 @@ export default function NewPurchasePage() {
             <div className="min-w-0">
               <CardTitle className="text-base md:text-lg">Acquisition Sheet</CardTitle>
               <CardDescription className="text-[10px] uppercase font-bold tracking-widest text-muted-foreground">
-                Bulk Editor with Category, MRP & Alert Level
+                Bulk Editor with Category, MRP, Selling Price & Alert Level
               </CardDescription>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <Badge variant="secondary" className="font-code text-xs py-1 px-3">
               {purchaseItems.length} Product{purchaseItems.length === 1 ? "" : "s"}
             </Badge>
           </div>
         </CardHeader>
 
-        {/* ── ITEM CODE SETTING BAR: Tickbox for Use Bill Item Codes vs Auto SX Codes ── */}
+        {/* ── ITEM CODE SETTING BAR: Tickbox for Use Bill Item Codes vs Auto SX Codes (Default: First App Codes) ── */}
         <div className="bg-secondary/15 border-b border-border/40 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5">
           <div className="flex items-center gap-3">
             <label className="flex items-center gap-2 cursor-pointer select-none group bg-secondary/30 hover:bg-secondary/60 px-3 py-1.5 rounded-xl border border-border/60 transition-all shadow-sm">
@@ -1649,22 +2111,22 @@ export default function NewPurchasePage() {
                     : "bg-secondary/40 text-muted-foreground border-border/60"
                 }`}
               >
-                {useBillItemCode ? "Bill SKU ✓" : "Auto SX Code"}
+                {useBillItemCode ? "Bill Code ✓" : "App Code (SX-XXXX)"}
               </Badge>
             </label>
             <span className="text-[11px] text-muted-foreground hidden sm:inline">
               {useBillItemCode
-                ? "• Using supplier's item codes from invoice for new products."
-                : "• Auto-generating ShopX codes (SX-XXXX) for new products."}
+                ? "• Using item codes from supplier invoice for new items."
+                : "• Using internal app codes (SX-XXXX). Tick if you want to use the bill's item codes."}
             </span>
           </div>
 
           <div className="flex items-center gap-2">
             <span className="text-[11px] text-muted-foreground hidden md:inline">
-              Existing products in stock keep established code &amp; name:
+              All items in sheet:
             </span>
             <Badge variant="outline" className="text-[9px] border-emerald-500/40 bg-emerald-500/10 text-emerald-400 font-bold px-2 py-0.5">
-              Updates Cost &amp; Rate only
+              Fully Editable (Name, Code, MRP, Cost)
             </Badge>
           </div>
         </div>
@@ -1714,8 +2176,8 @@ export default function NewPurchasePage() {
 
         {/* ── Table (Unified Mobile & Desktop) ── */}
         <CardContent className="p-0">
-          <div className="w-full overflow-x-auto">
-            <Table className="min-w-[940px] w-full">
+          <div className="w-full overflow-x-auto min-h-[350px] pb-24">
+            <Table className="min-w-[1060px] w-full">
               <TableHeader className="bg-secondary/20 border-b border-border/50">
                 <TableRow className="border-border/50 hover:bg-transparent">
                   <TableHead className="w-10 text-center text-[10px] font-bold uppercase py-3 px-2">#</TableHead>
@@ -1742,6 +2204,7 @@ export default function NewPurchasePage() {
                   <TableHead className="w-[80px] text-[10px] font-bold uppercase py-3 px-1 text-center">GST (%)</TableHead>
                   <TableHead className="w-[95px] text-[10px] font-bold uppercase py-3 px-1 text-right">GST (₹)</TableHead>
                   <TableHead className="w-[105px] text-[10px] font-bold uppercase py-3 px-1 text-right">MRP (₹)</TableHead>
+                  <TableHead className="w-[110px] text-[10px] font-bold uppercase py-3 px-1 text-right">Selling (₹)</TableHead>
                   <TableHead className="w-[80px] text-[10px] font-bold uppercase py-3 px-1 text-center">Alert Lvl</TableHead>
                   <TableHead className="w-[110px] text-right text-[10px] font-bold uppercase py-3 px-2">Subtotal (₹)</TableHead>
                   <TableHead className="w-10 py-3 px-2" />
@@ -1754,32 +2217,208 @@ export default function NewPurchasePage() {
                   const lineSubtotal = lineBase + lineTax
 
                   return (
-                    <TableRow key={item.productId} className="border-border/30 group hover:bg-secondary/10">
+                    <TableRow key={item.rowId} className="border-border/30 group hover:bg-secondary/10">
                       <TableCell className="text-center font-code text-xs text-muted-foreground py-2.5 px-2">{index + 1}</TableCell>
-                      <TableCell className="py-2.5 px-2">
-                        <p className="font-bold text-xs text-foreground leading-snug">{item.productName}</p>
-                        <div className="flex items-center gap-1.5 mt-1">
-                          <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-tight">Code:</span>
+                      <TableCell className="py-2.5 px-2 relative min-w-[200px]">
+                        {/* Editable item name with live autocomplete popup */}
+                        <div className="relative">
                           <input
+                            id={`cell-${index}-0`}
                             type="text"
-                            placeholder="Code / SKU"
-                            value={item.sku || ""}
-                            onChange={e => updateItem(item.productId, "sku", e.target.value)}
-                            style={{
-                              color: '#38bdf8',
-                              backgroundColor: '#0f172a',
-                              WebkitTextFillColor: '#38bdf8',
+                            value={item.productName}
+                            onChange={e => {
+                              const val = e.target.value
+                              updateItem(item.rowId, "productName", val)
+                              if (val.trim().length >= 1) {
+                                setActiveSuggestionRowId(item.rowId)
+                                setActiveSuggestionField("name")
+                                setActiveSuggestionQuery(val)
+                                setHighlightedSuggestionIndex(0)
+                              } else {
+                                setActiveSuggestionRowId(null)
+                              }
                             }}
-                            className="h-5 px-1.5 text-[10px] font-code font-bold border border-slate-600 rounded focus:border-cyan-400 focus:outline-none w-28"
-                            title="Item Code / SKU (used for customer search & inventory)"
+                            onKeyDown={e => handleCellKeyDown(e, index, 0)}
+                            onFocus={e => {
+                              e.target.select()
+                              if (item.productName.trim().length >= 1) {
+                                setActiveSuggestionRowId(item.rowId)
+                                setActiveSuggestionField("name")
+                                setActiveSuggestionQuery(item.productName)
+                                setHighlightedSuggestionIndex(0)
+                              }
+                            }}
+                            onBlur={() => {
+                              setTimeout(() => {
+                                setActiveSuggestionRowId(curr => (curr === item.rowId ? null : curr))
+                              }, 180)
+                            }}
+                            placeholder="Item name (Type to search stock...)"
+                            style={{ color: '#ffffff', backgroundColor: '#0f172a', WebkitTextFillColor: '#ffffff' }}
+                            className="w-full min-w-[160px] h-8 px-2 text-xs font-bold border border-slate-600 rounded focus:border-cyan-400 focus:outline-none"
+                            title="Edit item name (Type to search stock, Press Enter to move to Code)"
+                            autoComplete="off"
                           />
+
+                          {/* Autocomplete Suggestions Dropdown Popup for Item Name */}
+                          {activeSuggestionRowId === item.rowId && activeSuggestionField === "name" && matchingSuggestions.length > 0 && (
+                            <div
+                              className="absolute top-full left-0 mt-1 w-80 sm:w-96 bg-[#090d16] border border-cyan-500/60 rounded-xl shadow-2xl z-50 overflow-hidden max-h-64 overflow-y-auto backdrop-blur-md"
+                              onMouseDown={e => e.preventDefault()}
+                            >
+                              <div className="px-3 py-1.5 bg-slate-900 border-b border-slate-700 flex items-center justify-between text-[10px] text-muted-foreground">
+                                <span className="font-bold uppercase tracking-wider text-cyan-400 flex items-center gap-1">
+                                  <Package className="w-3 h-3" /> Existing Products ({matchingSuggestions.length})
+                                </span>
+                                <span className="text-[9px]">↑↓ / Click to pick</span>
+                              </div>
+                              {matchingSuggestions.map((p, sIdx) => (
+                                <button
+                                  key={p.id}
+                                  type="button"
+                                  onClick={() => {
+                                    applyProductToRow(item.rowId, p)
+                                    const nextEl = document.getElementById(`cell-${index}-2`) as HTMLInputElement | null
+                                    nextEl?.focus()
+                                    nextEl?.select?.()
+                                  }}
+                                  className={`w-full p-2.5 text-left border-b border-slate-800/80 last:border-0 flex justify-between items-center transition-colors ${
+                                    sIdx === highlightedSuggestionIndex
+                                      ? "bg-cyan-500/20 text-cyan-200"
+                                      : "hover:bg-slate-800/60 text-foreground"
+                                  }`}
+                                >
+                                  <div className="min-w-0 pr-2">
+                                    <p className="font-bold text-xs truncate text-white">{p.name}</p>
+                                    <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-muted-foreground">
+                                      <span className="font-code font-bold text-cyan-400">{p.sku}</span>
+                                      <span>•</span>
+                                      <span className="truncate">{p.category}</span>
+                                      <span>•</span>
+                                      <span className={p.stock > 0 ? "text-emerald-400 font-bold" : "text-amber-400 font-semibold"}>
+                                        Stock: {p.stock}
+                                      </span>
+                                    </div>
+                                  </div>
+                                  <div className="text-right shrink-0">
+                                    <div className="font-code text-xs font-bold text-amber-400">
+                                      ₹{p.purchasePrice || 0}
+                                    </div>
+                                    <div className="text-[9px] text-muted-foreground font-code">
+                                      Sell: ₹{p.sellingPrice || 0}
+                                    </div>
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Item Code Input & Suggestions */}
+                        <div className="flex items-center gap-1.5 mt-1 relative">
+                          <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-tight">Code:</span>
+                          <div className="relative">
+                            <input
+                              id={`cell-${index}-1`}
+                              type="text"
+                              placeholder="Code / SKU"
+                              value={item.sku || ""}
+                              onChange={e => {
+                                const val = e.target.value
+                                updateItem(item.rowId, "sku", val)
+                                const trimmed = val.trim().toLowerCase()
+                                if (trimmed) {
+                                  // Exact match: immediately auto-populate all details!
+                                  const exact = products.find(p => p.sku.trim().toLowerCase() === trimmed)
+                                  if (exact) {
+                                    applyProductToRow(item.rowId, exact)
+                                  } else if (val.trim().length >= 2) {
+                                    setActiveSuggestionRowId(item.rowId)
+                                    setActiveSuggestionField("sku")
+                                    setActiveSuggestionQuery(val)
+                                    setHighlightedSuggestionIndex(0)
+                                  }
+                                } else {
+                                  if (activeSuggestionRowId === item.rowId) setActiveSuggestionRowId(null)
+                                }
+                              }}
+                              onKeyDown={e => handleCellKeyDown(e, index, 1)}
+                              onFocus={e => e.target.select()}
+                              onBlur={() => {
+                                const trimmed = (item.sku || "").trim().toLowerCase()
+                                if (trimmed) {
+                                  const exact = products.find(p => p.sku.trim().toLowerCase() === trimmed)
+                                  if (exact && item.productId !== exact.id) {
+                                    applyProductToRow(item.rowId, exact)
+                                  }
+                                }
+                                setTimeout(() => {
+                                  setActiveSuggestionRowId(curr => (curr === item.rowId ? null : curr))
+                                }, 180)
+                              }}
+                              style={{
+                                color: '#38bdf8',
+                                backgroundColor: '#0f172a',
+                                WebkitTextFillColor: '#38bdf8',
+                              }}
+                              className="h-5 px-1.5 text-[10px] font-code font-bold border border-slate-600 rounded focus:border-cyan-400 focus:outline-none w-28"
+                              title="Item Code / SKU (Enter existing code to autofill, Press Enter to move to Qty)"
+                              autoComplete="off"
+                            />
+
+                            {/* Autocomplete Suggestions Popup for Code */}
+                            {activeSuggestionRowId === item.rowId && activeSuggestionField === "sku" && matchingSuggestions.length > 0 && (
+                              <div
+                                className="absolute top-full left-0 mt-1 w-80 sm:w-96 bg-[#090d16] border border-cyan-500/60 rounded-xl shadow-2xl z-50 overflow-hidden max-h-56 overflow-y-auto backdrop-blur-md"
+                                onMouseDown={e => e.preventDefault()}
+                              >
+                                <div className="px-3 py-1 bg-slate-900 border-b border-slate-700 flex items-center justify-between text-[10px] text-muted-foreground">
+                                  <span className="font-bold uppercase tracking-wider text-cyan-400">
+                                    Matching Code ({matchingSuggestions.length})
+                                  </span>
+                                </div>
+                                {matchingSuggestions.map((p, sIdx) => (
+                                  <button
+                                    key={p.id}
+                                    type="button"
+                                    onClick={() => {
+                                      applyProductToRow(item.rowId, p)
+                                      const nextEl = document.getElementById(`cell-${index}-2`) as HTMLInputElement | null
+                                      nextEl?.focus()
+                                      nextEl?.select?.()
+                                    }}
+                                    className={`w-full p-2 text-left border-b border-slate-800/80 last:border-0 flex justify-between items-center transition-colors ${
+                                      sIdx === highlightedSuggestionIndex
+                                        ? "bg-cyan-500/20 text-cyan-200"
+                                        : "hover:bg-slate-800/60 text-foreground"
+                                    }`}
+                                  >
+                                    <div className="min-w-0 pr-2">
+                                      <span className="font-code font-bold text-cyan-400 text-xs">{p.sku}</span>
+                                      <span className="text-white text-xs ml-2">{p.name}</span>
+                                    </div>
+                                    <div className="font-code text-xs font-bold text-amber-400 shrink-0">
+                                      ₹{p.purchasePrice || 0}
+                                    </div>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
                           {item.isNewProduct ? (
-                            <Badge className="text-[8px] bg-accent/20 text-accent hover:bg-accent/30 px-1 py-0 h-4">
-                              New
-                            </Badge>
+                            <div className="flex items-center gap-1">
+                              <Badge className="text-[8px] bg-accent/20 text-accent hover:bg-accent/30 px-1 py-0 h-4 font-bold">
+                                New
+                              </Badge>
+                              {item.billItemCode ? (
+                                <span className="text-[9px] text-cyan-400 font-code font-semibold" title={`Scanned bill code: ${item.billItemCode}`}>
+                                  (Bill: {item.billItemCode})
+                                </span>
+                              ) : null}
+                            </div>
                           ) : (
-                            <Badge className="text-[8px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1 py-0 h-4 font-bold" title="Already in stock: uses existing code and name. Only stock, cost and rate will be updated.">
-                              In Stock ✓
+                            <Badge className="text-[8px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0 h-4 font-bold" title="Already in stock: uses existing established code.">
+                              In Stock ✓ ({item.sku})
                             </Badge>
                           )}
                         </div>
@@ -1790,7 +2429,7 @@ export default function NewPurchasePage() {
                         <div className="flex items-center gap-1 min-w-[140px]">
                           <Select
                             value={item.category}
-                            onValueChange={val => updateItem(item.productId, "category", val)}
+                            onValueChange={val => updateItem(item.rowId, "category", val)}
                           >
                             <SelectTrigger className="h-9 text-xs bg-[#0f172a] border border-slate-600 text-foreground flex-1 rounded-lg">
                               <SelectValue />
@@ -1828,6 +2467,7 @@ export default function NewPurchasePage() {
                       {/* Qty */}
                       <TableCell className="py-2.5 px-1 text-center">
                         <input
+                          id={`cell-${index}-2`}
                           type="number"
                           min={1}
                           style={{
@@ -1837,13 +2477,16 @@ export default function NewPurchasePage() {
                           }}
                           className="w-16 h-9 px-2 text-xs border-2 border-slate-600 font-bold text-center rounded-lg shadow-sm focus:border-cyan-400 focus:outline-none mx-auto block"
                           value={item.quantity ?? 1}
-                          onChange={e => updateItem(item.productId, "quantity", e.target.value === "" ? "" : Number(e.target.value))}
+                          onChange={e => updateItem(item.rowId, "quantity", e.target.value === "" ? "" : Number(e.target.value))}
+                          onKeyDown={e => handleCellKeyDown(e, index, 2)}
+                          onFocus={e => e.target.select()}
                         />
                       </TableCell>
 
                       {/* Purchase Price (Cost) */}
                       <TableCell className="py-2.5 px-1 text-right">
                         <input
+                          id={`cell-${index}-3`}
                           type="number"
                           min={0}
                           step="any"
@@ -1854,13 +2497,16 @@ export default function NewPurchasePage() {
                           }}
                           className="w-24 h-9 px-2 text-xs border-2 border-slate-600 font-bold text-right font-code rounded-lg shadow-sm focus:border-amber-400 focus:outline-none ml-auto block"
                           value={item.purchasePrice ?? 0}
-                          onChange={e => updateItem(item.productId, "purchasePrice", e.target.value === "" ? "" : Number(e.target.value))}
+                          onChange={e => updateItem(item.rowId, "purchasePrice", e.target.value === "" ? "" : Number(e.target.value))}
+                          onKeyDown={e => handleCellKeyDown(e, index, 3)}
+                          onFocus={e => e.target.select()}
                         />
                       </TableCell>
 
                       {/* GST (%) */}
                       <TableCell className="py-2.5 px-1 text-center">
                         <input
+                          id={`cell-${index}-4`}
                           type="number"
                           min={0}
                           max={100}
@@ -1873,13 +2519,16 @@ export default function NewPurchasePage() {
                           }}
                           className="w-16 h-9 px-1 text-xs border-2 border-slate-600 font-bold text-center font-code rounded-lg shadow-sm focus:border-cyan-400 focus:outline-none mx-auto block"
                           value={item.taxRate ?? 0}
-                          onChange={e => updateItem(item.productId, "taxRate", e.target.value === "" ? "" : Number(e.target.value))}
+                          onChange={e => updateItem(item.rowId, "taxRate", e.target.value === "" ? "" : Number(e.target.value))}
+                          onKeyDown={e => handleCellKeyDown(e, index, 4)}
+                          onFocus={e => e.target.select()}
                         />
                       </TableCell>
 
                       {/* GST (₹) */}
                       <TableCell className="py-2.5 px-1 text-right">
                         <input
+                          id={`cell-${index}-5`}
                           type="number"
                           min={0}
                           step="any"
@@ -1891,30 +2540,46 @@ export default function NewPurchasePage() {
                           }}
                           className="w-20 h-9 px-1.5 text-xs border-2 border-slate-600 font-bold text-right font-code rounded-lg shadow-sm focus:border-cyan-400 focus:outline-none ml-auto block"
                           value={item.taxAmount ?? 0}
-                          onChange={e => updateItem(item.productId, "taxAmount", e.target.value === "" ? "" : Number(e.target.value))}
+                          onChange={e => updateItem(item.rowId, "taxAmount", e.target.value === "" ? "" : Number(e.target.value))}
+                          onKeyDown={e => handleCellKeyDown(e, index, 5)}
+                          onFocus={e => e.target.select()}
                         />
                       </TableCell>
 
-                      {/* MRP (Selling Price) */}
+                      {/* MRP */}
                       <TableCell className="py-2.5 px-1 text-right">
                         <input
-                          type="number"
-                          min={0}
-                          step="any"
-                          style={{
-                            color: '#34d399',
-                            backgroundColor: '#0f172a',
-                            WebkitTextFillColor: '#34d399',
-                          }}
-                          className="w-24 h-9 px-2 text-xs border-2 border-slate-600 font-bold text-right font-code rounded-lg shadow-sm focus:border-emerald-400 focus:outline-none ml-auto block"
-                          value={item.sellingPrice ?? 0}
-                          onChange={e => updateItem(item.productId, "sellingPrice", e.target.value === "" ? "" : Number(e.target.value))}
+                          id={`cell-${index}-6`}
+                          type="number" min={0} step="any"
+                          style={{ color: '#a78bfa', backgroundColor: '#0f172a', WebkitTextFillColor: '#a78bfa' }}
+                          className="w-24 h-9 px-2 text-xs border-2 border-slate-600 font-bold text-right font-code rounded-lg shadow-sm focus:border-violet-400 focus:outline-none ml-auto block"
+                          value={item.mrp ?? 0}
+                          onChange={e => updateItem(item.rowId, "mrp", e.target.value === "" ? "" : Number(e.target.value))}
+                          onKeyDown={e => handleCellKeyDown(e, index, 6)}
+                          onFocus={e => e.target.select()}
+                          title="MRP (Maximum Retail Price)"
                         />
                       </TableCell>
 
-                      {/* Alert Level (minStock) */}
+                      {/* Selling Price */}
+                      <TableCell className="py-2.5 px-1 text-right">
+                        <input
+                          id={`cell-${index}-7`}
+                          type="number" min={0} step="any"
+                          style={{ color: '#34d399', backgroundColor: '#0f172a', WebkitTextFillColor: '#34d399' }}
+                          className="w-24 h-9 px-2 text-xs border-2 border-slate-600 font-bold text-right font-code rounded-lg shadow-sm focus:border-emerald-400 focus:outline-none ml-auto block"
+                          value={item.sellingPrice ?? 0}
+                          onChange={e => updateItem(item.rowId, "sellingPrice", e.target.value === "" ? "" : Number(e.target.value))}
+                          onKeyDown={e => handleCellKeyDown(e, index, 7)}
+                          onFocus={e => e.target.select()}
+                          title="Selling Price"
+                        />
+                      </TableCell>
+
+                      {/* Alert Level (minStock) - LAST COLUMN */}
                       <TableCell className="py-2.5 px-1 text-center">
                         <input
+                          id={`cell-${index}-8`}
                           type="number"
                           min={0}
                           style={{
@@ -1924,7 +2589,10 @@ export default function NewPurchasePage() {
                           }}
                           className="w-16 h-9 px-2 text-xs border-2 border-slate-600 font-bold text-center rounded-lg shadow-sm focus:border-cyan-400 focus:outline-none mx-auto block"
                           value={item.minStock ?? 2}
-                          onChange={e => updateItem(item.productId, "minStock", e.target.value === "" ? "" : Number(e.target.value))}
+                          onChange={e => updateItem(item.rowId, "minStock", e.target.value === "" ? "" : Number(e.target.value))}
+                          onKeyDown={e => handleCellKeyDown(e, index, 8)}
+                          onFocus={e => e.target.select()}
+                          title="Alert Level (Press Enter on last row to auto-create new row)"
                         />
                       </TableCell>
 
@@ -1938,7 +2606,7 @@ export default function NewPurchasePage() {
                         <Button
                           variant="ghost" size="icon"
                           className="h-8 w-8 text-destructive/40 hover:text-destructive hover:bg-destructive/10"
-                          onClick={() => removeItem(item.productId)}
+                          onClick={() => removeItem(item.rowId)}
                         >
                           <Trash2 className="w-4 h-4" />
                         </Button>
@@ -1948,7 +2616,7 @@ export default function NewPurchasePage() {
                 })}
                 {purchaseItems.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={11} className="h-72 text-center">
+                    <TableCell colSpan={12} className="h-72 text-center">
                       <div className="flex flex-col items-center justify-center opacity-30 gap-3">
                         <Package className="w-12 h-12" />
                         <div className="space-y-1">
@@ -1973,9 +2641,9 @@ export default function NewPurchasePage() {
                     <TableCell colSpan={2} className="py-3 px-1 text-right text-xs font-bold text-cyan-400 font-code">
                       +₹{totalTax.toLocaleString(undefined, { maximumFractionDigits: 2 })} GST
                     </TableCell>
-                    <TableCell colSpan={2} />
+                    <TableCell colSpan={3} />
                     <TableCell className="py-3 px-2 text-right font-code font-bold text-base text-accent">
-                      ₹{total.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      ₹{subTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                     </TableCell>
                     <TableCell />
                   </TableRow>
@@ -1997,7 +2665,7 @@ export default function NewPurchasePage() {
                   </span>
                   {selectedSupplier?.phone && (
                     <span className="text-xs text-accent font-semibold font-code">
-                      • 📞 {selectedSupplier.phone}
+                      • 📞 {selectedSupplier?.phone}
                     </span>
                   )}
                   <span className="text-[10px] text-muted-foreground font-code">
@@ -2022,9 +2690,47 @@ export default function NewPurchasePage() {
                 </div>
               </div>
 
-              {/* Right: Bill Total & Big Bottom Commit Entry Button */}
+              {/* Right: Discount, Round off, Bill Total & Commit Entry Button */}
               <div className="flex flex-wrap items-center justify-between sm:justify-end gap-4 sm:gap-6 pt-3 sm:pt-0 border-t sm:border-t-0 border-border/30">
-                <div className="text-left sm:text-right">
+                <div className="text-left sm:text-right space-y-1.5">
+                  <div className="flex flex-wrap items-center sm:justify-end gap-3">
+                    {/* Manual discount */}
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Discount ₹</span>
+                      <input
+                        type="number"
+                        min={0}
+                        step="any"
+                        placeholder="0"
+                        value={discountInput}
+                        onChange={e => setDiscountInput(e.target.value)}
+                        disabled={currentBillIndex !== -1}
+                        style={{ color: '#f87171', backgroundColor: '#0f172a', WebkitTextFillColor: '#f87171' }}
+                        className="w-24 h-8 px-2 text-xs border-2 border-slate-600 font-bold text-right font-code rounded-lg focus:border-red-400 focus:outline-none"
+                      />
+                    </div>
+
+                    {/* Round off tick box */}
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={roundOffEnabled}
+                        onChange={e => setRoundOffEnabled(e.target.checked)}
+                        className="w-3.5 h-3.5 accent-accent cursor-pointer"
+                      />
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Round off</span>
+                    </label>
+                  </div>
+
+                  {/* Breakdown line, shown only when discount or round off is used */}
+                  {(discountAmt > 0 || roundOffEnabled) && (
+                    <p className="text-[10px] font-code text-muted-foreground">
+                      Sub ₹{subTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      {discountAmt > 0 && <> • Disc −₹{discountAmt.toLocaleString(undefined, { maximumFractionDigits: 2 })}</>}
+                      {roundOffEnabled && <> • Round off {roundOffAmt >= 0 ? "+" : "−"}₹{Math.abs(roundOffAmt).toFixed(2)}</>}
+                    </p>
+                  )}
+
                   <p className="text-[10px] uppercase font-bold tracking-widest text-muted-foreground">Bill Total</p>
                   <p className="text-2xl sm:text-3xl font-code font-bold text-accent">₹{total.toLocaleString()}</p>
                 </div>
@@ -2055,11 +2761,11 @@ export default function NewPurchasePage() {
                           type="button"
                           onClick={handleComplete}
                           className={`font-bold px-6 sm:px-8 rounded-xl shadow-lg h-11 text-sm sm:text-base transition-all ${
-                            purchaseItems.length === 0 || !selectedSupplier
+                            purchaseItems.length === 0
                               ? "bg-muted text-muted-foreground border border-red-500/50 cursor-not-allowed opacity-60"
                               : "bg-accent text-accent-foreground shadow-accent/25 hover:brightness-110"
                           }`}
-                          disabled={purchaseItems.length === 0 || !selectedSupplier || isSubmitting}
+                          disabled={purchaseItems.length === 0 || isSubmitting}
                         >
                           {isSubmitting ? (
                             <Loader2 className="w-5 h-5 animate-spin mr-2" />
@@ -2071,19 +2777,19 @@ export default function NewPurchasePage() {
                       </>
                     )}
                   </div>
-                  {/* Red validation hints when Commit Entry is disabled */}
-                  {currentBillIndex === -1 && (purchaseItems.length === 0 || !selectedSupplier) && (
+                  {/* Validation and helper hints */}
+                  {currentBillIndex === -1 && (
                     <div className="flex flex-col items-end gap-0.5">
-                      {!selectedSupplier && (
-                        <p className="text-[11px] font-semibold text-red-400 flex items-center gap-1">
-                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-                          Select a supplier first
-                        </p>
-                      )}
                       {purchaseItems.length === 0 && (
                         <p className="text-[11px] font-semibold text-red-400 flex items-center gap-1">
                           <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
                           Add at least one product
+                        </p>
+                      )}
+                      {purchaseItems.length > 0 && !selectedSupplier && (
+                        <p className="text-[10px] font-semibold text-amber-400/90 flex items-center gap-1">
+                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400" />
+                          No supplier selected — will save as Cash / Direct Purchase
                         </p>
                       )}
                     </div>

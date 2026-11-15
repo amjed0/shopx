@@ -1,6 +1,6 @@
 import { Card, CardContent } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
-import { LucideIcon, Eye, EyeOff } from "lucide-react"
+import { LucideIcon, Eye, EyeOff, ArrowUpRight } from "lucide-react"
 
 interface StatCardProps {
   title: string
@@ -15,6 +15,7 @@ interface StatCardProps {
   isHidden?: boolean
   showEyeToggle?: boolean
   onToggleHide?: () => void
+  onClick?: () => void
 }
 
 export function StatCard({
@@ -27,14 +28,35 @@ export function StatCard({
   isHidden = false,
   showEyeToggle = false,
   onToggleHide,
+  onClick,
 }: StatCardProps) {
   return (
-    <Card className="overflow-hidden border-none bg-card shadow-sm hover:shadow-md transition-all duration-300 group">
+    <Card
+      onClick={onClick}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={
+        onClick
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault()
+                onClick()
+              }
+            }
+          : undefined
+      }
+      className={cn(
+        "overflow-hidden border border-border/50 bg-card shadow-sm transition-all duration-300 group",
+        onClick
+          ? "cursor-pointer hover:border-primary/50 hover:shadow-lg hover:-translate-y-1 active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          : "hover:shadow-md"
+      )}
+    >
       <CardContent className="p-4 sm:p-6">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 mb-1">
-              <p className="text-xs sm:text-sm font-medium text-muted-foreground uppercase tracking-wider truncate">
+              <p className="text-xs sm:text-sm font-medium text-muted-foreground uppercase tracking-wider truncate group-hover:text-foreground transition-colors">
                 {title}
               </p>
               {showEyeToggle && onToggleHide && (
@@ -84,11 +106,18 @@ export function StatCard({
             {description && !trend && (
               <p className="text-[10px] sm:text-xs text-muted-foreground mt-2 truncate">{description}</p>
             )}
+
+            {onClick && (
+              <div className="flex items-center gap-1 mt-2.5 text-[10px] sm:text-xs font-bold text-muted-foreground group-hover:text-primary transition-colors">
+                <span>View details</span>
+                <ArrowUpRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+              </div>
+            )}
           </div>
 
           <div
             className={cn(
-              "p-2.5 sm:p-3 rounded-xl transition-colors group-hover:bg-primary/20 shrink-0",
+              "p-2.5 sm:p-3 rounded-xl transition-all group-hover:scale-110 group-hover:bg-primary/20 shrink-0",
               colorClass || "bg-secondary text-primary"
             )}
           >

@@ -16,6 +16,7 @@ import {
   ChevronDown,
   ChevronUp,
   Receipt,
+  ShoppingBag,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -238,7 +239,27 @@ export default function SalesReturnPage() {
             <p className="text-xs sm:text-sm text-muted-foreground">Process product returns and restock inventory.</p>
           </div>
         </div>
-        <div className="flex gap-2 sm:shrink-0 ml-11 sm:ml-0">
+        <div className="flex flex-wrap items-center gap-2 sm:shrink-0 ml-11 sm:ml-0">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => router.push("/sales/sales-history")}
+            className="h-8 sm:h-9 px-3 text-xs font-bold gap-1.5 rounded-xl border-border/60 hover:bg-secondary/60 hover:text-accent shadow-sm"
+          >
+            <Receipt className="w-4 h-4 text-accent" />
+            <span>History</span>
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => router.push("/sales/new")}
+            className="h-8 sm:h-9 px-3 text-xs font-bold gap-1.5 rounded-xl border-border/60 hover:bg-secondary/60 hover:text-accent shadow-sm"
+          >
+            <ShoppingBag className="w-4 h-4 text-accent" />
+            <span>New Bill</span>
+          </Button>
           <Button
             variant="outline"
             className="rounded-xl font-bold uppercase tracking-wider text-[10px] h-8 sm:h-9"

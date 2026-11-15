@@ -1,4 +1,4 @@
-import mongoose, { Schema, model, models } from 'mongoose';
+import mongoose, { Schema } from 'mongoose';
 
 const NoteSubSchema = new Schema(
   {
@@ -22,6 +22,7 @@ const ProductSchema = new Schema(
     supplierId: { type: String, default: '' },
     supplierName: { type: String, default: '' },
     purchasePrice: { type: Number, required: true },
+    mrp: { type: Number, default: 0 },            // NEW: printed MRP from supplier bill
     sellingPrice: { type: Number, required: true },
     stock: { type: Number, required: true },
     minStock: { type: Number, required: true },

@@ -16,6 +16,7 @@ export async function GET(request: Request) {
     });
     return NextResponse.json(formatted);
   } catch (error: any) {
+    console.error('GET /api/suppliers error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
@@ -27,17 +28,49 @@ export async function POST(request: Request) {
     if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
     const data = await request.json();
+    console.log('Supplier payload:', data);
+
+    // Remove client-sent ids so Mongoose generates a fresh _id
+    const { id, _id, ...rest } = data;
+
+    const name = typeof rest.name === 'string' ? rest.name.trim() : '';
+    if (!name) {
+      return NextResponse.json({ error: 'Supplier name is required' }, { status: 400 });
+    }
+
     const newSupplier = new Supplier({
-      ...data,
+      ...rest,
+      name,
+      // Invoices rarely contain a contact person, so fall back to the supplier name
+      contactPerson:
+        typeof rest.contactPerson === 'string' && rest.contactPerson.trim()
+          ? rest.contactPerson.trim()
+          : name,
+      phone: typeof rest.phone === 'string' ? rest.phone.trim() : '',
       userId,
-      createdAt: new Date().toISOString(),
+      
     });
+
     await newSupplier.save();
+
     const obj = newSupplier.toObject();
-    const { _id, ...rest } = obj;
-    return NextResponse.json({ id: _id.toString(), ...rest }, { status: 201 });
+    const { _id: savedId, ...savedRest } = obj;
+    return NextResponse.json({ id: savedId.toString(), ...savedRest }, { status: 201 });
   } catch (error: any) {
+    console.error('POST /api/suppliers error:', error);
+
+    if (error.name === 'ValidationError') {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyPattern || {})[0] || 'field';
+      return NextResponse.json(
+        { error: `Supplier with this ${field} already exists` },
+        { status: 409 }
+      );
+    }
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

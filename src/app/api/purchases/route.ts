@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
+import mongoose from 'mongoose';
 import dbConnect from '../../../../lib/mongodb';
 import Product from '../../../../models/Product';
 import Purchase from '../../../../models/Purchase';
+import Supplier from '../../../../models/Supplier';
 
 export async function GET(request: Request) {
   try {
@@ -44,16 +46,60 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { supplierId, productId, productName, itemCode, quantity, purchasePrice, taxRate, taxAmount, billingDate } = body;
+    let { supplierId, productId, productName, itemCode, quantity, purchasePrice, taxRate, taxAmount, billingDate } = body;
+
+    // Handle missing or invalid supplier gracefully by linking to or creating a default supplier
+    if (!supplierId || supplierId === 'undefined' || supplierId === 'null') {
+      let defaultSupplier = await Supplier.findOne({ userId, name: 'Cash / Direct Purchase' });
+      if (!defaultSupplier) {
+        defaultSupplier = await Supplier.create({
+          userId,
+          name: 'Cash / Direct Purchase',
+          contactPerson: 'Counter',
+          phone: '',
+          email: '',
+          address: '',
+        });
+      }
+      supplierId = defaultSupplier._id.toString();
+    }
+
+    const cleanName = productName && String(productName).trim() ? String(productName).trim() : 'Unnamed Item';
+    const qty = Math.max(1, Number(quantity) || 1);
+    const cost = Math.max(0, Number(purchasePrice) || 0);
+
+    // If productId is missing, temporary, or not a valid ObjectId, find or create the product in MongoDB Atlas
+    let finalProductId = productId ? String(productId) : '';
+    if (!finalProductId || finalProductId.startsWith('temp-') || finalProductId.startsWith('past-') || !mongoose.Types.ObjectId.isValid(finalProductId)) {
+      let prod = await Product.findOne({ userId, name: cleanName });
+      if (!prod && itemCode) {
+        prod = await Product.findOne({ userId, sku: String(itemCode).trim() });
+      }
+      if (!prod) {
+        prod = await Product.create({
+          userId,
+          name: cleanName,
+          sku: itemCode ? String(itemCode).trim() : `SX-${Math.floor(1000 + Math.random() * 9000)}`,
+          category: 'General',
+          purchasePrice: cost,
+          sellingPrice: Math.round(cost * 1.25),
+          mrp: 0,
+          stock: qty,
+          minStock: 2,
+          supplierId: String(supplierId),
+        });
+      }
+      finalProductId = prod._id.toString();
+    }
 
     const purchase = await Purchase.create({
       userId,
-      supplierId,
-      productId,
-      productName,
-      itemCode,
-      quantity,
-      purchasePrice,
+      supplierId: String(supplierId),
+      productId: finalProductId,
+      productName: cleanName,
+      itemCode: itemCode ? String(itemCode).trim() : '',
+      quantity: qty,
+      purchasePrice: cost,
       taxRate: Number(taxRate) || 0,
       taxAmount: Number(taxAmount) || 0,
       billingDate: billingDate || new Date().toISOString().split('T')[0],
@@ -63,7 +109,7 @@ export async function POST(request: Request) {
     obj.id = obj._id.toString();
     delete obj._id;
 
-    return NextResponse.json(obj);
+    return NextResponse.json(obj, { status: 201 });
   } catch (error: any) {
     console.error(error);
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -80,7 +126,7 @@ export async function PATCH(request: Request) {
     }
 
     const body = await request.json();
-    const { productId, quantity, purchasePrice, supplierId, sellingPrice, billingDate } = body;
+    const { productId, quantity, purchasePrice, supplierId, sellingPrice, mrp, billingDate } = body;
 
     if (!productId) {
       return NextResponse.json({ error: 'Product ID is required' }, { status: 400 });
@@ -100,6 +146,9 @@ export async function PATCH(request: Request) {
     }
     if (sellingPrice !== undefined && Number(sellingPrice) > 0) {
       product.sellingPrice = Number(sellingPrice);
+    }
+    if (mrp !== undefined && Number(mrp) > 0) {
+      product.set('mrp', Number(mrp));
     }
     await product.save();
 

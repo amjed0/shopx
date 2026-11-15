@@ -1,5 +1,12 @@
 import { NextResponse } from 'next/server';
 
+const round2 = (n: number) => Number(n.toFixed(2));
+
+const MONTHS: Record<string, string> = {
+  jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+  jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
+};
+
 // Helper to normalize any date string to YYYY-MM-DD
 function normalizeToISODate(dateStr: any): string | null {
   if (!dateStr || typeof dateStr !== 'string') return null;
@@ -9,22 +16,23 @@ function normalizeToISODate(dateStr: any): string | null {
   // Already YYYY-MM-DD
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
 
+  // DD/Mon/YY or DD-Mon-YYYY (example: 12/Nov/26)
+  const dMonY = s.match(/^(\d{1,2})[\s\/\-\.]*([A-Za-z]{3})[a-z]*[\s\/\-\.,]*(\d{2,4})$/);
+  if (dMonY && MONTHS[dMonY[2].toLowerCase()]) {
+    const year = dMonY[3].length === 2 ? '20' + dMonY[3] : dMonY[3];
+    return `${year}-${MONTHS[dMonY[2].toLowerCase()]}-${dMonY[1].padStart(2, '0')}`;
+  }
+
   // DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
   const dmyMatch = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
   if (dmyMatch) {
-    const day = dmyMatch[1].padStart(2, '0');
-    const month = dmyMatch[2].padStart(2, '0');
-    const year = dmyMatch[3];
-    return `${year}-${month}-${day}`;
+    return `${dmyMatch[3]}-${dmyMatch[2].padStart(2, '0')}-${dmyMatch[1].padStart(2, '0')}`;
   }
 
   // DD/MM/YY or DD-MM-YY
   const dmyShortMatch = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2})$/);
   if (dmyShortMatch) {
-    const day = dmyShortMatch[1].padStart(2, '0');
-    const month = dmyShortMatch[2].padStart(2, '0');
-    const year = '20' + dmyShortMatch[3];
-    return `${year}-${month}-${day}`;
+    return `20${dmyShortMatch[3]}-${dmyShortMatch[2].padStart(2, '0')}-${dmyShortMatch[1].padStart(2, '0')}`;
   }
 
   // YYYY/MM/DD
@@ -50,7 +58,6 @@ function normalizeCategoryName(rawCat: string, existingList?: string[]): string 
 
   const lower = cat.toLowerCase();
 
-  // Handle common plural words by removing trailing 's' / 'es' / 'ies'
   let singular = cat;
   if (lower.endsWith('ies') && lower.length > 4) {
     singular = cat.slice(0, -3) + 'y';
@@ -60,23 +67,19 @@ function normalizeCategoryName(rawCat: string, existingList?: string[]): string 
     singular = cat.slice(0, -1);
   }
 
-  // Capitalize first letter of each word (Title Case)
   singular = singular
     .split(/\s+/)
     .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
     .join(' ');
 
-  // Match against existing categories if provided
   if (existingList && Array.isArray(existingList) && existingList.length > 0) {
     const clean = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
     const targetNorm = clean(singular);
     const rawNorm = clean(cat);
 
-    // 1. Exact match
     const exact = existingList.find(e => clean(e) === targetNorm || clean(e) === rawNorm);
     if (exact) return exact;
 
-    // 2. Singular stem match (e.g. existing "Fragrance" matches "Fragrances")
     const stemMatch = existingList.find(e => {
       const eNorm = clean(e);
       return (eNorm.length >= 4 && targetNorm.includes(eNorm)) || (targetNorm.length >= 4 && eNorm.includes(targetNorm));
@@ -90,29 +93,24 @@ function normalizeCategoryName(rawCat: string, existingList?: string[]): string 
 // Robust JSON repair parser for complete or truncated Gemini responses
 function repairAndParseGeminiJson(rawText: string): any {
   let text = (rawText || '').trim();
-  // Strip markdown code fences if present
   text = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
 
-  // 1. Direct parse attempt
   try {
     return JSON.parse(text);
   } catch (err1) {
-    // Continue with repair attempts
+    // continue with repair attempts
   }
 
-  // 2. If it truncated inside a string value (e.g. `"category": "Personal`), try closing quotes and braces
   const quoteCount = (text.match(/(?<!\\)"/g) || []).length;
   if (quoteCount % 2 !== 0) {
-    // Odd number of quotes: close open string and wrap up JSON
     const withClosedQuote = text + '"\n  }\n  ]\n}';
     try {
       return JSON.parse(withClosedQuote);
     } catch {
-      // Continue
+      // continue
     }
   }
 
-  // 3. Try wrapping up assuming unclosed objects and arrays
   const closingCombinations = [
     '\n  }\n  ]\n}',
     '\n  ]\n}',
@@ -123,15 +121,13 @@ function repairAndParseGeminiJson(rawText: string): any {
     try {
       return JSON.parse(text + ending);
     } catch {
-      // Continue
+      // continue
     }
   }
 
-  // 4. Truncate back to the last completely closed object '}' inside items array
   const lastCloseBrace = text.lastIndexOf('}');
   if (lastCloseBrace > 0) {
     let truncated = text.substring(0, lastCloseBrace + 1);
-    // Remove any trailing commas
     truncated = truncated.replace(/,\s*$/, '');
     if (!truncated.includes(']')) {
       truncated += '\n  ]\n}';
@@ -141,11 +137,10 @@ function repairAndParseGeminiJson(rawText: string): any {
     try {
       return JSON.parse(truncated);
     } catch {
-      // Continue
+      // continue
     }
   }
 
-  // 5. Fallback: Extract every complete { ... } item block using regex
   const items: any[] = [];
   const objectRegex = /\{[^{}]*"name"\s*:\s*"[^"]+"[^{}]*\}/g;
   let match;
@@ -156,11 +151,10 @@ function repairAndParseGeminiJson(rawText: string): any {
         items.push(obj);
       }
     } catch {
-      // Ignore individual corrupted objects
+      // ignore corrupted objects
     }
   }
 
-  // Extract top-level scalar fields
   const extractString = (field: string) => {
     const reg = new RegExp(`"${field}"\\s*:\\s*"([^"]+)"`);
     const m = text.match(reg);
@@ -210,68 +204,82 @@ export async function POST(request: Request) {
       );
     }
 
-    // Clean up base64 — remove data URL prefix if present
     const base64Data = image.replace(/^data:[^;]+;base64,/, '');
 
     const existingCatListStr = Array.isArray(existingCategories) && existingCategories.length > 0
       ? `\nEXISTING CATEGORIES IN STORE (MUST PRIORITIZE MATCHING TO THESE IF RELEVANT):\n${existingCategories.slice(0, 40).join(', ')}\n`
       : '';
 
-    const prompt = `You are an expert invoice/bill parser. Analyze this purchase invoice/bill image and extract ALL product items listed.
+    const prompt = `You are an expert purchase invoice/bill parser. Analyze this purchase invoice/bill image and extract ALL product items listed in the table.
 
-For EACH product item found, extract:
-- "serialNumber": The row number, serial number (#1, #2, etc., or integer 1, 2...) from the bill. Null if not numbered.
-- "name": Product name (as written on the bill)
-- "itemCode": Item Code, SKU, Product Code, HSN code, or Part No if printed on the bill (null if not shown)
-- "quantity": Number of units purchased (default to 1 if not clear)
-- "purchasePrice": Price per unit in INR (before tax or unit cost)
-- "taxRate": GST percentage rate if shown (e.g. 18, 12, 5, 0; null if not specified)
-- "taxAmount": Total GST/tax amount for this item (null if not shown)
-- "sellingPrice": MRP or retail selling price per unit if visible (null if not shown)
-- "category": Accurate category based on product type.
+IMPORTANT INVOICE STRUCTURE & EXTRACTION RULES:
+1. EVERY ROW IS AN INDEPENDENT PRODUCT:
+   - On hardware, plumbing, electrical, retail and grocery invoices, different sizes, dimensions, or variations (e.g. "110 MM", "75 MM", "63MM", "50 MM", "1/2 inch", "1 inch") are COMPLETELY DIFFERENT PRODUCTS.
+   - You MUST extract EACH row as its own separate item in the "items" array!
+   - NEVER combine or merge items with different names, sizes, or rates into one item!
+
+2. MULTI-LINE / WRAPPED PRODUCT NAMES:
+   - In table rows, product descriptions often wrap onto a second or third line (e.g. Line 1: "STAR VENT COWL (H) 110 MM", Line 2: "WITH SS NET").
+   - You MUST concatenate the wrapped lines into the full complete product name: "STAR VENT COWL (H) 110 MM WITH SS NET".
+   - Do NOT drop the wrapped continuation lines!
+
+3. HSN CODE IS NOT AN ITEM CODE:
+   - HSN / SAC Code (e.g. "39174000") is a tax classification number shared by all products in that tax category.
+   - Extract it into "hsnCode".
+   - Do NOT put HSN code into "itemCode"!
+   - "itemCode": ONLY for a specific product SKU / Part No / Catalog No if printed. If there is no specific item code, return null.
+
+4. PRICES & QUANTITY (CRITICAL ACCURACY):
+   - "quantity": Number of units purchased (number only, default 1).
+   - "mrp": Printed MRP per unit if present in an "MRP" column. Null if not shown.
+   - "discountPercent": Line discount percentage if present.
+   - "taxableAmount": Line taxable amount (the amount AFTER discount and BEFORE GST).
+   - "purchasePrice": Real cost per ONE unit after discount and before GST. Calculate as: taxableAmount / quantity. If no taxable column, use unit rate after discount. NEVER use gross MRP as purchasePrice when a discount or taxable amount is given!
+   - "taxRate": GST percentage for the line (e.g. 18, 12, 5, 0; if CGST 9% + SGST 9%, sum to 18).
+   - "taxAmount": Total GST amount for the line (CGST + SGST).
+   - "category": Accurate single-category name based on product type.
 
 ${existingCatListStr}
 
-CRITICAL RULES:
-1. CATEGORY NORMALIZATION:
-   - Always use standard SINGULAR categories (e.g. use "Fragrance" NEVER "Fragrances", use "Perfume" NEVER "Perfumes", use "Plumbing" NEVER "Plumbings", use "Cosmetic" NEVER "Cosmetics", "Beverage" NEVER "Beverages", "Toy" NEVER "Toys").
-   - NEVER add a trailing plural 's' or 'es' to category names.
+5. CATEGORY NORMALIZATION:
+   - Always use standard SINGULAR categories (e.g. "Plumbing", "Hardware", "Electrical", "Paint", "Grocery").
    - If an existing store category fits, use that EXACT category name!
-2. DEDUPLICATION (# SERIAL NUMBER & PRODUCT):
-   - Each product line must appear ONLY ONCE in the items list. Check serial numbers (#) and names.
-   - Do NOT output duplicate rows for the same product. If a product is listed multiple times, combine its total quantity into a single line item.
-3. INVOICE DATE:
-   - Extract the exact bill/invoice date printed on the bill.
-   - Format it strictly as YYYY-MM-DD (e.g. "2026-11-12"). If year is 2 digits like 26, convert to 2026.
-4. SUPPLIER GST NUMBER:
-   - Extract the supplier's GSTIN / GST Number (e.g. 15-character Indian GST format like "32AAAAA0000A1Z5") if printed on the invoice into "supplierGst".
-5. OUTPUT PURE JSON:
-   - Return valid JSON only, no markdown formatting.
 
-Return JSON in this format:
+6. INVOICE DATE:
+   - Extract the exact bill date printed on the bill.
+   - Format strictly as YYYY-MM-DD (e.g. "12/Nov/26" -> "2026-11-12").
+
+7. SUPPLIER:
+   - The supplier is the company that ISSUED the bill (at the top header), NOT the "Bill to" or "Delivery to" customer.
+   - Extract supplier name, GSTIN (15 characters), phone, email, and address.
+
+Return valid JSON strictly in this format:
 {
   "items": [
     {
       "serialNumber": 1,
-      "name": "Product Name",
-      "itemCode": "ITM-001 or SKU or null",
-      "quantity": 1,
-      "purchasePrice": 100,
+      "name": "STAR VENT COWL (H) 110 MM WITH SS NET",
+      "hsnCode": "39174000",
+      "itemCode": null,
+      "quantity": 5,
+      "mrp": 168.21,
+      "discountPercent": 61.74,
+      "taxableAmount": 321.75,
+      "purchasePrice": 64.35,
       "taxRate": 18,
-      "taxAmount": 18,
-      "sellingPrice": 150,
-      "category": "Fragrance"
+      "taxAmount": 57.92,
+      "category": "Plumbing"
     }
   ],
-  "supplierName": "Vendor Name or null",
-  "supplierGst": "32AAAAA0000A1Z5 or null",
-  "supplierPhone": "9876543210 or null",
-  "supplierEmail": "email@example.com or null",
-  "supplierAddress": "Full address or null",
-  "supplierContactPerson": "Contact name or null",
-  "invoiceNumber": "INV-001 or null",
-  "invoiceDate": "2026-11-12 or null",
-  "totalAmount": 1500
+  "supplierName": "CRESCENT HARDWARE AND STEELS",
+  "supplierGst": "32AFTPA2649M1Z7",
+  "supplierPhone": "8594000215",
+  "supplierEmail": "crescentchelari@gmail.com",
+  "supplierAddress": "10/178B, PANAMBRA, THENHIPPALAM (PO), PANAMBRA 673636",
+  "supplierContactPerson": null,
+  "invoiceNumber": "PWB5998",
+  "invoiceDate": "2026-11-12",
+  "totalAmount": 1193.00
 }`;
 
     const geminiBody: any = {
@@ -290,13 +298,11 @@ Return JSON in this format:
       ],
       generationConfig: {
         temperature: 0.1,
-        maxOutputTokens: 16384, // 16k tokens allows large invoices with 50+ line items without truncation
+        maxOutputTokens: 16384,
         responseMimeType: 'application/json',
       },
     };
 
-    // Resilient Multi-Model Fallback:
-    // If a model has a 503 high-demand spike or 429 rate limit, automatically try the next model!
     const preferredModel = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
     const modelsToTry = Array.from(new Set([
       preferredModel,
@@ -329,7 +335,6 @@ Return JSON in this format:
           console.warn(`[Invoice Extract] Model ${model} returned error (${geminiRes.status}):`, errText);
           lastError = errText;
           if (geminiRes.status === 503 || geminiRes.status === 429 || geminiRes.status === 500) {
-            // High demand or temporary error — wait 500ms and try fallback model
             await new Promise(r => setTimeout(r, 500));
             continue;
           }
@@ -367,43 +372,78 @@ Return JSON in this format:
     for (const raw of rawItems) {
       const name = String(raw.name || 'Product').trim();
       const itemCode = raw.itemCode ? String(raw.itemCode).trim() : (raw.sku ? String(raw.sku).trim() : null);
+      const hsnCode = raw.hsnCode ? String(raw.hsnCode).trim() : null;
       const serialNumber = raw.serialNumber !== undefined && raw.serialNumber !== null ? String(raw.serialNumber).trim() : null;
       const quantity = Math.max(1, Number(raw.quantity) || 1);
-      const purchasePrice = Math.max(0, Number(raw.purchasePrice) || 0);
-      const sellingPrice = raw.sellingPrice ? Math.max(0, Number(raw.sellingPrice)) : null;
       const category = normalizeCategoryName(String(raw.category || 'General'), existingCategories);
 
-      // Deduplication Key: serialNumber if present, else itemCode, else lowercased name
-      const dedupKey = serialNumber
-        ? `sn_${serialNumber}`
-        : itemCode
-        ? `code_${itemCode.toLowerCase()}`
-        : `name_${name.toLowerCase()}`;
+      const mrp = Math.max(0, Number(raw.mrp) || 0);
+      const discountPercent = Math.max(0, Number(raw.discountPercent) || 0);
+      const taxableAmount = Math.max(0, Number(raw.taxableAmount) || 0);
+      let purchasePrice = Math.max(0, Number(raw.purchasePrice) || 0);
 
-      const taxRate = raw.taxRate !== undefined && raw.taxRate !== null ? Number(raw.taxRate) : 0;
-      const taxAmount = raw.taxAmount !== undefined && raw.taxAmount !== null ? Number(raw.taxAmount) : 0;
+      // Cost per piece: taxable amount / qty is the most reliable value on the bill
+      if (taxableAmount > 0) {
+        purchasePrice = round2(taxableAmount / quantity);
+      } else if (mrp > 0 && discountPercent > 0 && (purchasePrice === 0 || purchasePrice === mrp)) {
+        // Safety net: AI returned MRP as cost but a discount % exists
+        purchasePrice = round2(mrp * (1 - discountPercent / 100));
+      }
 
+      const taxRate = raw.taxRate !== undefined && raw.taxRate !== null ? Number(raw.taxRate) || 0 : 0;
+      let taxAmount = raw.taxAmount !== undefined && raw.taxAmount !== null ? Number(raw.taxAmount) || 0 : 0;
+      if (taxRate > 0 && taxAmount === 0) {
+        taxAmount = round2((quantity * purchasePrice * taxRate) / 100);
+      }
+
+      const cleanName = (name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const cleanCode = itemCode ? itemCode.toLowerCase().trim() : '';
+
+      // Deduplicate only when products are truly the same:
+      // Product name (with size/dimension) MUST match. Different sizes (110 MM vs 75 MM) are NEVER merged!
+      const dedupKey = cleanCode ? `${cleanName}__${cleanCode}` : (cleanName || `item_${serialNumber || Math.random()}`);
+      let matchedObj: any = null;
       if (seenMap.has(dedupKey)) {
-        // Already seen this product/serial item: merge quantity instead of duplicating!
-        const existing = seenMap.get(dedupKey);
-        existing.quantity += quantity;
-        if (taxAmount > 0) existing.taxAmount = (existing.taxAmount || 0) + taxAmount;
+        matchedObj = seenMap.get(dedupKey);
+      }
+
+      if (matchedObj) {
+        matchedObj.quantity += quantity;
+        matchedObj.taxAmount = round2((matchedObj.taxAmount || 0) + taxAmount);
+        matchedObj.taxableAmount = round2((matchedObj.taxableAmount || 0) + taxableAmount);
+        if (matchedObj.taxableAmount > 0 && matchedObj.quantity > 0) {
+          matchedObj.purchasePrice = round2(matchedObj.taxableAmount / matchedObj.quantity);
+        }
+        if (mrp > 0 && (!matchedObj.mrp || mrp > matchedObj.mrp)) {
+          matchedObj.mrp = mrp;
+        }
+        if (!matchedObj.itemCode && itemCode) {
+          matchedObj.itemCode = itemCode;
+        }
+        if (!matchedObj.hsnCode && hsnCode) {
+          matchedObj.hsnCode = hsnCode;
+        }
       } else {
-        seenMap.set(dedupKey, {
+        const itemObj = {
           serialNumber,
           name,
           itemCode,
+          hsnCode,
           quantity,
           purchasePrice,
           taxRate,
           taxAmount,
-          sellingPrice,
+          mrp,
+          taxableAmount,
+          discountPercent,
+          sellingPrice: null,
           category,
-        });
+        };
+        seenMap.set(dedupKey, itemObj);
       }
     }
 
-    const items = Array.from(seenMap.values());
+    const items = Array.from(new Set(seenMap.values()));
     const invoiceDate = normalizeToISODate(parsed.invoiceDate);
 
     return NextResponse.json({

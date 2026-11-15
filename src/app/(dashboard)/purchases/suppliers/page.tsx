@@ -13,6 +13,8 @@ import {
   ArrowLeft,
   Building2,
   Users,
+  Receipt,
+  Plus,
   Download,
   FileText,
   FileSpreadsheet,
@@ -46,6 +48,7 @@ import {
 import { Label } from "@/components/ui/label"
 import { useRouter } from "next/navigation"
 import { useUser } from "@/app/auth/use-user"
+import { useShop } from "@/hooks/useShop"
 import { toast } from "@/hooks/use-toast"
 
 export interface Supplier {
@@ -61,6 +64,10 @@ export interface Supplier {
 export default function SuppliersPage() {
   const router = useRouter()
   const { user } = useUser()
+  const { data: shopData } = useShop(user?.uid)
+  const companyName = shopData?.companyName?.trim() || shopData?.ownerName?.trim() || "ShopX"
+  const companyContact = [shopData?.location, shopData?.phone].filter(Boolean).join(" • ")
+  const safeCompany = companyName.replace(/[^a-zA-Z0-9_-]/g, "_")
 
   // Guard against stale shortcut launches directly into suppliers page
   React.useEffect(() => {
@@ -257,18 +264,46 @@ export default function SuppliersPage() {
     link.setAttribute("download", `${filename}.csv`)
     document.body.appendChild(link)
     link.click()
-    document.body.removeChild(link)
-    URL.revokeObjectURL(url)
+
+    setTimeout(() => {
+      if (document.body.contains(link)) {
+        document.body.removeChild(link)
+      }
+      URL.revokeObjectURL(url)
+    }, 2000)
+
     toast({ title: "Excel / CSV Exported ✓", description: `Downloaded ${filename}.csv` })
   }
 
   const exportToGoogleSheets = (filename: string, headers: string[], rows: (string | number)[][]) => {
     exportToCSV(filename, headers, rows)
-    window.open("https://sheets.new", "_blank")
-    toast({
-      title: "Google Sheets Export ✓",
-      description: "Downloaded CSV and opened Google Sheets (use File -> Import -> Upload).",
-    })
+
+    try {
+      const tsvContent = [
+        headers.join("\t"),
+        ...rows.map(r => r.map(c => String(c ?? "").replace(/\t/g, " ").replace(/\r?\n/g, " ")).join("\t"))
+      ].join("\r\n")
+
+      if (typeof navigator !== "undefined" && navigator.clipboard) {
+        navigator.clipboard.writeText(tsvContent).then(() => {
+          toast({
+            title: "Data Copied for Google Sheets ✓",
+            description: "Opening Google Sheets... Just press Ctrl + V in cell A1 to paste your table immediately!",
+          })
+        }).catch(() => {
+          toast({
+            title: "Google Sheets Export ✓",
+            description: "Downloaded CSV file. In Google Sheets, click File -> Import -> Upload.",
+          })
+        })
+      }
+    } catch (err) {
+      console.warn("Clipboard copy failed:", err)
+      toast({
+        title: "Google Sheets Export ✓",
+        description: "Downloaded CSV and opened Google Sheets (use File -> Import -> Upload).",
+      })
+    }
   }
 
   // Pure JS PDF Blob generator fallback
@@ -348,7 +383,7 @@ export default function SuppliersPage() {
     }
 
     // Footer
-    stream += `BT /F1 8 Tf 0.6 0.6 0.6 rg ${margin} 25 Td (ShopX Elite Procurement System) Tj ET\n`
+    stream += `BT /F1 8 Tf 0.6 0.6 0.6 rg ${margin} 25 Td (${esc(companyName)} — Vendor Management) Tj ET\n`
 
     // Construct PDF structure
     const objects: string[] = []
@@ -473,13 +508,17 @@ export default function SuppliersPage() {
       s.address || "",
       s.createdAt ? new Date(s.createdAt).toLocaleDateString() : "",
     ])
+    const companyHeader = companyContact ? `${companyContact} • ` : ""
     setExportData({
-      title: "Vendor Directory",
-      subtitle: `Total ${filtered.length} suppliers registered in ShopX`,
-      filename: `Suppliers_Directory_${new Date().toISOString().split("T")[0]}`,
+      title: `${companyName} — Vendor Directory`,
+      subtitle: `${companyHeader}Total ${filtered.length} suppliers registered`,
+      filename: `${safeCompany}_Suppliers_${new Date().toISOString().split("T")[0]}`,
       headers,
       rows,
-      summary: [{ label: "Total Vendors", value: String(filtered.length) }],
+      summary: [
+        { label: "Company", value: companyName },
+        { label: "Total Vendors", value: String(filtered.length) }
+      ],
     })
     setIsExportOpen(true)
   }
@@ -497,13 +536,16 @@ export default function SuppliersPage() {
       `₹${((Number(p.quantity) || 1) * (Number(p.purchasePrice) || 0)).toLocaleString()}`,
     ])
 
+    const companyHeader = companyContact ? `${companyContact} • ` : ""
     setExportData({
-      title: `Purchase History — ${selectedSupplier.name}`,
-      subtitle: `Vendor: ${selectedSupplier.name} (📞 ${selectedSupplier.phone || "No phone"}) • ${dateLabel}`,
-      filename: `Purchases_${selectedSupplier.name.replace(/[^a-zA-Z0-9]/g, "_")}_${selectedDate === "ALL" ? "All" : selectedDate}`,
+      title: `${companyName} — Purchase History (${selectedSupplier.name})`,
+      subtitle: `${companyHeader}Vendor: ${selectedSupplier.name} (📞 ${selectedSupplier.phone || "No phone"}) • ${dateLabel}`,
+      filename: `${safeCompany}_Purchases_${selectedSupplier.name.replace(/[^a-zA-Z0-9]/g, "_")}_${selectedDate === "ALL" ? "All" : selectedDate}`,
       headers,
       rows,
       summary: [
+        { label: "Company", value: companyName },
+        { label: "Vendor", value: selectedSupplier.name },
         { label: "Total Products", value: String(displayedPurchases.length) },
         { label: "Total Quantity", value: String(historyTotalQty) },
         { label: "Total Spend", value: `₹${historyTotalSpend.toLocaleString()}` },
@@ -607,13 +649,39 @@ export default function SuppliersPage() {
           </div>
         </div>
 
-        <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
-          <DialogTrigger asChild>
-            <Button className="bg-accent text-accent-foreground gap-2 font-bold px-8 py-6 rounded-full shadow-lg shadow-accent/20">
-              <UserPlus className="w-5 h-5" />
-              Add Supplier
-            </Button>
-          </DialogTrigger>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* History Page Button */}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => router.push("/purchases/purchase-history")}
+            className="h-10 px-3 text-xs font-bold gap-1.5 rounded-xl border-border/60 hover:bg-secondary/60 hover:text-accent shadow-sm"
+          >
+            <Receipt className="w-4 h-4 text-accent" />
+            <span>History</span>
+          </Button>
+
+          {/* New Purchase Button */}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => router.push("/purchases/purchase-entry")}
+            className="h-10 px-3 text-xs font-bold gap-1.5 rounded-xl border-border/60 hover:bg-secondary/60 hover:text-accent shadow-sm"
+          >
+            <Plus className="w-4 h-4 text-accent" />
+            <span>New Purchase</span>
+          </Button>
+
+          {/* Add Supplier Button Dialog Trigger */}
+          <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
+            <DialogTrigger asChild>
+              <Button className="h-10 bg-accent text-accent-foreground gap-2 font-bold px-5 rounded-xl shadow-lg shadow-accent/20">
+                <UserPlus className="w-4 h-4" />
+                Add Supplier
+              </Button>
+            </DialogTrigger>
           <DialogContent>
             <form onSubmit={handleAdd}>
               <DialogHeader>
@@ -660,6 +728,7 @@ export default function SuppliersPage() {
             </form>
           </DialogContent>
         </Dialog>
+      </div>
 
         {/* Edit Supplier Dialog */}
         <Dialog open={isEditOpen} onOpenChange={(open) => {
@@ -1134,8 +1203,10 @@ export default function SuppliersPage() {
               </button>
 
               {/* Google Sheets */}
-              <button
-                type="button"
+              <a
+                href="https://sheets.new"
+                target="_blank"
+                rel="noopener noreferrer"
                 onClick={() => {
                   exportToGoogleSheets(exportData.filename, exportData.headers, exportData.rows)
                   setIsExportOpen(false)
@@ -1146,8 +1217,8 @@ export default function SuppliersPage() {
                   <ExternalLink className="w-6 h-6" />
                 </div>
                 <span className="text-xs font-bold text-foreground">Google Sheets</span>
-                <span className="text-[10px] text-muted-foreground mt-0.5">Open &amp; Import</span>
-              </button>
+                <span className="text-[10px] text-muted-foreground mt-0.5">Open &amp; Paste (Ctrl+V)</span>
+              </a>
             </div>
           )}
 

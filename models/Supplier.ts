@@ -3,8 +3,8 @@ import mongoose, { Schema, Document, Model } from 'mongoose';
 export interface ISupplier extends Document {
   userId: string;
   name: string;
-  contactPerson: string;
-  phone: string;
+  contactPerson?: string;
+  phone?: string;
   email?: string;
   address?: string;
   gstNumber?: string;
@@ -14,8 +14,9 @@ export interface ISupplier extends Document {
 const SupplierSchema = new Schema<ISupplier>({
   userId: { type: String, required: true, index: true },
   name: { type: String, required: true },
-  contactPerson: { type: String, required: true },
-  phone: { type: String, required: true },
+  // Not required: scanned invoices often don't contain these
+  contactPerson: { type: String, default: '' },
+  phone: { type: String, default: '' },
   email: { type: String },
   address: { type: String },
   gstNumber: { type: String },
