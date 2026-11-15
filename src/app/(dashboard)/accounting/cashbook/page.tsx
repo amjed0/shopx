@@ -1205,9 +1205,7 @@ export default function CashbookPage() {
             </div>
             <div className="min-w-0">
               <CardTitle className="text-base sm:text-lg font-bold">New Cashbook Sheet Entry</CardTitle>
-              <CardDescription className="text-xs text-muted-foreground">
-                Type new income or expense transactions below and click &quot;Save All Entries &amp; Clear&quot;.
-              </CardDescription>
+              
             </div>
           </div>
 
