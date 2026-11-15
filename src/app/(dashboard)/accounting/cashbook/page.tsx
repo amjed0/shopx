@@ -1011,192 +1011,7 @@ export default function CashbookPage() {
         </div>
       </div>
 
-      {/* ── PAST SAVED HISTORY TABLE (TOUCHING INCOME/EXPENSE BOX SHOWS FULL PAST DATA TABLE) ── */}
-      {isHistoryOpen && (
-        <div ref={historySectionRef} className="space-y-3 pt-1 animate-in fade-in duration-300">
-          <Card className="border-none bg-card shadow-sm overflow-hidden">
-            <CardHeader className="bg-secondary/20 border-b border-border/50 py-3.5 px-4 sm:px-6 flex flex-col md:flex-row md:items-center justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-2">
-                  {historyTypeFilter === "income" ? (
-                    <ArrowDownCircle className="w-5 h-5 text-emerald-500" />
-                  ) : historyTypeFilter === "expense" ? (
-                    <ArrowUpCircle className="w-5 h-5 text-rose-500" />
-                  ) : (
-                    <History className="w-5 h-5 text-primary" />
-                  )}
-                  <CardTitle className="text-base sm:text-lg font-bold">
-                    {historyTypeFilter === "income"
-                      ? `Past Saved Income History (${periodDisplayLabel})`
-                      : historyTypeFilter === "expense"
-                      ? `Past Saved Expense History (${periodDisplayLabel})`
-                      : `All Past Saved Transactions (${periodDisplayLabel})`}
-                  </CardTitle>
-                  <Badge variant="outline" className="text-xs font-mono font-bold">
-                    {displayedHistoryEntries.length} record(s)
-                  </Badge>
-                </div>
-                <CardDescription className="text-xs text-muted-foreground mt-0.5">
-                  Filtered by <strong>{periodDisplayLabel}</strong> • Click any card above to toggle Income, Expense, or All.
-                </CardDescription>
-              </div>
-
-              {/* Search + Filter switcher + Close button */}
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="inline-flex rounded-lg bg-secondary/50 p-0.5 text-xs font-semibold border border-border/40">
-                  <button
-                    type="button"
-                    onClick={() => setHistoryTypeFilter("all")}
-                    className={cn(
-                      "px-2.5 py-1 rounded-md text-[11px] transition-all",
-                      historyTypeFilter === "all" ? "bg-card shadow-sm text-foreground font-bold" : "text-muted-foreground"
-                    )}
-                  >
-                    All
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setHistoryTypeFilter("income")}
-                    className={cn(
-                      "px-2.5 py-1 rounded-md text-[11px] transition-all",
-                      historyTypeFilter === "income" ? "bg-card shadow-sm text-emerald-500 font-bold" : "text-muted-foreground"
-                    )}
-                  >
-                    Income
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setHistoryTypeFilter("expense")}
-                    className={cn(
-                      "px-2.5 py-1 rounded-md text-[11px] transition-all",
-                      historyTypeFilter === "expense" ? "bg-card shadow-sm text-rose-500 font-bold" : "text-muted-foreground"
-                    )}
-                  >
-                    Expense
-                  </button>
-                </div>
-
-                <div className="relative w-40 sm:w-48">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                  <Input
-                    placeholder="Search past records..."
-                    value={historySearchQuery}
-                    onChange={e => setHistorySearchQuery(e.target.value)}
-                    className="pl-8 bg-secondary/30 border-none rounded-xl text-xs h-8"
-                  />
-                </div>
-
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setIsHistoryOpen(false)}
-                  className="h-8 px-2 text-xs text-muted-foreground hover:text-foreground"
-                >
-                  <ChevronUp className="w-4 h-4 mr-1" /> Hide Table
-                </Button>
-              </div>
-            </CardHeader>
-
-            <CardContent className="p-0">
-              {loadingHistory ? (
-                <div className="flex justify-center items-center py-16 gap-2 text-muted-foreground text-xs">
-                  <Loader2 className="w-5 h-5 animate-spin text-primary" />
-                  <span>Loading past cashbook entries...</span>
-                </div>
-              ) : displayedHistoryEntries.length === 0 ? (
-                <div className="text-center py-16 text-muted-foreground text-xs space-y-1">
-                  <FileText className="w-8 h-8 mx-auto opacity-30 mb-2" />
-                  <p className="font-semibold">
-                    No {historyTypeFilter !== "all" ? historyTypeFilter : ""} entries found for {periodDisplayLabel}.
-                  </p>
-                  <p className="text-[11px] opacity-75">
-                    Entries saved in the cashbook sheet will appear here.
-                  </p>
-                </div>
-              ) : (
-                <div className="overflow-x-auto w-full max-h-[420px]">
-                  <Table className="min-w-[700px] w-full">
-                    <TableHeader className="bg-secondary/20 sticky top-0 z-10 backdrop-blur-sm">
-                      <TableRow className="border-border/40 hover:bg-transparent">
-                        <TableHead className="w-10 text-center text-[10px] font-bold uppercase py-2.5 pl-4">#</TableHead>
-                        <TableHead className="text-[10px] font-bold uppercase py-2.5">Date &amp; Time</TableHead>
-                        <TableHead className="text-[10px] font-bold uppercase py-2.5">Type</TableHead>
-                        <TableHead className="text-[10px] font-bold uppercase py-2.5">Category</TableHead>
-                        <TableHead className="text-[10px] font-bold uppercase py-2.5">Description</TableHead>
-                        <TableHead className="text-[10px] font-bold uppercase py-2.5">Payment Mode</TableHead>
-                        <TableHead className="text-[10px] font-bold uppercase py-2.5">Note</TableHead>
-                        <TableHead className="text-right text-[10px] font-bold uppercase py-2.5">Amount (₹)</TableHead>
-                        <TableHead className="w-10 text-center py-2.5 pr-4" />
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {displayedHistoryEntries.map((e, idx) => {
-                        const isInc = e.type === "income"
-                        return (
-                          <TableRow key={e.id} className="border-border/30 hover:bg-secondary/10 transition-colors">
-                            <TableCell className="text-center font-mono text-xs text-muted-foreground pl-4">
-                              {idx + 1}
-                            </TableCell>
-                            <TableCell className="text-xs text-muted-foreground font-mono whitespace-nowrap">
-                              {formatDateTime(e.createdAt)}
-                            </TableCell>
-                            <TableCell>
-                              <Badge
-                                variant="outline"
-                                className={cn(
-                                  "text-[9px] font-bold uppercase",
-                                  isInc
-                                    ? "border-emerald-500/30 text-emerald-500 bg-emerald-500/5"
-                                    : "border-rose-500/30 text-rose-500 bg-rose-500/5"
-                                )}
-                              >
-                                {isInc ? "Income" : "Expense"}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="text-xs font-semibold text-foreground whitespace-nowrap">
-                              {e.category}
-                            </TableCell>
-                            <TableCell className="text-xs text-foreground max-w-xs truncate">
-                              {e.description}
-                            </TableCell>
-                            <TableCell>
-                              <Badge variant="outline" className="text-[10px] bg-secondary/30">
-                                {e.paymentMode || "Cash"}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="text-xs text-muted-foreground max-w-xs truncate">
-                              {e.note || "—"}
-                            </TableCell>
-                            <TableCell className="text-right font-mono font-bold text-xs whitespace-nowrap">
-                              <span className={isInc ? "text-emerald-500" : "text-rose-500"}>
-                                {isInc ? "+" : "-"}&nbsp;₹{Number(e.amount).toLocaleString()}
-                              </span>
-                            </TableCell>
-                            <TableCell className="text-center pr-4">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                                onClick={() => handleDeleteHistoryEntry(e.id, e.type)}
-                                title="Delete Entry"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        )
-                      })}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {/* ── CASHBOOK ENTRY SHEET (REDESIGNED RECORDER WITH CLEAR & SAVE BUTTON) ── */}
+ {/* ── CASHBOOK ENTRY SHEET (REDESIGNED RECORDER WITH CLEAR & SAVE BUTTON) ── */}
       <Card className="border-none bg-card shadow-xl overflow-hidden rounded-2xl">
         <CardHeader className="bg-secondary/20 border-b border-border/50 py-3.5 px-4 sm:px-6 flex flex-row items-center justify-between gap-3">
           <div className="flex items-center gap-2.5 min-w-0">
@@ -1480,6 +1295,195 @@ export default function CashbookPage() {
           </div>
         </CardContent>
       </Card>
+
+
+
+      {/* ── PAST SAVED HISTORY TABLE (TOUCHING INCOME/EXPENSE BOX SHOWS FULL PAST DATA TABLE) ── */}
+      {isHistoryOpen && (
+        <div ref={historySectionRef} className="space-y-3 pt-1 animate-in fade-in duration-300">
+          <Card className="border-none bg-card shadow-sm overflow-hidden">
+            <CardHeader className="bg-secondary/20 border-b border-border/50 py-3.5 px-4 sm:px-6 flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  {historyTypeFilter === "income" ? (
+                    <ArrowDownCircle className="w-5 h-5 text-emerald-500" />
+                  ) : historyTypeFilter === "expense" ? (
+                    <ArrowUpCircle className="w-5 h-5 text-rose-500" />
+                  ) : (
+                    <History className="w-5 h-5 text-primary" />
+                  )}
+                  <CardTitle className="text-base sm:text-lg font-bold">
+                    {historyTypeFilter === "income"
+                      ? `Past Saved Income History (${periodDisplayLabel})`
+                      : historyTypeFilter === "expense"
+                      ? `Past Saved Expense History (${periodDisplayLabel})`
+                      : `All Past Saved Transactions (${periodDisplayLabel})`}
+                  </CardTitle>
+                  <Badge variant="outline" className="text-xs font-mono font-bold">
+                    {displayedHistoryEntries.length} record(s)
+                  </Badge>
+                </div>
+                <CardDescription className="text-xs text-muted-foreground mt-0.5">
+                  Filtered by <strong>{periodDisplayLabel}</strong> • Click any card above to toggle Income, Expense, or All.
+                </CardDescription>
+              </div>
+
+              {/* Search + Filter switcher + Close button */}
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="inline-flex rounded-lg bg-secondary/50 p-0.5 text-xs font-semibold border border-border/40">
+                  <button
+                    type="button"
+                    onClick={() => setHistoryTypeFilter("all")}
+                    className={cn(
+                      "px-2.5 py-1 rounded-md text-[11px] transition-all",
+                      historyTypeFilter === "all" ? "bg-card shadow-sm text-foreground font-bold" : "text-muted-foreground"
+                    )}
+                  >
+                    All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setHistoryTypeFilter("income")}
+                    className={cn(
+                      "px-2.5 py-1 rounded-md text-[11px] transition-all",
+                      historyTypeFilter === "income" ? "bg-card shadow-sm text-emerald-500 font-bold" : "text-muted-foreground"
+                    )}
+                  >
+                    Income
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setHistoryTypeFilter("expense")}
+                    className={cn(
+                      "px-2.5 py-1 rounded-md text-[11px] transition-all",
+                      historyTypeFilter === "expense" ? "bg-card shadow-sm text-rose-500 font-bold" : "text-muted-foreground"
+                    )}
+                  >
+                    Expense
+                  </button>
+                </div>
+
+                <div className="relative w-40 sm:w-48">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                  <Input
+                    placeholder="Search past records..."
+                    value={historySearchQuery}
+                    onChange={e => setHistorySearchQuery(e.target.value)}
+                    className="pl-8 bg-secondary/30 border-none rounded-xl text-xs h-8"
+                  />
+                </div>
+
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setIsHistoryOpen(false)}
+                  className="h-8 px-2 text-xs text-muted-foreground hover:text-foreground"
+                >
+                  <ChevronUp className="w-4 h-4 mr-1" /> Hide Table
+                </Button>
+              </div>
+            </CardHeader>
+
+            <CardContent className="p-0">
+              {loadingHistory ? (
+                <div className="flex justify-center items-center py-16 gap-2 text-muted-foreground text-xs">
+                  <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                  <span>Loading past cashbook entries...</span>
+                </div>
+              ) : displayedHistoryEntries.length === 0 ? (
+                <div className="text-center py-16 text-muted-foreground text-xs space-y-1">
+                  <FileText className="w-8 h-8 mx-auto opacity-30 mb-2" />
+                  <p className="font-semibold">
+                    No {historyTypeFilter !== "all" ? historyTypeFilter : ""} entries found for {periodDisplayLabel}.
+                  </p>
+                  <p className="text-[11px] opacity-75">
+                    Entries saved in the cashbook sheet will appear here.
+                  </p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto w-full max-h-[420px]">
+                  <Table className="min-w-[700px] w-full">
+                    <TableHeader className="bg-secondary/20 sticky top-0 z-10 backdrop-blur-sm">
+                      <TableRow className="border-border/40 hover:bg-transparent">
+                        <TableHead className="w-10 text-center text-[10px] font-bold uppercase py-2.5 pl-4">#</TableHead>
+                        <TableHead className="text-[10px] font-bold uppercase py-2.5">Date &amp; Time</TableHead>
+                        <TableHead className="text-[10px] font-bold uppercase py-2.5">Type</TableHead>
+                        <TableHead className="text-[10px] font-bold uppercase py-2.5">Category</TableHead>
+                        <TableHead className="text-[10px] font-bold uppercase py-2.5">Description</TableHead>
+                        <TableHead className="text-[10px] font-bold uppercase py-2.5">Payment Mode</TableHead>
+                        <TableHead className="text-[10px] font-bold uppercase py-2.5">Note</TableHead>
+                        <TableHead className="text-right text-[10px] font-bold uppercase py-2.5">Amount (₹)</TableHead>
+                        <TableHead className="w-10 text-center py-2.5 pr-4" />
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {displayedHistoryEntries.map((e, idx) => {
+                        const isInc = e.type === "income"
+                        return (
+                          <TableRow key={e.id} className="border-border/30 hover:bg-secondary/10 transition-colors">
+                            <TableCell className="text-center font-mono text-xs text-muted-foreground pl-4">
+                              {idx + 1}
+                            </TableCell>
+                            <TableCell className="text-xs text-muted-foreground font-mono whitespace-nowrap">
+                              {formatDateTime(e.createdAt)}
+                            </TableCell>
+                            <TableCell>
+                              <Badge
+                                variant="outline"
+                                className={cn(
+                                  "text-[9px] font-bold uppercase",
+                                  isInc
+                                    ? "border-emerald-500/30 text-emerald-500 bg-emerald-500/5"
+                                    : "border-rose-500/30 text-rose-500 bg-rose-500/5"
+                                )}
+                              >
+                                {isInc ? "Income" : "Expense"}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-xs font-semibold text-foreground whitespace-nowrap">
+                              {e.category}
+                            </TableCell>
+                            <TableCell className="text-xs text-foreground max-w-xs truncate">
+                              {e.description}
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="text-[10px] bg-secondary/30">
+                                {e.paymentMode || "Cash"}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-xs text-muted-foreground max-w-xs truncate">
+                              {e.note || "—"}
+                            </TableCell>
+                            <TableCell className="text-right font-mono font-bold text-xs whitespace-nowrap">
+                              <span className={isInc ? "text-emerald-500" : "text-rose-500"}>
+                                {isInc ? "+" : "-"}&nbsp;₹{Number(e.amount).toLocaleString()}
+                              </span>
+                            </TableCell>
+                            <TableCell className="text-center pr-4">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                                onClick={() => handleDeleteHistoryEntry(e.id, e.type)}
+                                title="Delete Entry"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+     
 
       {/* ── PAY SUPPLIER DIALOG ── */}
       <Dialog open={supplierPayOpen} onOpenChange={setSupplierPayOpen}>

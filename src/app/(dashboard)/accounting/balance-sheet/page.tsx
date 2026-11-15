@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import {
-  TrendingUp, Package, IndianRupee, BarChart3,
+  TrendingUp, Package, IndianRupee,
   Download, FileSpreadsheet, FileText, RefreshCw,
   ChevronDown, ShoppingCart, Percent, Scale,
 } from "lucide-react"
@@ -12,6 +12,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { useUser } from "@/app/auth/use-user"
+import { useShop } from "@/hooks/useShop"
+import { toast } from "@/hooks/use-toast"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface MonthRow {
@@ -47,24 +50,96 @@ interface ConsolidatedBS {
   equityCapital: number
   retainedEarnings: number
 }
+interface HistoryRow {
+  date: string; customerName: string; total: number
+  status: string; paymentMethod: string; items: number
+}
 interface BSData {
   year: number
   summary: Summary
   months: MonthRow[]
   paymentBreakdown: Record<string, number>
   topProducts: { name: string; revenue: number; qty: number }[]
-  history: { date: string; customerName: string; total: number; status: string; paymentMethod: string; items: number }[]
+  history: HistoryRow[]
   consolidatedBS?: ConsolidatedBS
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Formatting helpers ────────────────────────────────────────────────────────
 const fmt = (n: number) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n)
 
+// PDF default fonts cannot draw the ₹ symbol, so exports use "Rs."
+const fmtPlain = (n: number) =>
+  `Rs. ${new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(n)}`
+
 const pct = (n: number) => `${n.toFixed(1)}%`
+
+const fmtDate = (s: string) => {
+  const d = new Date(s)
+  return isNaN(d.getTime())
+    ? String(s ?? '')
+    : d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+}
 
 const currentYear = new Date().getFullYear()
 const YEARS = Array.from({ length: 5 }, (_, i) => currentYear - i)
+
+// ── Balance sheet maths (shared by screen, PDF and Excel) ─────────────────────
+function calcTotals(d?: ConsolidatedBS) {
+  if (!d) return { tca: 0, ta: 0, tcl: 0, tl: 0, se: 0, tlse: 0 }
+  const tca  = d.cash + d.accountsReceivable + d.prepaidExpenses + d.inventory
+  const ta   = tca + d.equipment + d.property + d.goodwill
+  const tcl  = d.accountsPayable + d.accruedExpenses + d.unearnedRevenue +
+               d.salariesPayable + d.incomeTaxesPayable + d.warrantyLiability
+  const tl   = tcl + d.longTermDebt + d.otherLongTermLiabilities
+  const se   = d.equityCapital + d.retainedEarnings
+  return { tca, ta, tcl, tl, se, tlse: tl + se }
+}
+
+interface BSRow {
+  type: 'section' | 'subhead' | 'row' | 'subtotal' | 'total'
+  label: string
+  a?: number
+  b?: number
+}
+
+
+function buildBSRows(p?: ConsolidatedBS, c?: ConsolidatedBS): BSRow[] {
+  const t1 = calcTotals(p)
+  const t2 = calcTotals(c)
+  return [
+    { type: 'section',  label: 'ASSETS' },
+    { type: 'subhead',  label: 'Current Assets' },
+    { type: 'row',      label: 'Cash',                 a: p?.cash,               b: c?.cash },
+    { type: 'row',      label: 'Accounts Receivable',  a: p?.accountsReceivable, b: c?.accountsReceivable },
+    { type: 'row',      label: 'Prepaid Expenses',     a: p?.prepaidExpenses,    b: c?.prepaidExpenses },
+    { type: 'row',      label: 'Inventory',            a: p?.inventory,          b: c?.inventory },
+    { type: 'subtotal', label: 'Total Current Assets', a: t1.tca, b: t2.tca },
+    { type: 'subhead',  label: 'Non-Current Assets' },
+    { type: 'row',      label: 'Equipment',            a: p?.equipment,          b: c?.equipment },
+    { type: 'row',      label: 'Property',             a: p?.property,           b: c?.property },
+    { type: 'row',      label: 'Goodwill',             a: p?.goodwill,           b: c?.goodwill },
+    { type: 'total',    label: 'TOTAL ASSETS',         a: t1.ta, b: t2.ta },
+    { type: 'section',  label: 'LIABILITIES' },
+    { type: 'subhead',  label: 'Current Liabilities' },
+    { type: 'row',      label: 'Accounts Payable',     a: p?.accountsPayable,    b: c?.accountsPayable },
+    { type: 'row',      label: 'Accrued Expenses',     a: p?.accruedExpenses,    b: c?.accruedExpenses },
+    { type: 'row',      label: 'Unearned Revenue',     a: p?.unearnedRevenue,    b: c?.unearnedRevenue },
+    { type: 'row',      label: 'Salaries Payable',     a: p?.salariesPayable,    b: c?.salariesPayable },
+    { type: 'row',      label: 'Income Taxes Payable', a: p?.incomeTaxesPayable, b: c?.incomeTaxesPayable },
+    { type: 'row',      label: 'Warranty Liability',   a: p?.warrantyLiability,  b: c?.warrantyLiability },
+    { type: 'subtotal', label: 'Total Current Liabilities', a: t1.tcl, b: t2.tcl },
+    { type: 'subhead',  label: 'Long-Term Liabilities' },
+    { type: 'row',      label: 'Long-Term Debt',              a: p?.longTermDebt,             b: c?.longTermDebt },
+    { type: 'row',      label: 'Other Long-Term Liabilities', a: p?.otherLongTermLiabilities, b: c?.otherLongTermLiabilities },
+    { type: 'total',    label: 'TOTAL LIABILITIES',    a: t1.tl, b: t2.tl },
+    { type: 'section',  label: "SHAREHOLDER'S EQUITY" },
+    { type: 'row',      label: 'Equity Capital',       a: p?.equityCapital,      b: c?.equityCapital },
+    { type: 'row',      label: 'Retained Earnings',    a: p?.retainedEarnings,   b: c?.retainedEarnings },
+    { type: 'subtotal', label: "Shareholder's Equity", a: t1.se, b: t2.se },
+    { type: 'total',    label: "TOTAL LIABILITIES & SHAREHOLDER'S EQUITY", a: t1.tlse, b: t2.tlse },
+  ]
+}
 
 // ── StatCard ──────────────────────────────────────────────────────────────────
 function StatCard({ title, value, icon: Icon, colorClass, badge }: {
@@ -105,66 +180,8 @@ function ConsolidatedBSTable({
   yearB: number
   loading: boolean
 }) {
-  const skeleton = '—'
-
-  const v = (val: number | undefined) =>
-    val !== undefined ? fmt(val) : skeleton
-
-  // Compute totals
-  const totals = (d: ConsolidatedBS | undefined) => {
-    if (!d) return { tca: 0, ta: 0, tcl: 0, tl: 0, se: 0, tlse: 0 }
-    const tca  = d.cash + d.accountsReceivable + d.prepaidExpenses + d.inventory
-    const ta   = tca + d.equipment + d.property + d.goodwill
-    const tcl  = d.accountsPayable + d.accruedExpenses + d.unearnedRevenue +
-                 d.salariesPayable + d.incomeTaxesPayable + d.warrantyLiability
-    const tl   = tcl + d.longTermDebt + d.otherLongTermLiabilities
-    const se   = d.equityCapital + d.retainedEarnings
-    const tlse = tl + se
-    return { tca, ta, tcl, tl, se, tlse }
-  }
-
-  const t1 = totals(primary)
-  const t2 = totals(compare)
-
-  type RowDef =
-    | { type: 'section'; label: string }
-    | { type: 'subhead'; label: string }
-    | { type: 'row'; label: string; a: number | undefined; b: number | undefined }
-    | { type: 'subtotal'; label: string; a: number; b: number }
-    | { type: 'total'; label: string; a: number; b: number }
-
-  const rows: RowDef[] = [
-    { type: 'section', label: 'ASSETS' },
-    { type: 'subhead', label: 'Current Assets' },
-    { type: 'row',     label: 'Cash',                  a: primary?.cash,                b: compare?.cash },
-    { type: 'row',     label: 'Accounts Receivable',   a: primary?.accountsReceivable,  b: compare?.accountsReceivable },
-    { type: 'row',     label: 'Prepaid Expenses',      a: primary?.prepaidExpenses,     b: compare?.prepaidExpenses },
-    { type: 'row',     label: 'Inventory',             a: primary?.inventory,           b: compare?.inventory },
-    { type: 'subtotal',label: 'Total Current Assets',  a: t1.tca, b: t2.tca },
-    { type: 'subhead', label: 'Non-Current Assets' },
-    { type: 'row',     label: 'Equipment',             a: primary?.equipment,           b: compare?.equipment },
-    { type: 'row',     label: 'Property',              a: primary?.property,            b: compare?.property },
-    { type: 'row',     label: 'Goodwill',              a: primary?.goodwill,            b: compare?.goodwill },
-    { type: 'total',   label: 'TOTAL ASSETS',          a: t1.ta,  b: t2.ta },
-    { type: 'section', label: 'LIABILITIES' },
-    { type: 'subhead', label: 'Current Liabilities' },
-    { type: 'row',     label: 'Accounts Payable',      a: primary?.accountsPayable,     b: compare?.accountsPayable },
-    { type: 'row',     label: 'Accrued Expenses',      a: primary?.accruedExpenses,     b: compare?.accruedExpenses },
-    { type: 'row',     label: 'Unearned Revenue',      a: primary?.unearnedRevenue,     b: compare?.unearnedRevenue },
-    { type: 'row',     label: 'Salaries Payable',      a: primary?.salariesPayable,     b: compare?.salariesPayable },
-    { type: 'row',     label: 'Income Taxes Payable',  a: primary?.incomeTaxesPayable,  b: compare?.incomeTaxesPayable },
-    { type: 'row',     label: 'Warranty Liability',    a: primary?.warrantyLiability,   b: compare?.warrantyLiability },
-    { type: 'subtotal',label: 'Total Current Liabilities', a: t1.tcl, b: t2.tcl },
-    { type: 'subhead', label: 'Long-Term Liabilities' },
-    { type: 'row',     label: 'Long-Term Debt',                a: primary?.longTermDebt,            b: compare?.longTermDebt },
-    { type: 'row',     label: 'Other Long-Term Liabilities',   a: primary?.otherLongTermLiabilities, b: compare?.otherLongTermLiabilities },
-    { type: 'total',   label: 'TOTAL LIABILITIES',     a: t1.tl,  b: t2.tl },
-    { type: 'section', label: "SHAREHOLDER'S EQUITY" },
-    { type: 'row',     label: 'Equity Capital',        a: primary?.equityCapital,       b: compare?.equityCapital },
-    { type: 'row',     label: 'Retained Earnings',     a: primary?.retainedEarnings,    b: compare?.retainedEarnings },
-    { type: 'subtotal',label: "Shareholder's Equity",  a: t1.se,  b: t2.se },
-    { type: 'total',   label: "TOTAL LIABILITIES & SHAREHOLDER'S EQUITY", a: t1.tlse, b: t2.tlse },
-  ]
+  const v = (val: number | undefined) => (val !== undefined ? fmt(val) : '—')
+  const rows = buildBSRows(primary, compare)
 
   return (
     <div className="overflow-x-auto">
@@ -215,23 +232,23 @@ function ConsolidatedBSTable({
                   {row.label}
                 </td>
                 <td className="py-2.5 px-4 text-right font-mono font-bold text-xs" style={{ color: '#1e3a5f' }}>
-                  {fmt(row.a)}
+                  {fmt(row.a as number)}
                 </td>
                 <td className="py-2.5 px-4 text-right font-mono font-bold text-xs" style={{ color: '#1e3a5f' }}>
-                  {fmt(row.b)}
+                  {fmt(row.b as number)}
                 </td>
               </tr>
             )
-            if (row.type === 'total') return (
+            return (
               <tr key={i} style={{ background: '#1e3a5f' }}>
                 <td className="py-3 px-4 font-bold text-xs uppercase tracking-widest text-white">
                   {row.label}
                 </td>
                 <td className="py-3 px-4 text-right font-mono font-bold text-xs text-white">
-                  {fmt(row.a)}
+                  {fmt(row.a as number)}
                 </td>
                 <td className="py-3 px-4 text-right font-mono font-bold text-xs text-white">
-                  {fmt(row.b)}
+                  {fmt(row.b as number)}
                 </td>
               </tr>
             )
@@ -242,145 +259,365 @@ function ConsolidatedBSTable({
   )
 }
 
-// ── Download helpers ──────────────────────────────────────────────────────────
-function downloadCSV(data: BSData) {
-  const headers = ['Date', 'Customer', 'Total (₹)', 'Status', 'Payment Method', 'Items']
-  const rows = data.history.map(h => [
-    h.date, h.customerName, h.total, h.status, h.paymentMethod, h.items,
-  ])
-  const csv = [headers, ...rows].map(r => r.join(',')).join('\n')
-  const blob = new Blob([csv], { type: 'text/csv' })
-  const url  = URL.createObjectURL(blob)
-  const a    = document.createElement('a')
-  a.href     = url
-  a.download = `balance-sheet-${data.year}.csv`
-  a.click()
-  URL.revokeObjectURL(url)
+// ══════════════════════════════════════════════════════════════════════════════
+//  EXPORT ENGINE  (PDF via jsPDF, Excel via SheetJS, with safe fallbacks)
+// ══════════════════════════════════════════════════════════════════════════════
+const JSPDF_CDN     = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"
+const AUTOTABLE_CDN = "https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"
+const XLSX_CDN      = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"
+
+const scriptCache: Record<string, Promise<void>> = {}
+function loadScript(src: string): Promise<void> {
+  if (!scriptCache[src]) {
+    scriptCache[src] = new Promise<void>((resolve, reject) => {
+      const s = document.createElement("script")
+      s.src = src
+      s.async = true
+      const timer = setTimeout(() => reject(new Error("Script load timed out")), 10000)
+      s.onload = () => { clearTimeout(timer); resolve() }
+      s.onerror = () => { clearTimeout(timer); reject(new Error("Script failed to load")) }
+      document.head.appendChild(s)
+    }).catch(err => {
+      delete scriptCache[src]
+      throw err
+    })
+  }
+  return scriptCache[src]
 }
 
-async function downloadPDF(data: BSData, compareData: BSData | null, compareYear: number) {
-  const printWindow = window.open('', '_blank')
-  if (!printWindow) return
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement("a")
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  setTimeout(() => {
+    if (document.body.contains(link)) document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }, 2000)
+}
 
-  const bs1 = data.consolidatedBS
-  const bs2 = compareData?.consolidatedBS
+// Everything both exporters need, built once
+function buildExportModel(
+  data: BSData,
+  compareData: BSData | null,
+  compareYear: number,
+  companyName: string,
+  companyContact: string,
+) {
+  const s = data.summary
+  const safeCompany = companyName.replace(/[^a-zA-Z0-9_-]/g, "_")
+  const generated = new Date().toLocaleDateString('en-IN', { dateStyle: 'long' })
 
-  const calcTotals = (d?: ConsolidatedBS) => {
-    if (!d) return { tca: 0, ta: 0, tcl: 0, tl: 0, se: 0, tlse: 0 }
-    const tca  = d.cash + d.accountsReceivable + d.prepaidExpenses + d.inventory
-    const ta   = tca + d.equipment + d.property + d.goodwill
-    const tcl  = d.accountsPayable + d.accruedExpenses + d.unearnedRevenue +
-                 d.salariesPayable + d.incomeTaxesPayable + d.warrantyLiability
-    const tl   = tcl + d.longTermDebt + d.otherLongTermLiabilities
-    const se   = d.equityCapital + d.retainedEarnings
-    return { tca, ta, tcl, tl, se, tlse: tl + se }
+  return {
+    year: data.year,
+    compareYear,
+    bsRows: buildBSRows(data.consolidatedBS, compareData?.consolidatedBS),
+    title: `${companyName} - Consolidated Balance Sheet`,
+    subtitle: `FY ${data.year} vs FY ${compareYear}${companyContact ? ` | ${companyContact}` : ''} | Generated ${generated}`,
+    filename: `${safeCompany}_BalanceSheet_FY${data.year}_vs_FY${compareYear}`,
+    kpis: [
+      { label: 'Total Revenue', value: s.totalRevenue, text: fmtPlain(s.totalRevenue) },
+      { label: 'Gross Profit',  value: s.totalGrossProfit, text: fmtPlain(s.totalGrossProfit) },
+      { label: 'Gross Margin',  value: s.grossMargin, text: pct(s.grossMargin) },
+      { label: 'Total Orders',  value: s.totalOrders, text: String(s.totalOrders) },
+      { label: 'Stock Value',   value: s.stockValue, text: fmtPlain(s.stockValue) },
+    ],
+    paymentBreakdown: Object.entries(data.paymentBreakdown || {}),
+    topProducts: data.topProducts || [],
+    history: data.history || [],
+  }
+}
+type ExportModel = ReturnType<typeof buildExportModel>
+
+// ── Minimal built-in PDF (single page) used only if the CDN is unreachable ───
+function buildFallbackPdf(
+  title: string, subtitle: string,
+  headers: string[], rows: string[][],
+): Blob {
+  const pageWidth = 595.28, pageHeight = 841.89, margin = 36
+  const contentWidth = pageWidth - margin * 2
+  const esc = (t: any) =>
+    String(t ?? "")
+      .replace(/[^\x20-\x7E]/g, "?")
+      .replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)")
+
+  let stream = ""
+  stream += `BT /F2 15 Tf 0.05 0.1 0.2 rg ${margin} ${pageHeight - margin - 16} Td (${esc(title)}) Tj ET\n`
+  stream += `BT /F1 8 Tf 0.4 0.45 0.5 rg ${margin} ${pageHeight - margin - 30} Td (${esc(subtitle)}) Tj ET\n`
+
+  const colWidth = contentWidth / Math.max(1, headers.length)
+  let y = pageHeight - margin - 52
+  stream += `0.12 0.23 0.37 rg ${margin} ${y - 4} ${contentWidth} 16 re f\n`
+  headers.forEach((h, i) => {
+    stream += `BT /F2 8.5 Tf 1 1 1 rg ${margin + i * colWidth + 4} ${y} Td (${esc(h)}) Tj ET\n`
+  })
+  y -= 16
+  rows.forEach((row, ri) => {
+    if (y < margin) return
+    if (ri % 2 === 1) stream += `0.97 0.97 0.99 rg ${margin} ${y - 3} ${contentWidth} 13 re f\n`
+    row.forEach((cell, ci) => {
+      stream += `BT /F1 8 Tf 0.15 0.2 0.25 rg ${margin + ci * colWidth + 4} ${y} Td (${esc(cell)}) Tj ET\n`
+    })
+    y -= 13
+  })
+
+  const objects = [
+    `1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n`,
+    `2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n`,
+    `3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> >>\nendobj\n`,
+    `4 0 obj\n<< /Length ${stream.length} >>\nstream\n${stream}endstream\nendobj\n`,
+    `5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n`,
+    `6 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>\nendobj\n`,
+  ]
+  const enc = new TextEncoder()
+  const header = "%PDF-1.4\n"
+  let offset = enc.encode(header).length
+  let body = ""
+  const xref = ["xref\n0 7\n0000000000 65535 f \n"]
+  objects.forEach(o => {
+    xref.push(`${String(offset).padStart(10, "0")} 00000 n \n`)
+    body += o
+    offset += enc.encode(o).length
+  })
+  const trailer = `trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${offset}\n%%EOF\n`
+  return new Blob([enc.encode(header + body + xref.join("") + trailer)], { type: "application/pdf" })
+}
+
+// ── PDF export ────────────────────────────────────────────────────────────────
+async function exportBalanceSheetPDF(m: ExportModel) {
+  const bsBody = m.bsRows.map(r =>
+    r.type === 'section' || r.type === 'subhead'
+      ? [{ content: r.label, colSpan: 3 }]
+      : [r.label, r.a !== undefined ? fmtPlain(r.a) : '-', r.b !== undefined ? fmtPlain(r.b) : '-']
+  )
+  const types = m.bsRows.map(r => r.type)
+
+  try {
+    await loadScript(JSPDF_CDN)
+    await loadScript(AUTOTABLE_CDN)
+    const jsPDF = (window as any).jspdf?.jsPDF
+    if (!jsPDF) throw new Error("jsPDF not available")
+
+    const doc = new jsPDF()
+    const pageW = doc.internal.pageSize.getWidth()
+
+    doc.setFontSize(16)
+    doc.setTextColor(15, 23, 42)
+    doc.text(m.title, 14, 16)
+    doc.setFontSize(8.5)
+    doc.setTextColor(100, 116, 139)
+    doc.text(m.subtitle, 14, 22)
+
+    // KPI strip
+    ;(doc as any).autoTable({
+      startY: 27,
+      head: [m.kpis.map(k => k.label)],
+      body: [m.kpis.map(k => k.text)],
+      theme: 'grid',
+      headStyles: { fillColor: [232, 240, 254], textColor: [85, 85, 85], fontSize: 7.5, halign: 'center' },
+      bodyStyles: { fontSize: 10, fontStyle: 'bold', textColor: [30, 58, 95], halign: 'center' },
+      styles: { lineColor: [210, 220, 235], lineWidth: 0.2 },
+    })
+
+    // Balance sheet
+    let y = (doc as any).lastAutoTable.finalY + 9
+    doc.setFontSize(11)
+    doc.setTextColor(30, 58, 95)
+    doc.text('Consolidated Balance Sheet', 14, y)
+
+    ;(doc as any).autoTable({
+      startY: y + 3,
+      head: [['Description', `FY ${m.year}`, `FY ${m.compareYear}`]],
+      body: bsBody,
+      theme: 'plain',
+      headStyles: { fillColor: [30, 58, 95], textColor: 255, fontSize: 8.5 },
+      styles: { fontSize: 8, cellPadding: 1.5, lineColor: [235, 235, 235], lineWidth: { bottom: 0.2 } },
+      columnStyles: {
+        0: { cellWidth: 100 },
+        1: { halign: 'right' },
+        2: { halign: 'right' },
+      },
+      didParseCell: (h: any) => {
+        if (h.section !== 'body') return
+        const t = types[h.row.index]
+        const st = h.cell.styles
+        if (t === 'section') {
+          st.fillColor = [232, 240, 254]; st.textColor = [30, 58, 95]; st.fontStyle = 'bold'
+        } else if (t === 'subhead') {
+          st.textColor = [100, 100, 100]; st.fontStyle = 'italic'
+        } else if (t === 'subtotal') {
+          st.fillColor = [219, 234, 254]; st.textColor = [30, 58, 95]; st.fontStyle = 'bold'
+        } else if (t === 'total') {
+          st.fillColor = [30, 58, 95]; st.textColor = [255, 255, 255]; st.fontStyle = 'bold'
+        }
+      },
+    })
+
+    // Payment breakdown
+    if (m.paymentBreakdown.length > 0) {
+      y = (doc as any).lastAutoTable.finalY + 9
+      if (y > 255) { doc.addPage(); y = 18 }
+      doc.setFontSize(11)
+      doc.setTextColor(30, 58, 95)
+      doc.text('Revenue by Payment Method', 14, y)
+      ;(doc as any).autoTable({
+        startY: y + 3,
+        head: [['Method', 'Amount']],
+        body: m.paymentBreakdown.map(([method, amt]) => [method.toUpperCase(), fmtPlain(amt)]),
+        theme: 'striped',
+        headStyles: { fillColor: [30, 58, 95] },
+        styles: { fontSize: 8.5 },
+        columnStyles: { 1: { halign: 'right' } },
+        tableWidth: 90,
+      })
+    }
+
+    // Page numbers
+    const pages = doc.internal.getNumberOfPages()
+    for (let i = 1; i <= pages; i++) {
+      doc.setPage(i)
+      doc.setFontSize(8)
+      doc.setTextColor(150, 150, 150)
+      doc.text(`Page ${i} of ${pages}`, pageW - 14, doc.internal.pageSize.getHeight() - 8, { align: 'right' })
+    }
+
+    doc.save(`${m.filename}.pdf`)
+    return
+  } catch (err) {
+    console.warn("jsPDF unavailable, using built-in PDF fallback:", err)
   }
 
-  const t1 = calcTotals(bs1)
-  const t2 = calcTotals(bs2)
+  // Fallback: simple single-page PDF with the balance sheet only
+  const rows = m.bsRows.map(r =>
+    r.type === 'section' || r.type === 'subhead'
+      ? [r.label, '', '']
+      : [r.label, r.a !== undefined ? fmtPlain(r.a) : '-', r.b !== undefined ? fmtPlain(r.b) : '-']
+  )
+  const blob = buildFallbackPdf(
+    m.title, m.subtitle,
+    ['Description', `FY ${m.year}`, `FY ${m.compareYear}`],
+    rows,
+  )
+  downloadBlob(blob, `${m.filename}.pdf`)
+}
 
-  const fmtPDF = (n: number) =>
-    new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n)
+// ── Excel export (.xlsx with 2 sheets; falls back to CSV) ─────────────────────
+async function exportBalanceSheetExcel(m: ExportModel): Promise<'xlsx' | 'csv'> {
+  const bsAoa: (string | number)[][] = [
+    [m.title],
+    [m.subtitle],
+    [],
+    ['Description', `FY ${m.year}`, `FY ${m.compareYear}`],
+    ...m.bsRows.map(r =>
+      r.type === 'section' || r.type === 'subhead'
+        ? [r.label, '', '']
+        : [r.label, r.a ?? '', r.b ?? '']
+    ),
+  ]
 
-  const bsRow = (label: string, a: number | undefined, b: number | undefined, cls = '') =>
-    `<tr class="${cls}"><td>${label}</td><td class="num">${a !== undefined ? fmtPDF(a) : '—'}</td><td class="num">${b !== undefined ? fmtPDF(b) : '—'}</td></tr>`
+  const summaryAoa: (string | number)[][] = [
+    ['Key Figures'],
+    ['Metric', 'Value'],
+    ...m.kpis.map(k => [k.label, k.value]),
+    [],
+    ['Revenue by Payment Method'],
+    ['Method', 'Amount (INR)'],
+    ...m.paymentBreakdown.map(([method, amt]) => [method.toUpperCase(), amt]),
+    [],
+    ['Top Products by Revenue'],
+    ['Product', 'Units', 'Revenue (INR)'],
+    ...m.topProducts.map(p => [p.name, p.qty, p.revenue]),
+  ]
 
-  const historyRows = data.history.slice(0, 200).map(h => `
-    <tr>
-      <td>${new Date(h.date).toLocaleDateString('en-IN')}</td>
-      <td>${h.customerName}</td>
-      <td class="num">${fmtPDF(h.total)}</td>
-      <td><span class="badge ${h.status}">${h.status}</span></td>
-      <td>${h.paymentMethod.toUpperCase()}</td>
-      <td class="num">${h.items}</td>
-    </tr>
-  `).join('')
+  try {
+    await loadScript(XLSX_CDN)
+    const XLSX = (window as any).XLSX
+    if (!XLSX) throw new Error("SheetJS not available")
 
-  printWindow.document.write(`
-    <!DOCTYPE html><html><head><meta charset="utf-8"/>
-    <title>Consolidated Balance Sheet ${data.year}</title>
-    <style>
-      * { margin:0; padding:0; box-sizing:border-box; }
-      body { font-family:'Segoe UI',sans-serif; color:#111; background:#fff; padding:32px; font-size:13px; }
-      h1 { font-size:26px; font-weight:800; margin-bottom:4px; }
-      h1 span { color:#1e3a5f; }
-      .sub { color:#666; font-size:12px; margin-bottom:24px; }
-      .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:24px; }
-      .kpi { background:#e8f0fe; border-radius:8px; padding:12px 14px; }
-      .kpi-label { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#555; }
-      .kpi-val { font-size:18px; font-weight:800; color:#1e3a5f; margin-top:2px; font-family:monospace; }
-      h2 { font-size:14px; font-weight:700; margin:20px 0 10px; border-left:3px solid #1e3a5f; padding-left:10px; }
-      table { width:100%; border-collapse:collapse; margin-bottom:24px; }
-      th { background:#1e3a5f; color:#fff; font-size:10px; text-transform:uppercase; letter-spacing:0.5px; padding:8px 10px; text-align:left; }
-      th.num { text-align:right; }
-      td { padding:6px 10px; border-bottom:1px solid #eee; font-size:12px; }
-      tr:nth-child(even) td { background:#fafafa; }
-      .num { text-align:right; font-family:monospace; font-weight:600; }
-      .section td { background:#e8f0fe!important; font-weight:700; font-size:11px; text-transform:uppercase; letter-spacing:0.05em; }
-      .subhead td { font-style:italic; color:#555; font-size:11px; }
-      .subtotal td { background:#dbeafe!important; font-weight:700; color:#1e3a5f; }
-      .rowtotal td { background:#1e3a5f!important; color:#fff!important; font-weight:700; }
-      .badge { padding:2px 8px; border-radius:99px; font-size:10px; font-weight:700; text-transform:uppercase; }
-      .paid { background:#d1fae5; color:#065f46; }
-      .pending { background:#fef3c7; color:#92400e; }
-      .returned { background:#fee2e2; color:#991b1b; }
-      @media print { body { padding:16px; } }
-    </style></head><body>
-    <h1>ShopX <span>Consolidated Balance Sheet</span></h1>
-    <p class="sub">FY ${data.year} vs FY ${compareYear} &nbsp;·&nbsp; Generated ${new Date().toLocaleDateString('en-IN', { dateStyle: 'long' })}</p>
-    <div class="kpis">
-      <div class="kpi"><div class="kpi-label">Total Revenue</div><div class="kpi-val">${fmtPDF(data.summary.totalRevenue)}</div></div>
-      <div class="kpi"><div class="kpi-label">Gross Profit</div><div class="kpi-val">${fmtPDF(data.summary.totalGrossProfit)}</div></div>
-      <div class="kpi"><div class="kpi-label">Gross Margin</div><div class="kpi-val">${pct(data.summary.grossMargin)}</div></div>
-      <div class="kpi"><div class="kpi-label">Total Orders</div><div class="kpi-val">${data.summary.totalOrders}</div></div>
-    </div>
-    <h2>Consolidated Balance Sheet</h2>
-    <table>
-      <thead><tr><th>Description</th><th class="num">FY ${data.year}</th><th class="num">FY ${compareYear}</th></tr></thead>
-      <tbody>
-        <tr class="section"><td colspan="3">ASSETS — Current Assets</td></tr>
-        ${bsRow('Cash', bs1?.cash, bs2?.cash)}
-        ${bsRow('Accounts Receivable', bs1?.accountsReceivable, bs2?.accountsReceivable)}
-        ${bsRow('Prepaid Expenses', bs1?.prepaidExpenses, bs2?.prepaidExpenses)}
-        ${bsRow('Inventory', bs1?.inventory, bs2?.inventory)}
-        ${bsRow('Total Current Assets', t1.tca, t2.tca, 'subtotal')}
-        <tr class="subhead"><td colspan="3">Non-Current Assets</td></tr>
-        ${bsRow('Equipment', bs1?.equipment, bs2?.equipment)}
-        ${bsRow('Property', bs1?.property, bs2?.property)}
-        ${bsRow('Goodwill', bs1?.goodwill, bs2?.goodwill)}
-        ${bsRow('TOTAL ASSETS', t1.ta, t2.ta, 'rowtotal')}
-        <tr class="section"><td colspan="3">LIABILITIES — Current Liabilities</td></tr>
-        ${bsRow('Accounts Payable', bs1?.accountsPayable, bs2?.accountsPayable)}
-        ${bsRow('Accrued Expenses', bs1?.accruedExpenses, bs2?.accruedExpenses)}
-        ${bsRow('Unearned Revenue', bs1?.unearnedRevenue, bs2?.unearnedRevenue)}
-        ${bsRow('Salaries Payable', bs1?.salariesPayable, bs2?.salariesPayable)}
-        ${bsRow('Income Taxes Payable', bs1?.incomeTaxesPayable, bs2?.incomeTaxesPayable)}
-        ${bsRow('Warranty Liability', bs1?.warrantyLiability, bs2?.warrantyLiability)}
-        ${bsRow('Total Current Liabilities', t1.tcl, t2.tcl, 'subtotal')}
-        <tr class="subhead"><td colspan="3">Long-Term Liabilities</td></tr>
-        ${bsRow('Long-Term Debt', bs1?.longTermDebt, bs2?.longTermDebt)}
-        ${bsRow('Other Long-Term Liabilities', bs1?.otherLongTermLiabilities, bs2?.otherLongTermLiabilities)}
-        ${bsRow('TOTAL LIABILITIES', t1.tl, t2.tl, 'rowtotal')}
-        <tr class="section"><td colspan="3">SHAREHOLDER'S EQUITY</td></tr>
-        ${bsRow('Equity Capital', bs1?.equityCapital, bs2?.equityCapital)}
-        ${bsRow('Retained Earnings', bs1?.retainedEarnings, bs2?.retainedEarnings)}
-        ${bsRow("Shareholder's Equity", t1.se, t2.se, 'subtotal')}
-        ${bsRow("TOTAL LIABILITIES & SHAREHOLDER'S EQUITY", t1.tlse, t2.tlse, 'rowtotal')}
-      </tbody>
-    </table>
-    <h2>Transaction History</h2>
-    <table>
-      <thead><tr><th>Date</th><th>Customer</th><th class="num">Amount</th><th>Status</th><th>Payment</th><th class="num">Items</th></tr></thead>
-      <tbody>${historyRows}</tbody>
-    </table>
-    </body></html>
-  `)
-  printWindow.document.close()
-  setTimeout(() => { printWindow.print() }, 400)
+    const applyMoney = (ws: any, cols: number[], fromRow: number) => {
+      const range = XLSX.utils.decode_range(ws['!ref'])
+      for (let r = fromRow; r <= range.e.r; r++) {
+        cols.forEach(c => {
+          const cell = ws[XLSX.utils.encode_cell({ r, c })]
+          if (cell && cell.t === 'n') cell.z = '#,##0'
+        })
+      }
+    }
+
+    const wsBS = XLSX.utils.aoa_to_sheet(bsAoa)
+    wsBS['!cols'] = [{ wch: 44 }, { wch: 18 }, { wch: 18 }]
+    applyMoney(wsBS, [1, 2], 4)
+
+    const wsSum = XLSX.utils.aoa_to_sheet(summaryAoa)
+    wsSum['!cols'] = [{ wch: 30 }, { wch: 18 }, { wch: 18 }]
+    applyMoney(wsSum, [1, 2], 0)
+
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, wsBS, 'Balance Sheet')
+    XLSX.utils.book_append_sheet(wb, wsSum, 'Summary')
+    XLSX.writeFile(wb, `${m.filename}.xlsx`)
+    return 'xlsx'
+  } catch (err) {
+    console.warn("SheetJS unavailable, falling back to CSV:", err)
+  }
+
+  // Fallback: one CSV that holds the balance sheet and the transactions
+  const q = (c: unknown) => `"${String(c ?? '').replace(/"/g, '""')}"`
+  const csv = bsAoa.map(r => r.map(q).join(',')).join('\r\n')
+  downloadBlob(new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' }), `${m.filename}.csv`)
+  return 'csv'
+}
+
+// ── Transactions only (.xlsx, falls back to CSV) ──────────────────────────────
+async function exportTransactionsExcel(m: ExportModel): Promise<'xlsx' | 'csv'> {
+  const headers = ['Date', 'Customer', 'Amount (INR)', 'Status', 'Payment Method', 'Items']
+  const aoa: (string | number)[][] = [
+    headers,
+    ...m.history.map(h => [
+      fmtDate(h.date),
+      h.customerName || 'Walk-in Customer',
+      h.total || 0,
+      (h.status || '').toUpperCase(),
+      (h.paymentMethod || '').toUpperCase(),
+      h.items ?? 0,
+    ]),
+  ]
+  const filename = m.filename.replace('_BalanceSheet_', '_Transactions_')
+
+  try {
+    await loadScript(XLSX_CDN)
+    const XLSX = (window as any).XLSX
+    if (!XLSX) throw new Error("SheetJS not available")
+    const ws = XLSX.utils.aoa_to_sheet(aoa)
+    ws['!cols'] = [{ wch: 14 }, { wch: 28 }, { wch: 16 }, { wch: 12 }, { wch: 16 }, { wch: 8 }]
+    const range = XLSX.utils.decode_range(ws['!ref'])
+    for (let r = 1; r <= range.e.r; r++) {
+      const cell = ws[XLSX.utils.encode_cell({ r, c: 2 })]
+      if (cell && cell.t === 'n') cell.z = '#,##0'
+    }
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Transactions')
+    XLSX.writeFile(wb, `${filename}.xlsx`)
+    return 'xlsx'
+  } catch (err) {
+    console.warn("SheetJS unavailable, falling back to CSV:", err)
+  }
+
+  const q = (c: unknown) => `"${String(c ?? '').replace(/"/g, '""')}"`
+  const csv = aoa.map(r => r.map(q).join(',')).join('\r\n')
+  downloadBlob(new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' }), `${filename}.csv`)
+  return 'csv'
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function BalanceSheetPage() {
+  const { user } = useUser()
+  const { data: shopData } = useShop(user?.uid)
+  const companyName = shopData?.companyName?.trim() || shopData?.ownerName?.trim() || "ShopX"
+  const companyContact = [shopData?.location, shopData?.phone].filter(Boolean).join(" | ")
+
   const [data, setData]               = React.useState<BSData | null>(null)
   const [compareData, setCompareData] = React.useState<BSData | null>(null)
   const [loading, setLoading]         = React.useState(true)
@@ -388,6 +625,7 @@ export default function BalanceSheetPage() {
   const [error, setError]             = React.useState<string | null>(null)
   const [year, setYear]               = React.useState(currentYear)
   const [compareYear, setCompareYear] = React.useState(currentYear - 1)
+  const [exporting, setExporting]     = React.useState<null | 'pdf' | 'excel' | 'transactions'>(null)
 
   const fetchData = React.useCallback(async () => {
     setLoading(true); setError(null)
@@ -406,10 +644,10 @@ export default function BalanceSheetPage() {
     setCompareLoading(true)
     try {
       const res = await fetch(`/api/balance-sheet?year=${compareYear}`, { credentials: 'include' })
-      if (!res.ok) return
+      if (!res.ok) { setCompareData(null); return }
       setCompareData(await res.json())
     } catch {
-      // silently fail — compare column just shows zeros
+      setCompareData(null)
     } finally {
       setCompareLoading(false)
     }
@@ -418,7 +656,45 @@ export default function BalanceSheetPage() {
   React.useEffect(() => { fetchData() }, [fetchData])
   React.useEffect(() => { fetchCompareData() }, [fetchCompareData])
 
+  const handleExport = async (type: 'pdf' | 'excel' | 'transactions') => {
+    if (!data || exporting) return
+    setExporting(type)
+    try {
+      const model = buildExportModel(data, compareData, compareYear, companyName, companyContact)
+      if (type === 'pdf') {
+        await exportBalanceSheetPDF(model)
+        toast({ title: "PDF Downloaded ✓", description: `Saved ${model.filename}.pdf` })
+      } else if (type === 'transactions') {
+        const kind = await exportTransactionsExcel(model)
+        toast({
+          title: kind === 'xlsx' ? "Transactions Downloaded ✓" : "CSV Downloaded ✓",
+          description: kind === 'xlsx'
+            ? "Saved transaction history as Excel."
+            : "Excel library could not load, saved a CSV instead.",
+        })
+      } else {
+        const kind = await exportBalanceSheetExcel(model)
+        toast({
+          title: kind === 'xlsx' ? "Excel Downloaded ✓" : "CSV Downloaded ✓",
+          description: kind === 'xlsx'
+            ? `Saved ${model.filename}.xlsx`
+            : `Excel library could not load, saved ${model.filename}.csv instead.`,
+        })
+      }
+    } catch (e: any) {
+      console.error("Export failed:", e)
+      toast({
+        variant: "destructive",
+        title: "Export failed",
+        description: e?.message || "Something went wrong while creating the file.",
+      })
+    } finally {
+      setExporting(null)
+    }
+  }
+
   const s = data?.summary
+  const exportDisabled = !data || loading || compareLoading || !!exporting
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
@@ -482,20 +758,24 @@ export default function BalanceSheetPage() {
             {loading ? 'Loading…' : 'Refresh'}
           </Button>
 
-          {/* Download */}
+          {/* Export */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button disabled={!data}
+              <Button disabled={exportDisabled}
                 className="bg-primary text-primary-foreground font-semibold px-5 rounded-full shadow-lg shadow-primary/20 gap-2">
-                <Download className="w-4 h-4" /> Export <ChevronDown className="w-4 h-4" />
+                {exporting
+                  ? <RefreshCw className="w-4 h-4 animate-spin" />
+                  : <Download className="w-4 h-4" />}
+                {exporting ? 'Exporting…' : 'Export'}
+                <ChevronDown className="w-4 h-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => data && downloadPDF(data, compareData, compareYear)} className="gap-2 cursor-pointer">
+              <DropdownMenuItem onClick={() => handleExport('pdf')} className="gap-2 cursor-pointer">
                 <FileText className="w-4 h-4 text-rose-500" /> Download PDF
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => data && downloadCSV(data)} className="gap-2 cursor-pointer">
-                <FileSpreadsheet className="w-4 h-4 text-emerald-500" /> Download Excel / CSV
+              <DropdownMenuItem onClick={() => handleExport('excel')} className="gap-2 cursor-pointer">
+                <FileSpreadsheet className="w-4 h-4 text-emerald-500" /> Download Excel (.xlsx)
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -650,9 +930,9 @@ export default function BalanceSheetPage() {
               </Badge>
             )}
           </CardTitle>
-          <Button variant="ghost" size="sm" onClick={() => data && downloadCSV(data)} disabled={!data}
+          <Button variant="ghost" size="sm" onClick={() => handleExport('transactions')} disabled={exportDisabled}
             className="text-xs gap-1.5 text-muted-foreground hover:text-foreground rounded-full">
-            <FileSpreadsheet className="w-3.5 h-3.5" /> Export CSV
+            <FileSpreadsheet className="w-3.5 h-3.5" /> Export Excel
           </Button>
         </CardHeader>
         <CardContent className="pt-4 overflow-x-auto">
@@ -682,7 +962,7 @@ export default function BalanceSheetPage() {
                   <td className="py-3 px-3">
                     <div className="flex items-center gap-2">
                       <div className="w-7 h-7 rounded-full bg-secondary flex items-center justify-center font-bold text-primary text-xs group-hover:bg-primary group-hover:text-primary-foreground transition-colors shrink-0">
-                        {h.customerName.charAt(0).toUpperCase()}
+                        {(h.customerName || '?').charAt(0).toUpperCase()}
                       </div>
                       <span className="font-medium">{h.customerName}</span>
                     </div>

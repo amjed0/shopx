@@ -6,7 +6,6 @@ import {
   TrendingDown,
   DollarSign,
   ShoppingCart,
-  Package,
   Receipt,
   Calendar,
   Download,
@@ -15,14 +14,25 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Minus,
+  FileText,
+  FileSpreadsheet,
+  ChevronDown,
+  RefreshCw,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { toast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
 import { useUser } from "@/app/auth/use-user"
+import { useShop } from "@/hooks/useShop"
 
 // ── TYPES ──
 interface PLSummary {
@@ -35,7 +45,7 @@ interface PLSummary {
   expenseBreakdown: { label: string; amount: number; type: string; date: string }[]
 }
 
-// ── DATE HELPERS ──
+// ── DATE / MONEY HELPERS ──
 const toInputDate = (d: Date) => d.toISOString().slice(0, 10)
 
 const formatCurrency = (n: number) =>
@@ -44,8 +54,359 @@ const formatCurrency = (n: number) =>
 const formatDate = (s: string) =>
   new Date(s).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
 
+// PDF default fonts cannot draw the ₹ symbol, so exports use "Rs."
+const fmtPlain = (n: number) =>
+  `Rs. ${new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 }).format(n)}`
+
+const fmtSigned = (n: number) => (n < 0 ? `- ${fmtPlain(Math.abs(n))}` : fmtPlain(n))
+
+const fmtDateSafe = (s: string) => {
+  const d = new Date(s)
+  return isNaN(d.getTime())
+    ? String(s ?? "")
+    : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  EXPORT ENGINE  (PDF via jsPDF, Excel via SheetJS, with safe fallbacks)
+// ══════════════════════════════════════════════════════════════════════════════
+const JSPDF_CDN     = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"
+const AUTOTABLE_CDN = "https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"
+const XLSX_CDN      = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"
+
+const scriptCache: Record<string, Promise<void>> = {}
+function loadScript(src: string): Promise<void> {
+  if (!scriptCache[src]) {
+    scriptCache[src] = new Promise<void>((resolve, reject) => {
+      const s = document.createElement("script")
+      s.src = src
+      s.async = true
+      const timer = setTimeout(() => reject(new Error("Script load timed out")), 10000)
+      s.onload = () => { clearTimeout(timer); resolve() }
+      s.onerror = () => { clearTimeout(timer); reject(new Error("Script failed to load")) }
+      document.head.appendChild(s)
+    }).catch(err => {
+      delete scriptCache[src]
+      throw err
+    })
+  }
+  return scriptCache[src]
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement("a")
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  setTimeout(() => {
+    if (document.body.contains(link)) document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }, 2000)
+}
+
+interface SummaryRow {
+  label: string
+  amount: number
+  type: "row" | "subtotal" | "total"
+}
+
+function buildExportModel(
+  data: PLSummary,
+  fromDate: string,
+  toDate: string,
+  companyName: string,
+  companyContact: string,
+) {
+  const safeCompany = companyName.replace(/[^a-zA-Z0-9_-]/g, "_")
+  const generated = new Date().toLocaleDateString("en-IN", { dateStyle: "long" })
+  const margin = data.totalRevenue > 0 ? (data.netProfit / data.totalRevenue) * 100 : 0
+
+  const summaryRows: SummaryRow[] = [
+    { label: "Total Revenue",        amount: data.totalRevenue,          type: "row" },
+    { label: "Less: Purchase Orders", amount: -data.totalPurchaseOrders, type: "row" },
+    { label: "Gross Profit",         amount: data.grossProfit,           type: "subtotal" },
+    { label: "Less: Other Expenses", amount: -data.totalExpenses,        type: "row" },
+    { label: "Net Profit / Loss",    amount: data.netProfit,             type: "total" },
+  ]
+
+  return {
+    fromDate,
+    toDate,
+    title: `${companyName} - Profit & Loss Statement`,
+    subtitle: `${fmtDateSafe(fromDate)} to ${fmtDateSafe(toDate)}${companyContact ? ` | ${companyContact}` : ""} | Generated ${generated}`,
+    filename: `${safeCompany}_PL_${fromDate}_to_${toDate}`,
+    kpis: [
+      { label: "Total Revenue",   text: fmtPlain(data.totalRevenue),        value: data.totalRevenue },
+      { label: "Purchase Orders", text: fmtPlain(data.totalPurchaseOrders), value: data.totalPurchaseOrders },
+      { label: "Gross Profit",    text: fmtSigned(data.grossProfit),        value: data.grossProfit },
+      { label: "Other Expenses",  text: fmtPlain(data.totalExpenses),       value: data.totalExpenses },
+      { label: "Net Profit",      text: fmtSigned(data.netProfit),          value: data.netProfit },
+      { label: "Net Margin",      text: `${margin.toFixed(1)}%`,            value: Number(margin.toFixed(1)) },
+    ],
+    summaryRows,
+    income: data.revenueBreakdown || [],
+    expenses: data.expenseBreakdown || [],
+    totalIncome: data.totalRevenue,
+    totalExpensesAll: data.totalPurchaseOrders + data.totalExpenses,
+  }
+}
+type ExportModel = ReturnType<typeof buildExportModel>
+
+// ── Minimal built-in PDF (single page) used only if the CDN is unreachable ───
+function buildFallbackPdf(
+  title: string, subtitle: string,
+  headers: string[], rows: string[][],
+): Blob {
+  const pageWidth = 595.28, pageHeight = 841.89, margin = 36
+  const contentWidth = pageWidth - margin * 2
+  const esc = (t: any) =>
+    String(t ?? "")
+      .replace(/[^\x20-\x7E]/g, "?")
+      .replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)")
+
+  let stream = ""
+  stream += `BT /F2 15 Tf 0.05 0.1 0.2 rg ${margin} ${pageHeight - margin - 16} Td (${esc(title)}) Tj ET\n`
+  stream += `BT /F1 8 Tf 0.4 0.45 0.5 rg ${margin} ${pageHeight - margin - 30} Td (${esc(subtitle)}) Tj ET\n`
+
+  const colWidth = contentWidth / Math.max(1, headers.length)
+  let y = pageHeight - margin - 52
+  stream += `0.12 0.23 0.37 rg ${margin} ${y - 4} ${contentWidth} 16 re f\n`
+  headers.forEach((h, i) => {
+    stream += `BT /F2 8.5 Tf 1 1 1 rg ${margin + i * colWidth + 4} ${y} Td (${esc(h)}) Tj ET\n`
+  })
+  y -= 16
+  rows.forEach((row, ri) => {
+    if (y < margin) return
+    if (ri % 2 === 1) stream += `0.97 0.97 0.99 rg ${margin} ${y - 3} ${contentWidth} 13 re f\n`
+    row.forEach((cell, ci) => {
+      stream += `BT /F1 8 Tf 0.15 0.2 0.25 rg ${margin + ci * colWidth + 4} ${y} Td (${esc(cell)}) Tj ET\n`
+    })
+    y -= 13
+  })
+
+  const objects = [
+    `1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n`,
+    `2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n`,
+    `3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> >>\nendobj\n`,
+    `4 0 obj\n<< /Length ${stream.length} >>\nstream\n${stream}endstream\nendobj\n`,
+    `5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n`,
+    `6 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>\nendobj\n`,
+  ]
+  const enc = new TextEncoder()
+  const header = "%PDF-1.4\n"
+  let offset = enc.encode(header).length
+  let body = ""
+  const xref = ["xref\n0 7\n0000000000 65535 f \n"]
+  objects.forEach(o => {
+    xref.push(`${String(offset).padStart(10, "0")} 00000 n \n`)
+    body += o
+    offset += enc.encode(o).length
+  })
+  const trailer = `trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${offset}\n%%EOF\n`
+  return new Blob([enc.encode(header + body + xref.join("") + trailer)], { type: "application/pdf" })
+}
+
+// ── PDF export ────────────────────────────────────────────────────────────────
+async function exportPLPDF(m: ExportModel) {
+  try {
+    await loadScript(JSPDF_CDN)
+    await loadScript(AUTOTABLE_CDN)
+    const jsPDF = (window as any).jspdf?.jsPDF
+    if (!jsPDF) throw new Error("jsPDF not available")
+
+    const doc = new jsPDF()
+    const pageW = doc.internal.pageSize.getWidth()
+    const pageH = doc.internal.pageSize.getHeight()
+
+    doc.setFontSize(16)
+    doc.setTextColor(15, 23, 42)
+    doc.text(m.title, 14, 16)
+    doc.setFontSize(8.5)
+    doc.setTextColor(100, 116, 139)
+    doc.text(m.subtitle, 14, 22)
+
+    // KPI strip
+    ;(doc as any).autoTable({
+      startY: 27,
+      head: [m.kpis.map(k => k.label)],
+      body: [m.kpis.map(k => k.text)],
+      theme: "grid",
+      headStyles: { fillColor: [232, 240, 254], textColor: [85, 85, 85], fontSize: 7, halign: "center" },
+      bodyStyles: { fontSize: 8.5, fontStyle: "bold", textColor: [30, 58, 95], halign: "center" },
+      styles: { lineColor: [210, 220, 235], lineWidth: 0.2 },
+    })
+
+    // Summary (the P&L statement itself)
+    let y = (doc as any).lastAutoTable.finalY + 9
+    doc.setFontSize(11)
+    doc.setTextColor(30, 58, 95)
+    doc.text("Profit & Loss Summary", 14, y)
+
+    const types = m.summaryRows.map(r => r.type)
+    ;(doc as any).autoTable({
+      startY: y + 3,
+      head: [["Description", "Amount"]],
+      body: m.summaryRows.map(r => [r.label, fmtSigned(r.amount)]),
+      theme: "plain",
+      headStyles: { fillColor: [30, 58, 95], textColor: 255, fontSize: 8.5 },
+      styles: { fontSize: 9, cellPadding: 2.4, lineColor: [235, 235, 235], lineWidth: { bottom: 0.2 } },
+      columnStyles: { 0: { cellWidth: 120 }, 1: { halign: "right" } },
+      didParseCell: (h: any) => {
+        if (h.section !== "body") return
+        const t = types[h.row.index]
+        const st = h.cell.styles
+        if (t === "subtotal") {
+          st.fillColor = [219, 234, 254]; st.textColor = [30, 58, 95]; st.fontStyle = "bold"
+        } else if (t === "total") {
+          st.fillColor = [30, 58, 95]; st.textColor = [255, 255, 255]; st.fontStyle = "bold"
+        }
+      },
+    })
+
+    // Income
+    y = (doc as any).lastAutoTable.finalY + 9
+    if (y > pageH - 40) { doc.addPage(); y = 18 }
+    doc.setFontSize(11)
+    doc.setTextColor(30, 58, 95)
+    doc.text(`Income (${fmtPlain(m.totalIncome)})`, 14, y)
+    ;(doc as any).autoTable({
+      startY: y + 3,
+      head: [["Description", "Date", "Amount"]],
+      body: m.income.length
+        ? m.income.map(r => [r.label, fmtDateSafe(r.date), fmtPlain(r.amount)])
+        : [[{ content: "No income in this period", colSpan: 3, styles: { halign: "center" } }]],
+      theme: "striped",
+      headStyles: { fillColor: [16, 185, 129] },
+      styles: { fontSize: 8.5 },
+      columnStyles: { 2: { halign: "right" } },
+    })
+
+    // Expenses
+    y = (doc as any).lastAutoTable.finalY + 9
+    if (y > pageH - 40) { doc.addPage(); y = 18 }
+    doc.setFontSize(11)
+    doc.setTextColor(30, 58, 95)
+    doc.text(`Expenses (${fmtPlain(m.totalExpensesAll)})`, 14, y)
+    ;(doc as any).autoTable({
+      startY: y + 3,
+      head: [["Description", "Type", "Date", "Amount"]],
+      body: m.expenses.length
+        ? m.expenses.map(e => [e.label, (e.type || "").toUpperCase(), fmtDateSafe(e.date), fmtPlain(e.amount)])
+        : [[{ content: "No expenses in this period", colSpan: 4, styles: { halign: "center" } }]],
+      theme: "striped",
+      headStyles: { fillColor: [220, 38, 38] },
+      styles: { fontSize: 8.5 },
+      columnStyles: { 3: { halign: "right" } },
+    })
+
+    // Page numbers
+    const pages = doc.internal.getNumberOfPages()
+    for (let i = 1; i <= pages; i++) {
+      doc.setPage(i)
+      doc.setFontSize(8)
+      doc.setTextColor(150, 150, 150)
+      doc.text(`Page ${i} of ${pages}`, pageW - 14, pageH - 8, { align: "right" })
+    }
+
+    doc.save(`${m.filename}.pdf`)
+    return
+  } catch (err) {
+    console.warn("jsPDF unavailable, using built-in PDF fallback:", err)
+  }
+
+  // Fallback: simple single-page PDF with the summary only
+  const blob = buildFallbackPdf(
+    m.title, m.subtitle,
+    ["Description", "Amount"],
+    m.summaryRows.map(r => [r.label, fmtSigned(r.amount)]),
+  )
+  downloadBlob(blob, `${m.filename}.pdf`)
+}
+
+// ── Excel export (.xlsx with 3 sheets; falls back to CSV) ─────────────────────
+async function exportPLExcel(m: ExportModel): Promise<"xlsx" | "csv"> {
+  const summaryAoa: (string | number)[][] = [
+    [m.title],
+    [m.subtitle],
+    [],
+    ["Description", "Amount (INR)"],
+    ...m.summaryRows.map(r => [r.label, r.amount]),
+    [],
+    ["Key Figures"],
+    ...m.kpis.map(k => [k.label, k.value]),
+  ]
+  const incomeAoa: (string | number)[][] = [
+    ["Description", "Date", "Amount (INR)"],
+    ...m.income.map(r => [r.label, fmtDateSafe(r.date), r.amount]),
+    [],
+    ["Total Income", "", m.totalIncome],
+  ]
+  const expenseAoa: (string | number)[][] = [
+    ["Description", "Type", "Date", "Amount (INR)"],
+    ...m.expenses.map(e => [e.label, (e.type || "").toUpperCase(), fmtDateSafe(e.date), e.amount]),
+    [],
+    ["Total Expenses (Purchase Orders + Other)", "", "", m.totalExpensesAll],
+  ]
+
+  try {
+    await loadScript(XLSX_CDN)
+    const XLSX = (window as any).XLSX
+    if (!XLSX) throw new Error("SheetJS not available")
+
+    const applyMoney = (ws: any, cols: number[]) => {
+      const range = XLSX.utils.decode_range(ws["!ref"])
+      for (let r = 0; r <= range.e.r; r++) {
+        cols.forEach(c => {
+          const cell = ws[XLSX.utils.encode_cell({ r, c })]
+          if (cell && cell.t === "n") cell.z = "#,##0"
+        })
+      }
+    }
+
+    const wsSum = XLSX.utils.aoa_to_sheet(summaryAoa)
+    wsSum["!cols"] = [{ wch: 36 }, { wch: 20 }]
+    applyMoney(wsSum, [1])
+
+    const wsInc = XLSX.utils.aoa_to_sheet(incomeAoa)
+    wsInc["!cols"] = [{ wch: 34 }, { wch: 16 }, { wch: 18 }]
+    applyMoney(wsInc, [2])
+
+    const wsExp = XLSX.utils.aoa_to_sheet(expenseAoa)
+    wsExp["!cols"] = [{ wch: 34 }, { wch: 16 }, { wch: 16 }, { wch: 18 }]
+    applyMoney(wsExp, [3])
+
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, wsSum, "P&L Summary")
+    XLSX.utils.book_append_sheet(wb, wsInc, "Income")
+    XLSX.utils.book_append_sheet(wb, wsExp, "Expenses")
+    XLSX.writeFile(wb, `${m.filename}.xlsx`)
+    return "xlsx"
+  } catch (err) {
+    console.warn("SheetJS unavailable, falling back to CSV:", err)
+  }
+
+  // Fallback: one CSV holding all three sections
+  const q = (c: unknown) => `"${String(c ?? "").replace(/"/g, '""')}"`
+  const toLines = (aoa: (string | number)[][]) => aoa.map(r => r.map(q).join(","))
+  const csv = [
+    ...toLines(summaryAoa), "",
+    "INCOME", ...toLines(incomeAoa), "",
+    "EXPENSES", ...toLines(expenseAoa),
+  ].join("\r\n")
+  downloadBlob(new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" }), `${m.filename}.csv`)
+  return "csv"
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  PAGE
+// ══════════════════════════════════════════════════════════════════════════════
 export default function ProfitLossPage() {
   const { user } = useUser()
+  const { data: shopData } = useShop(user?.uid)
+  const companyName = shopData?.companyName?.trim() || shopData?.ownerName?.trim() || "ShopX"
+  const companyContact = [shopData?.location, shopData?.phone].filter(Boolean).join(" | ")
 
   // ── DATE RANGE STATE ──
   const today = new Date()
@@ -55,6 +416,7 @@ export default function ProfitLossPage() {
   const [toDate, setToDate] = React.useState(toInputDate(today))
   const [loading, setLoading] = React.useState(false)
   const [data, setData] = React.useState<PLSummary | null>(null)
+  const [exporting, setExporting] = React.useState<null | "pdf" | "excel">(null)
 
   // ── QUICK RANGE PRESETS ──
   const applyPreset = (preset: string) => {
@@ -103,35 +465,35 @@ export default function ProfitLossPage() {
     fetchPL()
   }, [fetchPL])
 
-  // ── EXPORT CSV ──
-  const handleExport = () => {
-    if (!data) return
-    const rows = [
-      ["P&L Statement", `${fromDate} to ${toDate}`],
-      [],
-      ["INCOME"],
-      ["Source", "Date", "Amount"],
-      ...data.revenueBreakdown.map(r => [r.label, r.date, r.amount]),
-      [],
-      ["EXPENSES"],
-      ["Description", "Type", "Date", "Amount"],
-      ...data.expenseBreakdown.map(e => [e.label, e.type, e.date, e.amount]),
-      [],
-      ["SUMMARY"],
-      ["Total Revenue", data.totalRevenue],
-      ["Purchase Orders", data.totalPurchaseOrders],
-      ["Other Expenses", data.totalExpenses],
-      ["Gross Profit", data.grossProfit],
-      ["Net Profit", data.netProfit],
-    ]
-    const csv = rows.map(r => r.join(",")).join("\n")
-    const blob = new Blob([csv], { type: "text/csv" })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement("a")
-    a.href = url
-    a.download = `pl-statement-${fromDate}-to-${toDate}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
+  // ── EXPORT (PDF / EXCEL) ──
+  const handleExport = async (type: "pdf" | "excel") => {
+    if (!data || exporting) return
+    setExporting(type)
+    try {
+      const model = buildExportModel(data, fromDate, toDate, companyName, companyContact)
+      if (type === "pdf") {
+        await exportPLPDF(model)
+        toast({ title: "PDF Downloaded ✓", description: `Saved ${model.filename}.pdf` })
+      } else {
+        const kind = await exportPLExcel(model)
+        toast({
+          title: kind === "xlsx" ? "Excel Downloaded ✓" : "CSV Downloaded ✓",
+          description:
+            kind === "xlsx"
+              ? `Saved ${model.filename}.xlsx`
+              : `Excel library could not load, saved ${model.filename}.csv instead.`,
+        })
+      }
+    } catch (e: any) {
+      console.error("Export failed:", e)
+      toast({
+        variant: "destructive",
+        title: "Export failed",
+        description: e?.message || "Something went wrong while creating the file.",
+      })
+    } finally {
+      setExporting(null)
+    }
   }
 
   const profitColor = (n: number) =>
@@ -141,12 +503,14 @@ export default function ProfitLossPage() {
     n > 0 ? "bg-accent/10" : n < 0 ? "bg-destructive/10" : "bg-muted"
 
   const totalExpensesAll = data
-    ? data.totalPurchaseOrders+ data.totalExpenses
+    ? data.totalPurchaseOrders + data.totalExpenses
     : 0
 
   const marginPct = data && data.totalRevenue > 0
     ? ((data.netProfit / data.totalRevenue) * 100).toFixed(1)
     : "0.0"
+
+  const exportDisabled = !data || loading || !!exporting
 
   return (
     <div className="space-y-8">
@@ -156,14 +520,30 @@ export default function ProfitLossPage() {
           <h1 className="text-4xl font-headline font-bold text-foreground">P&L Statement</h1>
           <p className="text-muted-foreground">Track revenue, expenses and profitability over time.</p>
         </div>
-        <Button
-          variant="outline"
-          className="rounded-full px-6 gap-2"
-          onClick={handleExport}
-          disabled={!data}
-        >
-          <Download className="w-4 h-4" /> Export CSV
-        </Button>
+
+        {/* Export */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              disabled={exportDisabled}
+              className="bg-primary text-primary-foreground font-semibold px-5 rounded-full shadow-lg shadow-primary/20 gap-2"
+            >
+              {exporting
+                ? <RefreshCw className="w-4 h-4 animate-spin" />
+                : <Download className="w-4 h-4" />}
+              {exporting ? "Exporting…" : "Export"}
+              <ChevronDown className="w-4 h-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => handleExport("pdf")} className="gap-2 cursor-pointer">
+              <FileText className="w-4 h-4 text-rose-500" /> Download PDF
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => handleExport("excel")} className="gap-2 cursor-pointer">
+              <FileSpreadsheet className="w-4 h-4 text-emerald-500" /> Download Excel (.xlsx)
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {/* ── DATE RANGE FILTER ── */}
@@ -323,6 +703,52 @@ export default function ProfitLossPage() {
             ))}
           </div>
 
+           {/* ── FINAL SUMMARY ROW ── */}
+          <Card className="border-none bg-card shadow-sm">
+            <CardHeader>
+              <CardTitle className="font-headline">Summary</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableBody>
+                  {[
+                    { label: "Total Revenue", amount: data.totalRevenue, type: "income", bold: false },
+                    { label: "Less: Purchase Orders", amount: -data.totalPurchaseOrders, type: "expense", bold: false },
+                    { label: "Gross Profit", amount: data.grossProfit, type: "gross", bold: true },
+                    { label: "Less: Other Expenses", amount: -data.totalExpenses, type: "expense", bold: false },
+                    { label: "Net Profit / Loss", amount: data.netProfit, type: "net", bold: true },
+                  ].map((row, i) => (
+                    <TableRow
+                      key={i}
+                      className={cn(
+                        "border-border/30",
+                        row.bold && "bg-secondary/20",
+                      )}
+                    >
+                      <TableCell className={cn("font-medium", row.bold && "font-bold text-base")}>
+                        {row.label}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <span className={cn(
+                          "font-bold",
+                          row.bold && "text-lg",
+                          row.type === "income" ? "text-foreground" :
+                          row.type === "expense" ? "text-destructive" :
+                          row.type === "gross" ? profitColor(row.amount) :
+                          row.type === "net" ? profitColor(row.amount) : ""
+                        )}>
+                          {row.amount < 0
+                            ? `− ${formatCurrency(Math.abs(row.amount))}`
+                            : formatCurrency(row.amount)}
+                        </span>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+
           {/* ── P&L TABLE ── */}
           <div className="grid gap-6 lg:grid-cols-2">
 
@@ -409,51 +835,7 @@ export default function ProfitLossPage() {
             </Card>
           </div>
 
-          {/* ── FINAL SUMMARY ROW ── */}
-          <Card className="border-none bg-card shadow-sm">
-            <CardHeader>
-              <CardTitle className="font-headline">Summary</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableBody>
-                  {[
-                    { label: "Total Revenue", amount: data.totalRevenue, type: "income", bold: false },
-                    { label: "Less: Purchase Orders", amount: -data.totalPurchaseOrders, type: "expense", bold: false },
-                    { label: "Gross Profit", amount: data.grossProfit, type: "gross", bold: true },
-                    { label: "Less: Other Expenses", amount: -data.totalExpenses, type: "expense", bold: false },
-                    { label: "Net Profit / Loss", amount: data.netProfit, type: "net", bold: true },
-                  ].map((row, i) => (
-                    <TableRow
-                      key={i}
-                      className={cn(
-                        "border-border/30",
-                        row.bold && "bg-secondary/20",
-                      )}
-                    >
-                      <TableCell className={cn("font-medium", row.bold && "font-bold text-base")}>
-                        {row.label}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <span className={cn(
-                          "font-bold",
-                          row.bold && "text-lg",
-                          row.type === "income" ? "text-foreground" :
-                          row.type === "expense" ? "text-destructive" :
-                          row.type === "gross" ? profitColor(row.amount) :
-                          row.type === "net" ? profitColor(row.amount) : ""
-                        )}>
-                          {row.amount < 0
-                            ? `− ${formatCurrency(Math.abs(row.amount))}`
-                            : formatCurrency(row.amount)}
-                        </span>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
+         
         </>
       ) : (
         <div className="flex flex-col items-center justify-center py-20 opacity-30 gap-3">
