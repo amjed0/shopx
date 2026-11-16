@@ -15,7 +15,6 @@ import {
   BadgeDollarSign,
   Calendar,
   Search,
-  IndianRupee,
   Download,
   FileText,
   FileSpreadsheet,
@@ -23,10 +22,12 @@ import {
   Copy,
   CheckCircle2,
   Boxes,
+  Eye,
+  Wallet,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
@@ -42,21 +43,20 @@ import { useUser } from "@/app/auth/use-user"
 import { useShop } from "@/hooks/useShop"
 import { toast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
+import {
+  Bill,
+  PurchaseRecord,
+  SupplierPaymentRecord,
+  groupPurchasesIntoBills,
+  normalizeRecord,
+  toArray,
+} from "@/lib/purchase-bills"
 
-interface Purchase {
-  id: string
-  supplierId: string
-  productId: string
-  productName: string
-  itemCode?: string
-  quantity: number
-  purchasePrice: number
-  billingDate?: string
-  createdAt: string
-}
+type Purchase = PurchaseRecord
 
 interface Supplier {
   id: string
+  _id?: string
   name: string
   email: string
   phone: string
@@ -73,11 +73,13 @@ interface DateGroup {
   date: string            // e.g. "2026-11-12"
   displayDate: string     // e.g. "12/11/2026"
   relativeLabel: string | null // "Today" | "Yesterday" | null
-  purchases: Purchase[]
+  bills: Bill[]
+  billCount: number
   totalQty: number
   totalAmount: number
-  productCount: number    // unique product count
-  supplierNames: string[] // distinct supplier names on that day
+  totalPaid: number | null     // null when any bill's payment is unknown
+  totalBalance: number | null
+  supplierNames: string[]
 }
 
 function formatToDDMMYYYY(dateStr: string): string {
@@ -94,6 +96,25 @@ function getRelativeDateLabel(dateStr: string): string | null {
   return null
 }
 
+const inr = (n: number) => `₹${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+
+function summarizeBills(date: string, bills: Bill[]): DateGroup {
+  const sorted = [...bills].sort((a, b) => a.billNumber - b.billNumber)
+  const paidKnown = sorted.every(b => b.paid !== null)
+  return {
+    date,
+    displayDate: formatToDDMMYYYY(date),
+    relativeLabel: getRelativeDateLabel(date),
+    bills: sorted,
+    billCount: sorted.length,
+    totalQty: sorted.reduce((s, b) => s + b.totalQty, 0),
+    totalAmount: sorted.reduce((s, b) => s + b.totalAmount, 0),
+    totalPaid: paidKnown ? sorted.reduce((s, b) => s + (b.paid ?? 0), 0) : null,
+    totalBalance: paidKnown ? sorted.reduce((s, b) => s + (b.balance ?? 0), 0) : null,
+    supplierNames: Array.from(new Set(sorted.map(b => b.supplierName))).slice(0, 3),
+  }
+}
+
 export default function PurchaseHistoryPage() {
   const router = useRouter()
   const { user } = useUser()
@@ -104,8 +125,10 @@ export default function PurchaseHistoryPage() {
   const [purchases, setPurchases] = React.useState<Purchase[]>([])
   const [suppliers, setSuppliers] = React.useState<Supplier[]>([])
   const [products, setProducts] = React.useState<ProductInfo[]>([])
+  const [payments, setPayments] = React.useState<SupplierPaymentRecord[] | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [expandedDates, setExpandedDates] = React.useState<Set<string>>(new Set())
+  const [expandedBills, setExpandedBills] = React.useState<Set<string>>(new Set())
   const [searchQuery, setSearchQuery] = React.useState("")
 
   // Date Stepper State: Defaults to "ALL" so all recent and past inward bills are immediately visible
@@ -307,7 +330,7 @@ export default function PurchaseHistoryPage() {
 
       if ((window as any).jspdf?.jsPDF) {
         const { jsPDF } = (window as any).jspdf
-        const doc = new jsPDF()
+        const doc = new jsPDF({ orientation: "landscape" })
         doc.setFontSize(16)
         doc.setTextColor(15, 23, 42)
         doc.text(title, 14, 18)
@@ -356,20 +379,22 @@ export default function PurchaseHistoryPage() {
     toast({ title: "PDF Downloaded ✓", description: `Saved ${safeFilename}.pdf to Downloads.` })
   }
 
-  // Load all purchases, suppliers, and products
+  // Load all purchases, suppliers, products and supplier payments
   React.useEffect(() => {
     if (!user?.uid) return
     const fetchAll = async () => {
       try {
         setLoading(true)
-        const [purchasesRes, suppliersRes, productsRes] = await Promise.all([
-          fetch("/api/purchases", { headers: { "x-user-id": user.uid } }),
-          fetch("/api/suppliers", { headers: { "x-user-id": user.uid } }),
-          fetch("/api/products", { headers: { "x-user-id": user.uid } }),
+        const headers = { "x-user-id": user.uid }
+        const [purchasesRes, suppliersRes, productsRes, paymentsRes] = await Promise.all([
+          fetch("/api/purchases", { headers }),
+          fetch("/api/suppliers", { headers }),
+          fetch("/api/products", { headers }),
+          fetch("/api/supplier-payments", { headers }).catch(() => null),
         ])
         if (purchasesRes.ok) {
           const data = await purchasesRes.json()
-          setPurchases(Array.isArray(data) ? data : [])
+          setPurchases(toArray(data).map((p, i) => normalizeRecord(p, i)))
         }
         if (suppliersRes.ok) {
           const data = await suppliersRes.json()
@@ -378,6 +403,15 @@ export default function PurchaseHistoryPage() {
         if (productsRes.ok) {
           const data = await productsRes.json()
           setProducts(Array.isArray(data) ? data : [])
+        }
+        if (paymentsRes && paymentsRes.ok) {
+          try {
+            setPayments(toArray<SupplierPaymentRecord>(await paymentsRes.json()))
+          } catch {
+            setPayments(null)
+          }
+        } else {
+          setPayments(null)
         }
       } catch (err) {
         console.error(err)
@@ -392,7 +426,10 @@ export default function PurchaseHistoryPage() {
   // Maps for fast lookups
   const supplierMap = React.useMemo(() => {
     const map = new Map<string, Supplier>()
-    suppliers.forEach(s => map.set(s.id, s))
+    suppliers.forEach(s => {
+      map.set(s.id, s)
+      if (s._id) map.set(String(s._id), s)
+    })
     return map
   }, [suppliers])
 
@@ -409,109 +446,67 @@ export default function PurchaseHistoryPage() {
     return "—"
   }, [productMap])
 
-  // Ensure all recorded purchases from MongoDB Atlas are displayed without suppression
+  // Every purchase row, without duplicates
   const cleanPurchases = React.useMemo(() => {
     const seen = new Set<string>()
     return purchases.filter(p => {
-      if (!p.id) return true
-      if (seen.has(p.id)) return false
-      seen.add(p.id)
+      const id = String((p as any).id ?? (p as any)._id ?? "")
+      if (!id) return true
+      if (seen.has(id)) return false
+      seen.add(id)
       return true
     })
   }, [purchases])
 
-  // Unique Bill Count: Count unique bills by date + supplierId
-  const totalBills = React.useMemo(() => {
-    const billKeys = new Set(
-      cleanPurchases.map(p => `${p.billingDate || (p.createdAt ? p.createdAt.split("T")[0] : "")}_${p.supplierId}`)
-    )
-    return billKeys.size
-  }, [cleanPurchases])
+  // Rows grouped into real bills (each with its own number, total, paid and balance)
+  const allBills = React.useMemo(
+    () => groupPurchasesIntoBills(cleanPurchases, payments, suppliers),
+    [cleanPurchases, payments, suppliers]
+  )
 
-  const totalSpent = React.useMemo(() =>
-    cleanPurchases.reduce((acc, p) => acc + (Number(p.quantity) || 0) * (Number(p.purchasePrice) || 0), 0),
-  [cleanPurchases])
+  const billNoByPurchaseId = React.useMemo(() => {
+    const map = new Map<string, number>()
+    allBills.forEach(b => b.items.forEach(it => map.set(it.id, b.billNumber)))
+    return map
+  }, [allBills])
 
-  const totalItems = React.useMemo(() =>
-    cleanPurchases.reduce((acc, p) => acc + (Number(p.quantity) || 0), 0),
-  [cleanPurchases])
-
-  const todayPurchases = React.useMemo(() =>
-    cleanPurchases.filter(p => (p.billingDate || p.createdAt?.split("T")[0]) === todayStr),
-  [cleanPurchases, todayStr])
-
-  const todayTotal = React.useMemo(() =>
-    todayPurchases.reduce((acc, p) => acc + (Number(p.quantity) || 0) * (Number(p.purchasePrice) || 0), 0),
-  [todayPurchases])
-
-  // Group by billing date, latest on top
+  // Group bills by billing date, latest date on top
   const dateGroups = React.useMemo((): DateGroup[] => {
-    const map: Record<string, DateGroup> = {}
-
-    cleanPurchases.forEach(p => {
-      const date = p.billingDate || (p.createdAt ? p.createdAt.split("T")[0] : "Unknown")
-      if (!map[date]) {
-        map[date] = {
-          date,
-          displayDate: formatToDDMMYYYY(date),
-          relativeLabel: getRelativeDateLabel(date),
-          purchases: [],
-          totalQty: 0,
-          totalAmount: 0,
-          productCount: 0,
-          supplierNames: [],
-        }
-      }
-      map[date].purchases.push(p)
-      map[date].totalQty += Number(p.quantity) || 0
-      map[date].totalAmount += (Number(p.quantity) || 0) * (Number(p.purchasePrice) || 0)
+    const map = new Map<string, Bill[]>()
+    allBills.forEach(b => {
+      const list = map.get(b.date) ?? []
+      list.push(b)
+      map.set(b.date, list)
     })
+    return Array.from(map.entries())
+      .map(([date, bills]) => summarizeBills(date, bills))
+      .sort((a, b) => b.date.localeCompare(a.date))
+  }, [allBills])
 
-    // Count unique products per date, collect unique supplier names
-    Object.values(map).forEach(g => {
-      const productIds = new Set(g.purchases.map(p => p.productId))
-      g.productCount = productIds.size
-
-      const supIds = new Set(g.purchases.map(p => p.supplierId))
-      g.supplierNames = Array.from(supIds)
-        .map(id => supplierMap.get(id)?.name ?? "Unknown")
-        .filter(Boolean)
-        .slice(0, 3)
-    })
-
-    // Sort groups: latest date first
-    return Object.values(map).sort((a, b) => b.date.localeCompare(a.date))
-  }, [cleanPurchases, supplierMap])
-
-  // Apply search query filter
+  // Apply search query filter (keeps whole bills)
   const filteredGroups = React.useMemo((): DateGroup[] => {
     const q = searchQuery.trim().toLowerCase()
     if (!q) return dateGroups
 
+    const billNoQuery = q.replace(/^bill\s*/, "").replace(/^#/, "")
+
+    const matchesBill = (b: Bill) => {
+      if (b.supplierName.toLowerCase().includes(q)) return true
+      if (b.supplierPhone && b.supplierPhone.includes(q)) return true
+      if (b.date.includes(q) || formatToDDMMYYYY(b.date).includes(q)) return true
+      if (billNoQuery && String(b.billNumber) === billNoQuery) return true
+      return b.items.some(
+        p =>
+          p.productName.toLowerCase().includes(q) ||
+          getItemCode(p).toLowerCase().includes(q)
+      )
+    }
+
     return dateGroups
-      .map(g => ({
-        ...g,
-        purchases: g.purchases.filter(p => {
-          const sup = supplierMap.get(p.supplierId)
-          const code = getItemCode(p).toLowerCase()
-          return (
-            p.productName.toLowerCase().includes(q) ||
-            code.includes(q) ||
-            (sup && sup.name.toLowerCase().includes(q)) ||
-            g.date.includes(q) ||
-            formatToDDMMYYYY(g.date).includes(q)
-          )
-        }),
-      }))
-      .filter(g => g.purchases.length > 0)
-      .map(g => ({
-        ...g,
-        totalQty: g.purchases.reduce((s, p) => s + (Number(p.quantity) || 0), 0),
-        totalAmount: g.purchases.reduce((s, p) => s + (Number(p.quantity) || 0) * (Number(p.purchasePrice) || 0), 0),
-        productCount: new Set(g.purchases.map(p => p.productId)).size,
-        supplierNames: Array.from(new Set(g.purchases.map(p => supplierMap.get(p.supplierId)?.name ?? "Unknown"))).slice(0, 3),
-      }))
-  }, [dateGroups, searchQuery, supplierMap, getItemCode])
+      .map(g => ({ g, bills: g.bills.filter(matchesBill) }))
+      .filter(x => x.bills.length > 0)
+      .map(x => summarizeBills(x.g.date, x.bills))
+  }, [dateGroups, searchQuery, getItemCode])
 
   // Keep all date accordions closed by default; auto-expand only when user searches
   React.useEffect(() => {
@@ -540,24 +535,23 @@ export default function PurchaseHistoryPage() {
   }, [filteredGroups, viewMode, selectedDate, selectedMonth, selectedYear, customStartDate, customEndDate])
 
   // Active Period Metrics (Reactive to active filter)
-  const periodPurchases = React.useMemo(() => {
-    return displayedGroups.flatMap(g => g.purchases)
-  }, [displayedGroups])
-
-  const periodBills = React.useMemo(() => {
-    const billKeys = new Set(
-      periodPurchases.map(p => `${p.billingDate || (p.createdAt ? p.createdAt.split("T")[0] : "")}_${p.supplierId}`)
-    )
-    return billKeys.size
-  }, [periodPurchases])
-
-  const periodSpent = React.useMemo(() => {
-    return periodPurchases.reduce((acc, p) => acc + (Number(p.quantity) || 0) * (Number(p.purchasePrice) || 0), 0)
-  }, [periodPurchases])
-
-  const periodItems = React.useMemo(() => {
-    return periodPurchases.reduce((acc, p) => acc + (Number(p.quantity) || 0), 0)
-  }, [periodPurchases])
+  const periodBillsList = React.useMemo(() => displayedGroups.flatMap(g => g.bills), [displayedGroups])
+  const periodBills = periodBillsList.length
+  const periodSpent = React.useMemo(
+    () => periodBillsList.reduce((acc, b) => acc + b.totalAmount, 0),
+    [periodBillsList]
+  )
+  const periodItems = React.useMemo(
+    () => periodBillsList.reduce((acc, b) => acc + b.totalQty, 0),
+    [periodBillsList]
+  )
+  const periodBalance = React.useMemo(
+    () =>
+      periodBillsList.every(b => b.balance !== null)
+        ? periodBillsList.reduce((acc, b) => acc + (b.balance ?? 0), 0)
+        : null,
+    [periodBillsList]
+  )
 
   // Date & Period Stepper Handlers
   const stepDate = (deltaDays: number) => {
@@ -606,6 +600,20 @@ export default function PurchaseHistoryPage() {
     })
   }
 
+  const toggleBillItems = (key: string) => {
+    setExpandedBills(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  // Opens the Purchase Entry page with this bill loaded (edit is available there)
+  const openBill = (bill: Bill) => {
+    router.push(`/purchases/purchase-entry?bill=${encodeURIComponent(bill.key)}`)
+  }
+
   // ── Reactive Export Dataset (Calculated for selected scope) ──
   const activeExportData = React.useMemo(() => {
     const yesterdayStr = new Date(Date.now() - 86400000).toISOString().split("T")[0]
@@ -651,18 +659,24 @@ export default function PurchaseHistoryPage() {
       filenameSuffix = `All_${todayStr}`
     }
 
+    const lineAmount = (p: Purchase) =>
+      (Number(p.quantity) || 0) * (Number(p.purchasePrice) || 0) + (Number(p.taxAmount) || 0)
+
     const itemsCount = filtered.length
     const totalUnits = filtered.reduce((acc, p) => acc + (Number(p.quantity) || 0), 0)
-    const totalAmount = filtered.reduce((acc, p) => acc + (Number(p.quantity) || 0) * (Number(p.purchasePrice) || 0), 0)
+    const totalAmount = filtered.reduce((acc, p) => acc + lineAmount(p), 0)
 
-    const headers = ["#", "Item Code", "Product Name", "Supplier", "Phone", "Billing Date", "Qty", "Cost (₹)", "Subtotal (₹)"]
+    const headers = ["#", "Bill No", "Item Code", "Product Name", "Supplier", "Phone", "Billing Date", "Qty", "Cost (₹)", "GST (₹)", "Subtotal (₹)"]
     const rows = filtered.map((p, idx) => {
       const sup = supplierMap.get(p.supplierId)
       const qty = Number(p.quantity) || 1
       const cost = Number(p.purchasePrice) || 0
+      const gst = Number(p.taxAmount) || 0
       const code = getItemCode(p)
+      const billNo = billNoByPurchaseId.get(p.id)
       return [
         idx + 1,
+        billNo ? `#${billNo}` : "—",
         code,
         p.productName || "Product",
         sup?.name || "N/A",
@@ -670,7 +684,8 @@ export default function PurchaseHistoryPage() {
         formatToDDMMYYYY(getPDate(p)),
         qty,
         `₹${cost.toLocaleString()}`,
-        `₹${(qty * cost).toLocaleString()}`,
+        gst ? `₹${gst.toLocaleString()}` : "—",
+        `₹${(qty * cost + gst).toLocaleString()}`,
       ]
     })
 
@@ -683,7 +698,7 @@ export default function PurchaseHistoryPage() {
       totalUnits,
       totalAmount,
       title: `${companyName} — Purchase Report (${scopeLabel})`,
-      subtitle: `${companyHeader}${itemsCount} Items • ${totalUnits} Units • Total Spent: ₹${totalAmount.toLocaleString()}`,
+      subtitle: `${companyHeader}${itemsCount} Items • ${totalUnits} Units • Total (incl. GST): ₹${totalAmount.toLocaleString()}`,
       filename: `${safeCompany}_Purchases_${filenameSuffix}`,
       headers,
       rows,
@@ -692,10 +707,10 @@ export default function PurchaseHistoryPage() {
         { label: "Report Period", value: scopeLabel },
         { label: "Purchase Records", value: String(itemsCount) },
         { label: "Total Units", value: String(totalUnits) },
-        { label: "Total Spent", value: `₹${totalAmount.toLocaleString()}` },
+        { label: "Total Spent (incl. GST)", value: `₹${totalAmount.toLocaleString()}` },
       ],
     }
-  }, [cleanPurchases, exportScope, todayStr, exportMonth, exportYear, customExportStartDate, customExportEndDate, supplierMap, getItemCode, companyName, companyContact, safeCompany])
+  }, [cleanPurchases, exportScope, todayStr, exportMonth, exportYear, customExportStartDate, customExportEndDate, supplierMap, getItemCode, billNoByPurchaseId, companyName, companyContact, safeCompany])
 
   // Open Export Modal
   const handleExportAll = () => {
@@ -752,7 +767,7 @@ export default function PurchaseHistoryPage() {
             <h1 className="text-3xl font-headline font-bold text-foreground">
               Purchase <span className="text-accent">History</span>
             </h1>
-            <p className="text-muted-foreground text-sm">All inward purchases grouped by billing date — bill-wise totals &amp; SKU tracking.</p>
+            <p className="text-muted-foreground text-sm">All inward purchases grouped by billing date — every bill with its own total, paid &amp; balance.</p>
           </div>
         </div>
 
@@ -834,7 +849,7 @@ export default function PurchaseHistoryPage() {
                   ? "Range Purchases"
                   : "Total Purchases"}
               </p>
-              <p className="text-xl font-bold font-headline text-accent">₹{periodSpent.toLocaleString()}</p>
+              <p className="text-xl font-bold font-headline text-accent">{inr(periodSpent)}</p>
             </div>
           </div>
         </Card>
@@ -866,14 +881,16 @@ export default function PurchaseHistoryPage() {
         </Card>
         <Card className="border-none bg-card shadow-sm p-4">
           <div className="flex items-center gap-3">
-            <div className="bg-emerald-500/10 p-2.5 rounded-xl">
-              <BadgeDollarSign className="w-5 h-5 text-emerald-500" />
+            <div className={cn("p-2.5 rounded-xl", periodBalance && periodBalance > 0 ? "bg-amber-500/10" : "bg-emerald-500/10")}>
+              <BadgeDollarSign className={cn("w-5 h-5", periodBalance && periodBalance > 0 ? "text-amber-400" : "text-emerald-500")} />
             </div>
             <div>
               <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
-                {viewMode === "all" ? "Total Spent" : "Spent (Period)"}
+                {viewMode === "all" ? "Balance Due" : "Balance (Period)"}
               </p>
-              <p className="text-xl font-bold font-headline text-emerald-400">₹{periodSpent.toLocaleString()}</p>
+              <p className={cn("text-xl font-bold font-headline", periodBalance && periodBalance > 0 ? "text-amber-400" : "text-emerald-400")}>
+                {periodBalance === null ? "—" : inr(periodBalance)}
+              </p>
             </div>
           </div>
         </Card>
@@ -967,7 +984,7 @@ export default function PurchaseHistoryPage() {
           <div className="relative w-full md:max-w-xs">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
             <Input
-              placeholder="Search item code, product, vendor..."
+              placeholder="Search bill no, vendor, product, code..."
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
               className="pl-9 h-9 bg-secondary/30 border-border/40 rounded-xl text-base sm:text-sm focus-visible:ring-accent"
@@ -1245,10 +1262,17 @@ export default function PurchaseHistoryPage() {
           )}
 
           <div className="text-xs text-muted-foreground font-code">
-            Showing <span className="font-bold text-foreground">{periodPurchases.length}</span> records (₹{periodSpent.toLocaleString()})
+            Showing <span className="font-bold text-foreground">{periodBills}</span> bills ({inr(periodSpent)})
           </div>
         </div>
       </div>
+
+      {/* Payment info notice */}
+      {!loading && payments === null && allBills.length > 0 && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-500">
+          Supplier payment records could not be loaded, so Paid and Balance show “—” for older bills.
+        </div>
+      )}
 
       {/* Date Groups Listing */}
       {loading ? (
@@ -1310,7 +1334,6 @@ export default function PurchaseHistoryPage() {
           {displayedGroups.map(group => {
             const isExpanded = expandedDates.has(group.date)
             const isToday = group.date === todayStr
-            const isYesterday = group.relativeLabel === "Yesterday"
 
             return (
               <Card
@@ -1324,7 +1347,7 @@ export default function PurchaseHistoryPage() {
                   className="w-full text-left"
                 >
                   <div className={`flex items-center justify-between gap-3 px-4 sm:px-6 py-4 transition-colors hover:bg-secondary/20 ${isExpanded ? "bg-secondary/20 border-b border-border/50" : "bg-card"}`}>
-                    
+
                     {/* Left: Date + Badge */}
                     <div className="flex items-center gap-3 min-w-0">
                       <div className={`p-2.5 rounded-xl shrink-0 ${isToday ? "bg-accent/20" : "bg-secondary/40"}`}>
@@ -1360,21 +1383,28 @@ export default function PurchaseHistoryPage() {
 
                     {/* Right: Summary stats + toggle icon */}
                     <div className="flex items-center gap-3 sm:gap-5 shrink-0">
+                      {/* Bills */}
+                      <div className="text-center hidden sm:block">
+                        <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Bills</p>
+                        <p className="font-bold text-sm font-code">{group.billCount}</p>
+                      </div>
                       {/* Total Qty */}
                       <div className="text-center hidden sm:block">
                         <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Qty</p>
                         <p className="font-bold text-sm font-code">{group.totalQty}</p>
                       </div>
-                      {/* Product count */}
-                      <div className="text-center hidden sm:block">
-                        <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Products</p>
-                        <p className="font-bold text-sm font-code">{group.purchases.length}</p>
-                      </div>
+                      {/* Balance */}
+                      {group.totalBalance !== null && group.totalBalance > 0 && (
+                        <div className="text-center hidden md:block">
+                          <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Balance</p>
+                          <p className="font-bold text-sm font-code text-amber-400">{inr(group.totalBalance)}</p>
+                        </div>
+                      )}
                       {/* Total Amount */}
                       <div className="text-right">
                         <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Day Total</p>
                         <p className={`font-bold text-base sm:text-lg font-code ${isToday ? "text-accent" : "text-emerald-400"}`}>
-                          ₹{group.totalAmount.toLocaleString()}
+                          {inr(group.totalAmount)}
                         </p>
                       </div>
                       {/* Toggle icon */}
@@ -1389,13 +1419,13 @@ export default function PurchaseHistoryPage() {
                   </div>
                 </button>
 
-                {/* ── EXPANDED PURCHASE DETAIL TABLE ── */}
+                {/* ── EXPANDED: ONE ROW PER BILL ── */}
                 {isExpanded && (
                   <CardContent className="p-0">
                     {/* Header bar inside expanded section with export day button */}
                     <div className="px-4 py-2.5 bg-secondary/10 border-b border-border/30 flex items-center justify-between gap-4 text-xs text-muted-foreground">
                       <div className="flex items-center gap-3">
-                        <span><span className="font-bold text-foreground">{group.purchases.length}</span> purchases</span>
+                        <span><span className="font-bold text-foreground">{group.billCount}</span> {group.billCount === 1 ? "bill" : "bills"}</span>
                         <span>•</span>
                         <span><span className="font-bold text-foreground">{group.totalQty}</span> total units</span>
                       </div>
@@ -1415,65 +1445,153 @@ export default function PurchaseHistoryPage() {
                     </div>
 
                     <div className="overflow-x-auto">
-                      <Table className="min-w-[700px]">
+                      <Table className="min-w-[860px]">
                         <TableHeader className="bg-secondary/10">
                           <TableRow className="border-border/30 hover:bg-transparent">
-                            <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3 pl-5 w-[45px]">#</TableHead>
-                            <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3 w-[120px]">Item Code</TableHead>
-                            <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3">Product Name</TableHead>
+                            <TableHead className="w-[40px] py-3 pl-4" />
+                            <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3 w-[100px]">Bill No</TableHead>
                             <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3">Supplier / Vendor</TableHead>
-                            <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3 text-center w-[75px]">Qty</TableHead>
-                            <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3 text-right w-[115px]">Purchase Cost</TableHead>
-                            <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3 text-right pr-5 w-[115px]">Subtotal</TableHead>
+                            <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3 text-center w-[80px]">Total Qty</TableHead>
+                            <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3 text-right w-[120px]">Total Amount</TableHead>
+                            <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3 text-right w-[115px]">Paid</TableHead>
+                            <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3 text-right w-[125px]">Balance</TableHead>
+                            <TableHead className="font-bold uppercase text-[10px] tracking-widest py-3 text-center pr-4 w-[130px]">Bill</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {group.purchases.map((p, i) => {
-                            const sup = supplierMap.get(p.supplierId)
-                            const code = getItemCode(p)
+                          {group.bills.map(bill => {
+                            const itemsOpen = expandedBills.has(bill.key)
+                            const hasBalance = bill.balance !== null && bill.balance > 0
                             return (
-                              <TableRow
-                                key={p.id || i}
-                                className="border-border/20 hover:bg-secondary/10 transition-colors"
-                              >
-                                <TableCell className="py-3 pl-5 text-xs text-muted-foreground font-code">
-                                  {i + 1}
-                                </TableCell>
-                                <TableCell className="py-3">
-                                  <span className="font-code text-xs font-semibold px-2 py-0.5 rounded bg-secondary/60 text-foreground border border-border/40 inline-block">
-                                    {code}
-                                  </span>
-                                </TableCell>
-                                <TableCell className="py-3">
-                                  <div className="flex items-center gap-2">
-                                    <Package className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                                    <span className="font-bold text-sm text-foreground">{p.productName}</span>
-                                  </div>
-                                </TableCell>
-                                <TableCell className="py-3">
-                                  <div>
-                                    <p className="text-xs font-bold text-foreground">{sup?.name ?? "Unknown"}</p>
-                                    {sup?.phone && (
-                                      <p className="text-[10px] text-muted-foreground font-code">📞 {sup.phone}</p>
+                              <React.Fragment key={bill.key}>
+                                <TableRow
+                                  className="border-border/20 hover:bg-secondary/10 transition-colors cursor-pointer"
+                                  onClick={() => toggleBillItems(bill.key)}
+                                >
+                                  <TableCell className="py-3 pl-4">
+                                    {itemsOpen ? (
+                                      <ChevronDown className="w-4 h-4 text-accent" />
+                                    ) : (
+                                      <ChevronRight className="w-4 h-4 text-muted-foreground opacity-60" />
                                     )}
-                                  </div>
-                                </TableCell>
-                                <TableCell className="py-3 text-center font-bold font-code">
-                                  {p.quantity}
-                                </TableCell>
-                                <TableCell className="py-3 text-right font-code text-amber-400 font-bold text-sm">
-                                  ₹{Number(p.purchasePrice).toLocaleString()}
-                                </TableCell>
-                                <TableCell className="py-3 text-right pr-5 font-code font-bold text-emerald-400 text-sm">
-                                  ₹{((Number(p.quantity) || 0) * (Number(p.purchasePrice) || 0)).toLocaleString()}
-                                </TableCell>
-                              </TableRow>
+                                  </TableCell>
+                                  <TableCell className="py-3">
+                                    <span className="font-code text-xs font-bold px-2 py-0.5 rounded bg-secondary/60 text-accent border border-border/40 inline-block">
+                                      Bill #{bill.billNumber}
+                                    </span>
+                                  </TableCell>
+                                  <TableCell className="py-3">
+                                    <p className="text-sm font-bold text-foreground">{bill.supplierName}</p>
+                                    <p className="text-[10px] text-muted-foreground font-code">
+                                      {bill.supplierPhone ? `📞 ${bill.supplierPhone} • ` : ""}
+                                      {bill.items.length} {bill.items.length === 1 ? "item" : "items"}
+                                    </p>
+                                  </TableCell>
+                                  <TableCell className="py-3 text-center font-bold font-code">{bill.totalQty}</TableCell>
+                                  <TableCell className="py-3 text-right font-code font-bold text-foreground text-sm">
+                                    {inr(bill.totalAmount)}
+                                  </TableCell>
+                                  <TableCell className="py-3 text-right font-code font-bold text-emerald-400 text-sm">
+                                    {bill.paid === null ? <span className="text-muted-foreground">—</span> : inr(bill.paid)}
+                                  </TableCell>
+                                  <TableCell className="py-3 text-right">
+                                    {bill.balance === null ? (
+                                      <span className="text-muted-foreground font-code">—</span>
+                                    ) : hasBalance ? (
+                                      <div className="flex flex-col items-end gap-0.5">
+                                        <span className="font-code font-bold text-amber-400 text-sm">{inr(bill.balance)}</span>
+                                        <Badge variant="outline" className="border-amber-500/50 bg-amber-500/10 text-amber-400 text-[8px] px-1 py-0 h-3.5 font-bold uppercase leading-none">
+                                          Credit
+                                        </Badge>
+                                      </div>
+                                    ) : (
+                                      <Badge variant="outline" className="border-emerald-500/50 bg-emerald-500/10 text-emerald-400 text-[9px] px-1.5 py-0 h-4 font-bold">
+                                        ✓ Paid
+                                      </Badge>
+                                    )}
+                                  </TableCell>
+                                  <TableCell className="py-3 text-center pr-4">
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-8 px-3 text-xs font-bold gap-1.5 rounded-lg border-accent/40 text-accent hover:bg-accent/10"
+                                      onClick={e => {
+                                        e.stopPropagation()
+                                        openBill(bill)
+                                      }}
+                                      title="Open this bill in Purchase Entry (you can edit it there)"
+                                    >
+                                      <Eye className="w-3.5 h-3.5" />
+                                      View Bill
+                                    </Button>
+                                  </TableCell>
+                                </TableRow>
+
+                                {/* Items inside this bill */}
+                                {itemsOpen && (
+                                  <TableRow className="bg-secondary/5 border-border/30 hover:bg-secondary/5">
+                                    <TableCell colSpan={8} className="py-0 px-4 sm:px-8">
+                                      <div className="py-3 space-y-2">
+                                        <p className="text-[10px] uppercase font-bold tracking-widest text-accent flex items-center gap-1.5">
+                                          <Package className="w-3.5 h-3.5" /> Items in Bill #{bill.billNumber}
+                                        </p>
+                                        <div className="rounded-xl overflow-hidden border border-border/30 bg-card/60">
+                                          <table className="w-full text-xs">
+                                            <thead className="bg-secondary/40 border-b border-border/20 text-muted-foreground">
+                                              <tr>
+                                                <th className="text-left p-2 pl-4 text-[9px] font-bold uppercase w-8">#</th>
+                                                <th className="text-left p-2 text-[9px] font-bold uppercase">Item Code</th>
+                                                <th className="text-left p-2 text-[9px] font-bold uppercase">Product Name</th>
+                                                <th className="text-center p-2 text-[9px] font-bold uppercase">Qty</th>
+                                                <th className="text-right p-2 text-[9px] font-bold uppercase">Cost</th>
+                                                <th className="text-right p-2 text-[9px] font-bold uppercase">GST</th>
+                                                <th className="text-right p-2 pr-4 text-[9px] font-bold uppercase">Subtotal</th>
+                                              </tr>
+                                            </thead>
+                                            <tbody>
+                                              {bill.items.map((p, i) => {
+                                                const qty = Number(p.quantity) || 0
+                                                const cost = Number(p.purchasePrice) || 0
+                                                const gst = Number(p.taxAmount) || 0
+                                                return (
+                                                  <tr key={p.id || i} className="border-t border-border/10 hover:bg-secondary/10">
+                                                    <td className="p-2 pl-4 text-muted-foreground font-code">{i + 1}</td>
+                                                    <td className="p-2">
+                                                      <span className="font-code font-semibold px-1.5 py-0.5 rounded bg-secondary/60 border border-border/40">
+                                                        {getItemCode(p)}
+                                                      </span>
+                                                    </td>
+                                                    <td className="p-2 font-bold text-foreground">{p.productName}</td>
+                                                    <td className="p-2 text-center font-bold font-code">{qty}</td>
+                                                    <td className="p-2 text-right font-code text-amber-400 font-bold">{inr(cost)}</td>
+                                                    <td className="p-2 text-right font-code text-cyan-400">{gst ? inr(gst) : "—"}</td>
+                                                    <td className="p-2 pr-4 text-right font-code font-bold text-emerald-400">{inr(qty * cost + gst)}</td>
+                                                  </tr>
+                                                )
+                                              })}
+                                            </tbody>
+                                          </table>
+                                        </div>
+                                        {(bill.discount > 0 || bill.roundOff !== 0) && (
+                                          <p className="text-[11px] text-muted-foreground font-code">
+                                            Items {inr(bill.subtotal)}
+                                            {bill.discount > 0 && <> • Discount −{inr(bill.discount)}</>}
+                                            {bill.roundOff !== 0 && <> • Round off {bill.roundOff > 0 ? "+" : "−"}{inr(Math.abs(bill.roundOff))}</>}
+                                            {" "}• Bill total {inr(bill.totalAmount)}
+                                          </p>
+                                        )}
+                                      </div>
+                                    </TableCell>
+                                  </TableRow>
+                                )}
+                              </React.Fragment>
                             )
                           })}
 
                           {/* Day Total Row */}
                           <TableRow className="bg-secondary/20 border-t-2 border-border/60 hover:bg-secondary/20">
-                            <TableCell colSpan={4} className="py-3 pl-5">
+                            <TableCell colSpan={3} className="py-3 pl-5">
                               <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
                                 Day Total — {group.displayDate} {group.relativeLabel ? `(${group.relativeLabel})` : ""}
                               </span>
@@ -1482,14 +1600,18 @@ export default function PurchaseHistoryPage() {
                               <span className="font-bold font-code text-sm">{group.totalQty}</span>
                               <span className="text-[10px] text-muted-foreground ml-1">units</span>
                             </TableCell>
-                            <TableCell className="py-3 text-right text-xs text-muted-foreground">
-                              {group.purchases.length} items
-                            </TableCell>
-                            <TableCell className="py-3 text-right pr-5">
-                              <span className={`font-bold font-code text-lg ${isToday ? "text-accent" : "text-emerald-400"}`}>
-                                ₹{group.totalAmount.toLocaleString()}
+                            <TableCell className="py-3 text-right">
+                              <span className={`font-bold font-code text-base ${isToday ? "text-accent" : "text-foreground"}`}>
+                                {inr(group.totalAmount)}
                               </span>
                             </TableCell>
+                            <TableCell className="py-3 text-right font-code font-bold text-emerald-400 text-sm">
+                              {group.totalPaid === null ? "—" : inr(group.totalPaid)}
+                            </TableCell>
+                            <TableCell className="py-3 text-right font-code font-bold text-amber-400 text-sm">
+                              {group.totalBalance === null ? "—" : inr(group.totalBalance)}
+                            </TableCell>
+                            <TableCell />
                           </TableRow>
                         </TableBody>
                       </Table>

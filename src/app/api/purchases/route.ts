@@ -46,7 +46,10 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    let { supplierId, productId, productName, itemCode, quantity, purchasePrice, taxRate, taxAmount, billingDate } = body;
+    let {
+  supplierId, productId, productName, itemCode, quantity, purchasePrice, taxRate, taxAmount, billingDate,
+  billId, billTotal, discount, roundOff, paidAmount, paymentMode,
+} = body;
 
     // Handle missing or invalid supplier gracefully by linking to or creating a default supplier
     if (!supplierId || supplierId === 'undefined' || supplierId === 'null') {
@@ -92,18 +95,26 @@ export async function POST(request: Request) {
       finalProductId = prod._id.toString();
     }
 
-    const purchase = await Purchase.create({
-      userId,
-      supplierId: String(supplierId),
-      productId: finalProductId,
-      productName: cleanName,
-      itemCode: itemCode ? String(itemCode).trim() : '',
-      quantity: qty,
-      purchasePrice: cost,
-      taxRate: Number(taxRate) || 0,
-      taxAmount: Number(taxAmount) || 0,
-      billingDate: billingDate || new Date().toISOString().split('T')[0],
-    });
+   const num = (v: any) => (v === undefined || v === null || v === '' || !Number.isFinite(Number(v)) ? undefined : Number(v));
+
+const purchase = await Purchase.create({
+  userId,
+  supplierId: String(supplierId),
+  productId: finalProductId,
+  productName: cleanName,
+  itemCode: itemCode ? String(itemCode).trim() : '',
+  quantity: qty,
+  purchasePrice: cost,
+  taxRate: Number(taxRate) || 0,
+  taxAmount: Number(taxAmount) || 0,
+  billingDate: billingDate || new Date().toISOString().split('T')[0],
+  ...(billId ? { billId: String(billId) } : {}),
+  ...(num(billTotal) !== undefined ? { billTotal: num(billTotal) } : {}),
+  ...(num(discount) !== undefined ? { discount: num(discount) } : {}),
+  ...(num(roundOff) !== undefined ? { roundOff: num(roundOff) } : {}),
+  ...(num(paidAmount) !== undefined ? { paidAmount: num(paidAmount) } : {}),
+  ...(paymentMode ? { paymentMode: String(paymentMode) } : {}),
+});
 
     const obj = purchase.toObject() as any;
     obj.id = obj._id.toString();

@@ -626,12 +626,16 @@ export default function InventoryPage() {
       })
   }, [products, modalSearch, modalCategoryFilter, modalSupplierFilter, modalSortBy, modalSortOrder])
   
-  const filteredProducts = products.filter(p => {
-    const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          p.sku.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesLowStock = showOnlyLowStock ? p.stock <= p.minStock : true;
-    return matchesSearch && matchesLowStock;
-  })
+  const filteredProducts = React.useMemo(() => {
+    const q = searchQuery.toLowerCase()
+    return products.filter(p => {
+      const matchesSearch =
+        p.name.toLowerCase().includes(q) ||
+        p.sku.toLowerCase().includes(q)
+      const matchesLowStock = showOnlyLowStock ? p.stock <= p.minStock : true
+      return matchesSearch && matchesLowStock
+    })
+  }, [products, searchQuery, showOnlyLowStock])
 
   const groupedProducts = React.useMemo(() => {
     return categories.reduce((acc, category) => {
@@ -643,12 +647,15 @@ export default function InventoryPage() {
     }, {} as Record<string, Product[]>)
   }, [categories, filteredProducts])
 
-  // Keep category accordions closed by default; auto-expand matching categories only during search
+    // Keep category accordions closed by default; auto-expand matching categories only during search.
+  // Depend on a stable string key (not the object) so the effect only runs when the matching categories really change.
+  const groupedKeys = Object.keys(groupedProducts).join("|")
   React.useEffect(() => {
     if (searchQuery.trim().length > 0) {
-      setOpenCategories(Object.keys(groupedProducts))
+      setOpenCategories(groupedKeys ? groupedKeys.split("|") : [])
     }
-  }, [searchQuery, groupedProducts])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery, groupedKeys])
 
   const suggestionsInAdd = React.useMemo(() => {
     if (searchInAdd.length < 2) return []

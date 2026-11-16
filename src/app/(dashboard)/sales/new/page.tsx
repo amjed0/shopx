@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { createPortal } from "react-dom"
 import {
   Search,
   Plus,
@@ -61,13 +62,28 @@ interface Customer {
 }
 
 interface BillItem {
-  product: Product
+  rowId: string
+  product: Product | null // null = empty row (no product picked yet)
+  query: string           // text typed in the product name box
   quantity: number
   price: number
   taxRate: number // GST rate %
   taxAmount: number // GST amount in ₹
 }
 
+type FilledItem = BillItem & { product: Product }
+
+const newRowId = () => `row-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+
+const createBlankRow = (): BillItem => ({
+  rowId: newRowId(),
+  product: null,
+  query: "",
+  quantity: 1,
+  price: 0,
+  taxRate: 0,
+  taxAmount: 0,
+})
 interface ShopProfile {
   companyName?: string
   gstNumber?: string
@@ -139,7 +155,12 @@ export default function NewBillPage() {
 
   // ── Inventory & Billing ──
   const [productSearch, setProductSearch] = React.useState("")
-  const [billItems, setBillItems] = React.useState<BillItem[]>([])
+  const [billRows, setBillRows] = React.useState<BillItem[]>(() => [createBlankRow()])
+  // Only rows that really have a product (the empty spare row is ignored in totals / saving)
+  const billItems = React.useMemo(
+    () => billRows.filter((r): r is FilledItem => r.product !== null),
+    [billRows]
+  )
   const [paymentMethod, setPaymentMethod] = React.useState<string>("upi")
   const [isSubmitting, setIsSubmitting] = React.useState(false)
 
@@ -264,79 +285,259 @@ export default function NewBillPage() {
   }, [productSearch, products, productSalesCount])
 
   // Cart operations
-  const addItem = (product: Product) => {
-    setBillItems(prev => {
-      const existing = prev.find(item => item.product.id === product.id)
-      if (existing) {
-        return prev.map(item =>
-          item.product.id === product.id
-            ? {
-                ...item,
-                quantity: item.quantity + 1,
-                taxAmount: item.taxRate > 0 ? Number((((item.quantity + 1) * item.price * item.taxRate) / 100).toFixed(2)) : 0,
-              }
-            : item
+  // ── Sheet rows ──
+  const withQty = (r: BillItem, q: number): BillItem => ({
+    ...r,
+    quantity: q,
+    taxAmount: r.taxRate > 0 ? Number(((q * r.price * r.taxRate) / 100).toFixed(2)) : 0,
+  })
+
+  const rowFromProduct = (base: BillItem, product: Product): BillItem => ({
+    ...base,
+    product,
+    query: product.name,
+    price: product.sellingPrice,
+    taxAmount:
+      base.taxRate > 0
+        ? Number(((base.quantity * product.sellingPrice * base.taxRate) / 100).toFixed(2))
+        : 0,
+  })
+
+  const patchRow = (rowId: string, fn: (r: BillItem) => BillItem) =>
+    setBillRows(prev => prev.map(r => (r.rowId === rowId ? fn(r) : r)))
+
+  // Autocomplete state for the product name box
+  const [activeSuggestionRowId, setActiveSuggestionRowId] = React.useState<string | null>(null)
+  const [highlightedSuggestionIndex, setHighlightedSuggestionIndex] = React.useState(0)
+  const [pendingFocusCell, setPendingFocusCell] = React.useState<string | null>(null)
+
+  // Screen position of the autocomplete dropdown (rendered in a portal so no parent can clip it)
+  const [dropdownPos, setDropdownPos] = React.useState<{ top: number; left: number; width: number } | null>(null)
+
+  const updateDropdownPos = React.useCallback((rowIndex: number) => {
+    const el = document.getElementById(`cell-${rowIndex}-0`)
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    setDropdownPos({ top: r.bottom + 4, left: r.left, width: Math.max(r.width, 340) })
+  }, [])
+
+  // Keep the dropdown glued to the input on scroll / resize
+  React.useEffect(() => {
+    if (!activeSuggestionRowId) return
+    const idx = billRows.findIndex(r => r.rowId === activeSuggestionRowId)
+    if (idx < 0) return
+    const update = () => updateDropdownPos(idx)
+    update()
+    window.addEventListener("scroll", update, true) // capture: catches the table's inner scroll
+    window.addEventListener("resize", update)
+    return () => {
+      window.removeEventListener("scroll", update, true)
+      window.removeEventListener("resize", update)
+    }
+  }, [activeSuggestionRowId, billRows, updateDropdownPos])
+
+  const matchingSuggestions = React.useMemo(() => {
+    if (!activeSuggestionRowId) return []
+    const row = billRows.find(r => r.rowId === activeSuggestionRowId)
+    const q = (row?.query || "").trim().toLowerCase()
+    if (!q) return []
+    const qClean = q.replace(/[^a-z0-9]/g, "")
+    return products
+      .filter(p => {
+        const n = (p.name || "").toLowerCase()
+        const s = (p.sku || "").toLowerCase()
+        return (
+          n.includes(q) ||
+          s.includes(q) ||
+          (qClean.length > 0 && n.replace(/[^a-z0-9]/g, "").includes(qClean))
         )
+      })
+      .slice(0, 8)
+  }, [products, billRows, activeSuggestionRowId])
+
+  // Focus a cell that was just created (new row)
+  React.useEffect(() => {
+    if (!pendingFocusCell) return
+    const raf = requestAnimationFrame(() => {
+      const el = document.getElementById(pendingFocusCell) as HTMLInputElement | null
+      if (el) {
+        el.focus()
+        el.select?.()
+        setPendingFocusCell(null)
       }
-      return [
-        ...prev,
-        {
-          product,
-          quantity: 1,
-          price: product.sellingPrice,
-          taxRate: 0,
-          taxAmount: 0,
-        },
-      ]
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [billRows, pendingFocusCell])
+
+  // Fast Add cards: put the product into the first empty row (or add a row)
+  const addItem = (product: Product) => {
+    setBillRows(prev => {
+      const existing = prev.find(r => r.product?.id === product.id)
+      if (existing) {
+        return prev.map(r => (r.rowId === existing.rowId ? withQty(r, r.quantity + 1) : r))
+      }
+      const blankIdx = prev.findIndex(r => !r.product && !r.query.trim())
+      if (blankIdx >= 0) {
+        return prev.map((r, i) => (i === blankIdx ? rowFromProduct(r, product) : r))
+      }
+      return [...prev, rowFromProduct(createBlankRow(), product)]
     })
     toast({ title: "Added to Bill", description: product.name })
   }
 
-  const removeItem = (productId: string) => setBillItems(prev => prev.filter(item => item.product.id !== productId))
+  // Pick a product for a specific row. Returns true if it was merged into an existing row.
+  const selectProductForRow = (rowId: string, product: Product): boolean => {
+    const dup = billRows.find(r => r.rowId !== rowId && r.product?.id === product.id)
+    if (dup) {
+      setBillRows(prev =>
+        prev.map(r => {
+          if (r.rowId === dup.rowId) return withQty(r, r.quantity + 1)
+          if (r.rowId === rowId) return { ...r, product: null, query: "" }
+          return r
+        })
+      )
+      toast({ title: "Already in bill", description: `Increased quantity of ${product.name}.` })
+    } else {
+      patchRow(rowId, r => rowFromProduct(r, product))
+    }
+    setActiveSuggestionRowId(null)
+    return !!dup
+  }
 
-  const updateItemQuantity = (productId: string, quantity: number) => {
+  const removeItem = (rowId: string) =>
+    setBillRows(prev => {
+      const next = prev.filter(r => r.rowId !== rowId)
+      return next.length === 0 ? [createBlankRow()] : next
+    })
+
+  const updateItemQuantity = (rowId: string, quantity: number) => {
     const validQty = Math.max(1, quantity)
-    setBillItems(prev =>
-      prev.map(item => {
-        if (item.product.id !== productId) return item
-        const taxAmount = item.taxRate > 0 ? Number(((validQty * item.price * item.taxRate) / 100).toFixed(2)) : 0
-        return { ...item, quantity: validQty, taxAmount }
-      })
-    )
+    patchRow(rowId, r => withQty(r, validQty))
   }
 
-  const updateItemPrice = (productId: string, price: number) => {
+  const updateItemPrice = (rowId: string, price: number) => {
     const validPrice = Math.max(0, price)
-    setBillItems(prev =>
-      prev.map(item => {
-        if (item.product.id !== productId) return item
-        const taxAmount = item.taxRate > 0 ? Number(((item.quantity * validPrice * item.taxRate) / 100).toFixed(2)) : 0
-        return { ...item, price: validPrice, taxAmount }
-      })
-    )
+    patchRow(rowId, r => ({
+      ...r,
+      price: validPrice,
+      taxAmount: r.taxRate > 0 ? Number(((r.quantity * validPrice * r.taxRate) / 100).toFixed(2)) : 0,
+    }))
   }
 
-  const updateItemTaxRate = (productId: string, taxRate: number) => {
+  const updateItemTaxRate = (rowId: string, taxRate: number) => {
     const validRate = Math.max(0, taxRate)
-    setBillItems(prev =>
-      prev.map(item => {
-        if (item.product.id !== productId) return item
-        const taxAmount = Number(((item.quantity * item.price * validRate) / 100).toFixed(2))
-        return { ...item, taxRate: validRate, taxAmount }
-      })
-    )
+    patchRow(rowId, r => ({
+      ...r,
+      taxRate: validRate,
+      taxAmount: Number(((r.quantity * r.price * validRate) / 100).toFixed(2)),
+    }))
   }
 
-  const updateItemTaxAmount = (productId: string, taxAmount: number) => {
+  const updateItemTaxAmount = (rowId: string, taxAmount: number) => {
     const validAmount = Math.max(0, taxAmount)
-    setBillItems(prev =>
-      prev.map(item => {
-        if (item.product.id !== productId) return item
-        const base = item.quantity * item.price
-        const taxRate = base > 0 ? Number(((validAmount / base) * 100).toFixed(1)) : 0
-        return { ...item, taxAmount: validAmount, taxRate }
-      })
-    )
+    patchRow(rowId, r => {
+      const base = r.quantity * r.price
+      const taxRate = base > 0 ? Number(((validAmount / base) * 100).toFixed(1)) : 0
+      return { ...r, taxAmount: validAmount, taxRate }
+    })
+  }
+
+  // ── Keyboard navigation: 0 name, 1 qty, 2 price, 3 GST %, 4 GST ₹ ──
+  const TOTAL_INPUT_COLS = 5
+
+  const focusCell = (r: number, c: number) => {
+    const el = document.getElementById(`cell-${r}-${c}`) as HTMLInputElement | null
+    el?.focus()
+    el?.select?.()
+  }
+
+  const handleCellKeyDown = (
+    e: React.KeyboardEvent<HTMLInputElement>,
+    rowIndex: number,
+    colIndex: number
+  ) => {
+    const row = billRows[rowIndex]
+    if (!row) return
+    const suggesting =
+      colIndex === 0 && activeSuggestionRowId === row.rowId && matchingSuggestions.length > 0
+
+    // 1. Autocomplete popup is open
+    if (suggesting) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault()
+        setHighlightedSuggestionIndex(prev => (prev + 1) % matchingSuggestions.length)
+        return
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault()
+        setHighlightedSuggestionIndex(
+          prev => (prev - 1 + matchingSuggestions.length) % matchingSuggestions.length
+        )
+        return
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        const picked =
+          matchingSuggestions[Math.min(highlightedSuggestionIndex, matchingSuggestions.length - 1)]
+        if (picked) {
+          e.preventDefault()
+          const merged = selectProductForRow(row.rowId, picked)
+          focusCell(rowIndex, merged ? 0 : 1) // go to Qty
+          return
+        }
+      }
+      if (e.key === "Escape") {
+        e.preventDefault()
+        setActiveSuggestionRowId(null)
+        return
+      }
+    }
+
+    // 2. Enter moves through the cells
+    if (e.key === "Enter") {
+      e.preventDefault()
+
+      if (e.shiftKey) {
+        if (colIndex > 0) focusCell(rowIndex, colIndex - 1)
+        else if (rowIndex > 0) focusCell(rowIndex - 1, TOTAL_INPUT_COLS - 1)
+        return
+      }
+
+      // Product name must be picked from inventory before moving on
+      if (colIndex === 0 && !row.product) {
+        if (row.query.trim()) {
+          toast({
+            variant: "destructive",
+            title: "Product not found",
+            description: "Pick a product from the list (it must exist in Inventory).",
+          })
+        }
+        return
+      }
+
+      if (colIndex < TOTAL_INPUT_COLS - 1) {
+        focusCell(rowIndex, colIndex + 1)
+        return
+      }
+
+      // Last column
+      if (rowIndex < billRows.length - 1) {
+        focusCell(rowIndex + 1, 0)
+        return
+      }
+      if (!row.product) return
+      setBillRows(prev => [...prev, createBlankRow()])
+      setPendingFocusCell(`cell-${rowIndex + 1}-0`)
+      return
+    }
+
+    // 3. Up / Down between rows in the name column
+    if (colIndex === 0 && e.key === "ArrowDown" && rowIndex < billRows.length - 1) {
+      e.preventDefault()
+      focusCell(rowIndex + 1, 0)
+    } else if (colIndex === 0 && e.key === "ArrowUp" && rowIndex > 0) {
+      e.preventDefault()
+      focusCell(rowIndex - 1, 0)
+    }
   }
 
   // Financial calculations
@@ -457,36 +658,42 @@ export default function NewBillPage() {
     setBillingDate(sale.date ? sale.date.split("T")[0] : new Date().toISOString().split("T")[0])
     setManualCustomerName(sale.customerName || "")
     setManualCustomerPhone(sale.customerPhone || "")
-    setManualCustomerEmail((sale as any).customerEmail || (cust as any)?.email || "")
+
+    // find the customer FIRST, then use it
     const cust = customers.find(c => c.name === sale.customerName || c.id === (sale as any).customerId)
+    setManualCustomerEmail((sale as any).customerEmail || cust?.email || "")
     setSelectedCustomer(cust || null)
     setPaymentMethod(sale.paymentMethod || "cash")
 
-    // Map sale items to billing cart items
-    const mapped = (sale.items || []).map((it: any) => {
-      const prod = products.find(p => p.id === it.productId || p.name.toLowerCase() === it.productName.toLowerCase())
+    const rows: BillItem[] = (sale.items || []).map((it: any) => {
+      const prod = products.find(
+        p => p.id === it.productId || p.name.toLowerCase() === (it.productName || "").toLowerCase()
+      )
       const pCost = it.price || prod?.sellingPrice || 0
       const pQty = it.quantity || 1
       const pTaxRate = it.taxRate || 0
       const pTaxAmount = it.taxAmount || (pTaxRate > 0 ? (pQty * pCost * pTaxRate) / 100 : 0)
+      const product: Product = prod || {
+        id: it.productId || `prod-${Math.random().toString(36).slice(2)}`,
+        name: it.productName,
+        sku: it.sku || "SX-SKU",
+        purchasePrice: 0,
+        sellingPrice: pCost,
+        stock: 99,
+        minStock: 2,
+        category: "General",
+      }
       return {
-        product: prod || {
-          id: it.productId || `prod-${Math.random().toString(36).slice(2)}`,
-          name: it.productName,
-          sku: it.sku || "SX-SKU",
-          purchasePrice: 0,
-          sellingPrice: pCost,
-          stock: 99,
-          minStock: 2,
-          category: "General",
-        },
+        rowId: newRowId(),
+        product,
+        query: product.name,
         quantity: pQty,
         price: pCost,
         taxRate: pTaxRate,
         taxAmount: pTaxAmount,
       }
     })
-    setBillItems(mapped)
+    setBillRows(rows.length > 0 ? rows : [createBlankRow()])
     setDiscountValue(sale.discount || 0)
     setDiscountType("flat")
     toast({
@@ -497,7 +704,7 @@ export default function NewBillPage() {
 
   const handleResetToNewBill = () => {
     setCurrentBillIndex(-1)
-    setBillItems([])
+    setBillRows([createBlankRow()])
     setSelectedCustomer(null)
     setManualCustomerName("")
     setManualCustomerPhone("")
@@ -516,7 +723,7 @@ export default function NewBillPage() {
     setIsInvoiceModalOpen(false)
     if (wasSaleCompleted) {
       setCurrentBillIndex(-1)
-      setBillItems([])
+      setBillRows([createBlankRow()])
       setSelectedCustomer(null)
       setManualCustomerName("")
       setManualCustomerPhone("")
@@ -695,7 +902,7 @@ export default function NewBillPage() {
     // Auto-save customer if typed manually and not already selected
     let activeCustomer = selectedCustomer
     if (!activeCustomer && manualCustomerName.trim() && manualCustomerName.trim().toLowerCase() !== "walk-in customer") {
-      const match = customers.find(c => 
+      const match = customers.find(c =>
         (manualCustomerPhone.trim() && c.phone === manualCustomerPhone.trim()) ||
         c.name.toLowerCase() === manualCustomerName.trim().toLowerCase()
       )
@@ -1257,44 +1464,17 @@ export default function NewBillPage() {
             <span>Billing Invoice Sheet</span>
             {billItems.length > 0 && <Badge className="ml-1.5">{billItems.length}</Badge>}
           </CardTitle>
-
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Generate Bill Button */}
-            <Button
-              type="button"
-              variant="outline"
-              className="h-10 px-4 font-bold rounded-xl border-primary/40 text-primary hover:bg-primary/10 gap-1.5 shadow-sm"
-              onClick={handleGenerateBill}
-              disabled={billItems.length === 0}
-            >
-              <Receipt className="w-4 h-4" />
-              <span>Generate Bill</span>
-            </Button>
-
-            {/* Complete Sale Button */}
-            <Button
-              className="h-10 px-5 bg-primary text-primary-foreground font-bold rounded-xl shadow-lg shadow-primary/20 hover:brightness-110 transition-all gap-1.5"
-              onClick={handleCompleteSale}
-              disabled={billItems.length === 0 || isSubmitting || isCreditMissingCustomer}
-            >
-              {isSubmitting ? (
-                <><Loader2 className="w-4 h-4 animate-spin" /> Processing...</>
-              ) : (
-                <><CheckCircle2 className="w-4 h-4" /> Complete Sale</>
-              )}
-            </Button>
-          </div>
         </CardHeader>
 
         <CardContent className="p-0 sm:p-0">
           <div className="grid gap-0 lg:grid-cols-3">
             {/* Items Table (Left 2 columns) */}
-            <div className="lg:col-span-2 border-b lg:border-b-0 lg:border-r border-border/50 overflow-x-auto">
-              <Table className="min-w-[620px] w-full">
+            <div className="lg:col-span-2 border-b lg:border-b-0 lg:border-r border-border/50 overflow-x-auto min-h-[340px]">
+              <Table className="min-w-[700px] w-full">
                 <TableHeader className="bg-secondary/20">
                   <TableRow className="border-border/40 hover:bg-transparent">
                     <TableHead className="w-8 text-center text-[10px] font-bold uppercase py-2.5 px-2">#</TableHead>
-                    <TableHead className="text-[10px] font-bold uppercase py-2.5 px-2 min-w-[150px]">Product</TableHead>
+                    <TableHead className="text-[10px] font-bold uppercase py-2.5 px-2 min-w-[200px]">Product</TableHead>
                     <TableHead className="w-[100px] text-center text-[10px] font-bold uppercase py-2.5 px-1">Qty</TableHead>
                     <TableHead className="w-[100px] text-right text-[10px] font-bold uppercase py-2.5 px-1">Price (₹)</TableHead>
                     <TableHead className="w-[80px] text-center text-[10px] font-bold uppercase py-2.5 px-1">GST (%)</TableHead>
@@ -1304,40 +1484,139 @@ export default function NewBillPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {billItems.map((item, idx) => {
-                    const rowLine = (item.quantity * item.price) + (item.taxAmount || 0)
+                  {billRows.map((row, idx) => {
+                    const rowLine = row.product ? row.quantity * row.price + (row.taxAmount || 0) : 0
+                    const showDropdown =
+                      activeSuggestionRowId === row.rowId && matchingSuggestions.length > 0
 
                     return (
-                      <TableRow key={item.product.id} className="border-border/30 hover:bg-secondary/10 group">
+                      <TableRow key={row.rowId} className="border-border/30 hover:bg-secondary/10 group">
                         <TableCell className="text-center font-code text-xs text-muted-foreground py-2 px-2">
                           {idx + 1}
                         </TableCell>
-                        <TableCell className="py-2 px-2">
-                          <p className="font-bold text-xs text-foreground truncate">{item.product.name}</p>
-                          <p className="text-[10px] text-muted-foreground font-code">{item.product.sku}</p>
+
+                        {/* Product name with live search */}
+                        <TableCell className="py-2 px-2 relative">
+                          <div className="relative">
+                            <input
+                              id={`cell-${idx}-0`}
+                              type="text"
+                              autoComplete="off"
+                              value={row.query}
+                              placeholder="Search product name or SKU..."
+                              onChange={e => {
+                                const val = e.target.value
+                                patchRow(row.rowId, r => ({
+                                  ...r,
+                                  query: val,
+                                  product: r.product && val === r.product.name ? r.product : null,
+                                }))
+                                if (val.trim()) {
+                                  setActiveSuggestionRowId(row.rowId)
+                                  setHighlightedSuggestionIndex(0)
+                                } else {
+                                  setActiveSuggestionRowId(null)
+                                }
+                              }}
+                              onKeyDown={e => handleCellKeyDown(e, idx, 0)}
+                              onFocus={e => {
+                                e.target.select()
+                                if (!row.product && row.query.trim()) {
+                                  setActiveSuggestionRowId(row.rowId)
+                                  setHighlightedSuggestionIndex(0)
+                                }
+                              }}
+                              onBlur={() => {
+                                setTimeout(() => {
+                                  setActiveSuggestionRowId(curr => (curr === row.rowId ? null : curr))
+                                }, 180)
+                              }}
+                              className="w-full min-w-[180px] h-8 px-2 text-xs font-bold bg-secondary/30 border border-slate-600 rounded focus:border-primary focus:outline-none"
+                              title="Type to search inventory, press Enter to pick and move to Qty"
+                            />
+                            {row.product && (
+                              <p className="text-[10px] text-muted-foreground font-code mt-0.5">
+                                {row.product.sku} • Stock: {row.product.stock}
+                              </p>
+                            )}
+
+                            {/* Dropdown is portaled to document.body so no overflow parent can clip it */}
+                            {showDropdown && dropdownPos &&
+                              createPortal(
+                                <div
+                                  style={{
+                                    position: "fixed",
+                                    top: dropdownPos.top,
+                                    left: dropdownPos.left,
+                                    width: dropdownPos.width,
+                                  }}
+                                  className="bg-card border border-border rounded-xl shadow-2xl z-[100] overflow-hidden max-h-56 overflow-y-auto"
+                                  onMouseDown={e => e.preventDefault()}
+                                >
+                                  <div className="px-3 py-1.5 bg-secondary/40 border-b border-border/50 text-[10px] font-bold uppercase tracking-wider text-primary">
+                                    Inventory ({matchingSuggestions.length}) • ↑↓ Enter to pick
+                                  </div>
+                                  {matchingSuggestions.map((p, sIdx) => (
+                                    <button
+                                      key={p.id}
+                                      type="button"
+                                      onClick={() => {
+                                        const merged = selectProductForRow(row.rowId, p)
+                                        focusCell(idx, merged ? 0 : 1)
+                                      }}
+                                      className={cn(
+                                        "w-full p-2.5 text-left border-b border-border/20 last:border-0 flex justify-between items-center transition-colors",
+                                        sIdx === highlightedSuggestionIndex
+                                          ? "bg-primary/15"
+                                          : "hover:bg-secondary/60"
+                                      )}
+                                    >
+                                      <div className="min-w-0 pr-2">
+                                        <p className="font-bold text-xs truncate text-foreground">{p.name}</p>
+                                        <p className="text-[10px] text-muted-foreground font-code">
+                                          {p.sku} • {p.category} •{" "}
+                                          <span className={p.stock > 0 ? "text-emerald-400 font-bold" : "text-amber-400 font-semibold"}>
+                                            Stock: {p.stock}
+                                          </span>
+                                        </p>
+                                      </div>
+                                      <span className="font-code text-xs font-bold text-primary shrink-0">
+                                        ₹{(p.sellingPrice || 0).toLocaleString()}
+                                      </span>
+                                    </button>
+                                  ))}
+                                </div>,
+                                document.body
+                              )}
+                          </div>
                         </TableCell>
 
-                        {/* Qty Stepper */}
+                        {/* Qty */}
                         <TableCell className="py-2 px-1 text-center">
                           <div className="flex items-center justify-center bg-secondary/50 rounded-lg p-0.5 border border-border/40 w-fit mx-auto">
                             <button
                               type="button"
+                              tabIndex={-1}
                               className="w-5 h-6 rounded flex items-center justify-center hover:bg-background text-xs font-bold"
-                              onClick={() => updateItemQuantity(item.product.id, item.quantity - 1)}
+                              onClick={() => updateItemQuantity(row.rowId, row.quantity - 1)}
                             >
                               -
                             </button>
                             <input
+                              id={`cell-${idx}-1`}
                               type="number"
                               min={1}
-                              value={item.quantity}
-                              onChange={e => updateItemQuantity(item.product.id, Number(e.target.value) || 1)}
+                              value={row.quantity}
+                              onChange={e => updateItemQuantity(row.rowId, Number(e.target.value) || 1)}
+                              onKeyDown={e => handleCellKeyDown(e, idx, 1)}
+                              onFocus={e => e.target.select()}
                               className="w-8 text-center text-xs font-bold bg-transparent border-none focus:outline-none"
                             />
                             <button
                               type="button"
+                              tabIndex={-1}
                               className="w-5 h-6 rounded flex items-center justify-center hover:bg-background text-xs font-bold"
-                              onClick={() => updateItemQuantity(item.product.id, item.quantity + 1)}
+                              onClick={() => updateItemQuantity(row.rowId, row.quantity + 1)}
                             >
                               +
                             </button>
@@ -1347,11 +1626,14 @@ export default function NewBillPage() {
                         {/* Unit Price */}
                         <TableCell className="py-2 px-1 text-right">
                           <input
+                            id={`cell-${idx}-2`}
                             type="number"
                             min={0}
                             step="any"
-                            value={item.price}
-                            onChange={e => updateItemPrice(item.product.id, Number(e.target.value) || 0)}
+                            value={row.price}
+                            onChange={e => updateItemPrice(row.rowId, Number(e.target.value) || 0)}
+                            onKeyDown={e => handleCellKeyDown(e, idx, 2)}
+                            onFocus={e => e.target.select()}
                             className="w-20 h-7 text-xs font-code font-bold text-right bg-secondary/30 border border-slate-600 rounded px-1.5 focus:border-primary focus:outline-none ml-auto block"
                           />
                         </TableCell>
@@ -1359,13 +1641,16 @@ export default function NewBillPage() {
                         {/* GST % */}
                         <TableCell className="py-2 px-1 text-center">
                           <input
+                            id={`cell-${idx}-3`}
                             type="number"
                             min={0}
                             max={100}
                             step="any"
                             placeholder="0"
-                            value={item.taxRate || ""}
-                            onChange={e => updateItemTaxRate(item.product.id, Number(e.target.value) || 0)}
+                            value={row.taxRate || ""}
+                            onChange={e => updateItemTaxRate(row.rowId, Number(e.target.value) || 0)}
+                            onKeyDown={e => handleCellKeyDown(e, idx, 3)}
+                            onFocus={e => e.target.select()}
                             className="w-14 h-7 text-xs font-code font-bold text-center bg-secondary/30 border border-slate-600 text-cyan-400 rounded px-1 focus:border-cyan-400 focus:outline-none mx-auto block"
                           />
                         </TableCell>
@@ -1373,19 +1658,24 @@ export default function NewBillPage() {
                         {/* GST ₹ */}
                         <TableCell className="py-2 px-1 text-right">
                           <input
+                            id={`cell-${idx}-4`}
                             type="number"
                             min={0}
                             step="any"
                             placeholder="0"
-                            value={item.taxAmount || ""}
-                            onChange={e => updateItemTaxAmount(item.product.id, Number(e.target.value) || 0)}
+                            value={row.taxAmount || ""}
+                            onChange={e => updateItemTaxAmount(row.rowId, Number(e.target.value) || 0)}
+                            onKeyDown={e => handleCellKeyDown(e, idx, 4)}
+                            onFocus={e => e.target.select()}
                             className="w-16 h-7 text-xs font-code font-bold text-right bg-secondary/30 border border-slate-600 text-cyan-400 rounded px-1.5 focus:border-cyan-400 focus:outline-none ml-auto block"
                           />
                         </TableCell>
 
                         {/* Row Total */}
                         <TableCell className="py-2 px-2 text-right font-code font-bold text-xs text-foreground">
-                          ₹{rowLine.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                          {row.product
+                            ? `₹${rowLine.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+                            : "—"}
                         </TableCell>
 
                         {/* Delete */}
@@ -1393,8 +1683,9 @@ export default function NewBillPage() {
                           <Button
                             variant="ghost"
                             size="icon"
+                            tabIndex={-1}
                             className="h-7 w-7 text-destructive/50 hover:text-destructive hover:bg-destructive/10"
-                            onClick={() => removeItem(item.product.id)}
+                            onClick={() => removeItem(row.rowId)}
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </Button>
@@ -1402,18 +1693,6 @@ export default function NewBillPage() {
                       </TableRow>
                     )
                   })}
-
-                  {billItems.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={8} className="h-44 text-center">
-                        <div className="flex flex-col items-center justify-center opacity-40 gap-2">
-                          <ShoppingCart className="w-10 h-10" />
-                          <p className="text-xs font-bold">Billing Cart Empty</p>
-                          <p className="text-[11px]">Click items above or search inventory to add.</p>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  )}
                 </TableBody>
               </Table>
             </div>
@@ -1531,21 +1810,35 @@ export default function NewBillPage() {
                       Select or register a customer above for Shop Credit billing.
                     </p>
                   )}
-                </div>
-              </div>
 
-              {/* Bottom Quick Action: WhatsApp Share & Generate Bill */}
-              <div className="pt-3 border-t border-border/40 space-y-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full h-9 rounded-xl border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 font-bold text-xs gap-1.5"
-                  onClick={() => handleShareWhatsApp()}
-                  disabled={billItems.length === 0}
-                >
-                  <Share2 className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Send Bill via WhatsApp</span>
-                </Button>
+                  <div className="flex flex-wrap items-center gap-2">
+            {/* Generate Bill Button */}
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 px-4 font-bold rounded-xl border-primary/40 text-primary hover:bg-primary/10 gap-1.5 shadow-sm"
+              onClick={handleGenerateBill}
+              disabled={billItems.length === 0}
+            >
+              <Receipt className="w-4 h-4" />
+              <span>Generate Bill</span>
+            </Button>
+
+            {/* Complete Sale Button */}
+            <Button
+              className="h-10 px-5 bg-primary text-primary-foreground font-bold rounded-xl shadow-lg shadow-primary/20 hover:brightness-110 transition-all gap-1.5"
+              onClick={handleCompleteSale}
+              disabled={billItems.length === 0 || isSubmitting || isCreditMissingCustomer}
+            >
+              {isSubmitting ? (
+                <><Loader2 className="w-4 h-4 animate-spin" /> Processing...</>
+              ) : (
+                <><CheckCircle2 className="w-4 h-4" /> Complete Sale</>
+              )}
+            </Button>
+          </div>
+          
+                </div>
               </div>
             </div>
           </div>

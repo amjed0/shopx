@@ -40,6 +40,7 @@ import { Badge } from "@/components/ui/badge"
 import { Label } from "@/components/ui/label"
 import { useRouter } from "next/navigation"
 import { toast } from "@/hooks/use-toast"
+import { cn } from "@/lib/utils"
 import {
   Dialog,
   DialogContent,
@@ -58,6 +59,12 @@ import {
 import { useUser } from "@/app/auth/use-user"
 import { InvoiceScanner, ScanResult } from "@/components/purchases/invoice-scanner"
 import { findBestProductMatch } from "@/lib/product-fuzzy-matcher"
+import {
+  Bill,
+  SupplierPaymentRecord,
+  groupPurchasesIntoBills,
+  toArray,
+} from "@/lib/purchase-bills"
 
 interface Supplier {
   id: string
@@ -84,6 +91,7 @@ interface Product {
 
 interface PurchaseItem {
   rowId: string                    // unique per sheet row (used for React key, edit, delete)
+  purchaseId?: string              // id of the saved purchase record (only for rows of a saved bill)
   productId: string
   productName: string
   sku: string
@@ -103,30 +111,16 @@ interface PurchaseItem {
   isNewProduct?: boolean
 }
 
-interface BillGroup {
-  billNumber: number
-  date: string
-  supplierId: string
-  supplierName: string
-  supplierPhone: string
-  items: Array<{
-    productName: string
-    sku?: string
-    quantity: number
-    purchasePrice: number
-    taxRate?: number
-    taxAmount?: number
-    category?: string
-  }>
-  totalAmount: number
-  totalQty: number
-}
-
 // Item shape returned by the AI invoice scanner
 type ScannedItem = ScanResult["items"][number]
 
 // Unique id for every row in the acquisition sheet
 const newRowId = () => `row-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+
+// Unique id for every bill (saved on each purchase row so the bill can be found again)
+const newBillId = () => `bill-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+const isRealProductId = (id?: string) => !!id && !id.startsWith("temp-") && !id.startsWith("past-")
 
 function formatToDDMMYYYY(dateStr: string): string {
   if (!dateStr || !dateStr.includes("-")) return dateStr
@@ -191,11 +185,13 @@ export default function NewPurchasePage() {
   const [loadingData, setLoadingData] = React.useState(true)
 
   // Bill Navigator State
-  const [pastBills, setPastBills] = React.useState<BillGroup[]>([])
+  const [pastBills, setPastBills] = React.useState<Bill[]>([])
   const [currentBillIndex, setCurrentBillIndex] = React.useState<number>(-1)  // -1 = new bill
-  const [isBillViewOpen, setIsBillViewOpen] = React.useState(false)
-  const [viewingBill, setViewingBill] = React.useState<BillGroup | null>(null)
   const [scannerKey, setScannerKey] = React.useState(0)
+
+  // Editing a saved bill + opening a bill from the History page (?bill=KEY)
+  const [isEditing, setIsEditing] = React.useState(false)
+  const [pendingOpenBillKey, setPendingOpenBillKey] = React.useState<string | null>(null)
 
   // Invoice Item Code Preference: False by default (first use app codes SX-XXXX). User can tick to use bill item codes.
   const [useBillItemCode, setUseBillItemCode] = React.useState<boolean>(false)
@@ -332,11 +328,12 @@ export default function NewPurchasePage() {
     const headers = { "x-user-id": user.uid }
     try {
       setLoadingData(true)
-      const [suppliersRes, productsRes, salesRes, purchasesRes] = await Promise.all([
+      const [suppliersRes, productsRes, salesRes, purchasesRes, paymentsRes] = await Promise.all([
         fetch("/api/suppliers", { headers, credentials: "include" }),
         fetch("/api/products", { headers, credentials: "include" }),
         fetch("/api/sales", { headers, credentials: "include" }).catch(() => null),
         fetch("/api/purchases", { headers, credentials: "include" }).catch(() => null),
+        fetch("/api/supplier-payments", { headers, credentials: "include" }).catch(() => null),
       ])
       let fetchedSuppliers: Supplier[] = []
       if (suppliersRes.ok) {
@@ -364,58 +361,18 @@ export default function NewPurchasePage() {
         setProductSalesCount(counts)
       }
 
-      // Group past purchases into sequential bills for Bill Navigator
+      // Group past purchases into real bills (same numbers as the Purchase History page)
       if (purchasesRes && purchasesRes.ok) {
         const purchasesData = await purchasesRes.json()
-        if (Array.isArray(purchasesData) && purchasesData.length > 0) {
-          // Sort oldest to newest
-          const sorted = [...purchasesData].sort((a, b) => {
-            const dateA = a.billingDate || (a.createdAt ? a.createdAt.split("T")[0] : "")
-            const dateB = b.billingDate || (b.createdAt ? b.createdAt.split("T")[0] : "")
-            if (dateA !== dateB) return dateA.localeCompare(dateB)
-            return (a.createdAt || "").localeCompare(b.createdAt || "")
-          })
-
-          const groups: { [key: string]: BillGroup } = {}
-          sorted.forEach(p => {
-            const d = p.billingDate || (p.createdAt ? p.createdAt.split("T")[0] : "Unknown")
-            const sId = p.supplierId || "unknown"
-            const key = `${d}_${sId}`
-            if (!groups[key]) {
-              const supp = fetchedSuppliers.find(s => s.id === sId || (s as any)._id === sId)
-              groups[key] = {
-                billNumber: 0,
-                date: d,
-                supplierId: sId,
-                supplierName: supp?.name || "Unknown Supplier",
-                supplierPhone: supp?.phone || "",
-                items: [],
-                totalAmount: 0,
-                totalQty: 0,
-              }
-            }
-            const qty = Number(p.quantity) || 1
-            const price = Number(p.purchasePrice) || 0
-            const taxRate = Number(p.taxRate) || 0
-            const taxAmount = Number(p.taxAmount) || 0
-            groups[key].items.push({
-              productName: p.productName || "Product",
-              sku: p.itemCode || "",
-              quantity: qty,
-              purchasePrice: price,
-              taxRate,
-              taxAmount,
-            })
-            groups[key].totalQty += qty
-            groups[key].totalAmount += (qty * price) + taxAmount
-          })
-
-          const billList = Object.values(groups).map((bg, idx) => ({
-            ...bg,
-            billNumber: idx + 1,
-          }))
-          setPastBills(billList)
+        let payments: SupplierPaymentRecord[] | null = null
+        if (paymentsRes && paymentsRes.ok) {
+          try {
+            payments = toArray<SupplierPaymentRecord>(await paymentsRes.json())
+          } catch {
+            payments = null
+          }
         }
+        setPastBills(groupPurchasesIntoBills(toArray(purchasesData), payments, fetchedSuppliers))
       }
     } catch (err) {
       console.error(err)
@@ -429,7 +386,9 @@ export default function NewPurchasePage() {
     fetchAll()
   }, [fetchAll])
 
-  const loadBillData = (bill: BillGroup) => {
+  // Load a saved bill into the sheet (read-only until "Edit Bill" is pressed)
+  const loadBillData = (bill: Bill) => {
+    setIsEditing(false)
     setBillingDate(bill.date)
     const supp = suppliers.find(s => s.id === bill.supplierId || (s as any)._id === bill.supplierId)
     setSelectedSupplier(supp || {
@@ -439,26 +398,36 @@ export default function NewPurchasePage() {
       contactPerson: "",
       email: "",
       address: "",
-      gstNumber: (bill as any).supplierGst || "",
+      gstNumber: "",
     })
 
-    setPurchaseItems(bill.items.map(it => {
-      const prod = products.find(p =>
-        p.name.toLowerCase() === it.productName.toLowerCase() ||
-        (it.sku && p.sku && p.sku.toLowerCase() === it.sku.toLowerCase())
-      )
+    setPaidAmount(bill.paid !== null ? String(bill.paid) : "")
+    setDiscountInput(bill.discount > 0 ? String(bill.discount) : "")
+    setRoundOffEnabled(bill.roundOff !== 0)
+    if (bill.paymentMode) setPaymentMode(bill.paymentMode)
+
+    setPurchaseItems(bill.items.map(rec => {
+      const prod =
+        products.find(p => p.id === rec.productId) ||
+        products.find(p =>
+          p.name.toLowerCase() === rec.productName.toLowerCase() ||
+          (rec.itemCode && p.sku && p.sku.toLowerCase() === rec.itemCode.toLowerCase())
+        )
+      const cost = Number(rec.purchasePrice) || 0
       return {
         rowId: newRowId(),
-        productId: prod?.id || `past-${Math.random().toString(36).slice(2)}`,
-        productName: it.productName,
-        sku: it.sku || prod?.sku || "",
-        quantity: it.quantity,
-        purchasePrice: it.purchasePrice,
-        taxRate: it.taxRate || 0,
-        taxAmount: it.taxAmount || 0,
-        sellingPrice: prod?.sellingPrice || Math.round(it.purchasePrice * 1.25),
+        purchaseId: rec.id,
+        productId: prod?.id || rec.productId || `past-${Math.random().toString(36).slice(2)}`,
+        productName: rec.productName,
+        sku: rec.itemCode || prod?.sku || "",
+        generatedSku: rec.itemCode || prod?.sku || "",
+        quantity: rec.quantity,
+        purchasePrice: cost,
+        taxRate: rec.taxRate || 0,
+        taxAmount: rec.taxAmount || 0,
+        sellingPrice: prod?.sellingPrice || Math.round(cost * 1.25),
         mrp: prod?.mrp || 0,
-        category: it.category || prod?.category || "General",
+        category: prod?.category || "General",
         minStock: prod?.minStock || 2,
         isNewProduct: false,
       }
@@ -466,7 +435,7 @@ export default function NewPurchasePage() {
   }
 
   const handlePrevBill = () => {
-    if (pastBills.length === 0) return
+    if (pastBills.length === 0 || isEditing) return
     let targetIndex = currentBillIndex
     if (targetIndex === -1) {
       targetIndex = pastBills.length - 1
@@ -481,7 +450,7 @@ export default function NewPurchasePage() {
   }
 
   const handleNextBill = () => {
-    if (pastBills.length === 0 || currentBillIndex === -1) return
+    if (pastBills.length === 0 || currentBillIndex === -1 || isEditing) return
     if (currentBillIndex < pastBills.length - 1) {
       const targetIndex = currentBillIndex + 1
       setCurrentBillIndex(targetIndex)
@@ -493,6 +462,7 @@ export default function NewPurchasePage() {
   }
 
   const handlePrevDate = () => {
+    if (isEditing) return
     if (currentBillIndex === -1 && pastBills.length === 0) {
       const d = new Date(billingDate)
       d.setDate(d.getDate() - 1)
@@ -523,6 +493,7 @@ export default function NewPurchasePage() {
   }
 
   const handleNextDate = () => {
+    if (isEditing) return
     const todayStr = new Date().toISOString().split("T")[0]
     if (currentBillIndex === -1) {
       const d = new Date(billingDate)
@@ -551,14 +522,60 @@ export default function NewPurchasePage() {
 
   const handleResetToNewBill = () => {
     setCurrentBillIndex(-1)
+    setIsEditing(false)
+    setPendingOpenBillKey(null)
     setPurchaseItems([createBlankRow()])
     setSelectedSupplier(null)
     setDetectedGstForSupplier(null)
     setBillingDate(new Date().toISOString().split("T")[0])
     setPaidAmount("")
     setDiscountInput("")
+    setRoundOffEnabled(false)
     setScannerKey(k => k + 1)
     toast({ title: "New Bill Entry", description: "Sheet cleared for fresh purchase entry." })
+  }
+
+  // Read ?bill=KEY from the URL (sent by the "View Bill" button on the History page)
+  React.useEffect(() => {
+    if (typeof window === "undefined") return
+    const key = new URLSearchParams(window.location.search).get("bill")
+    if (key) setPendingOpenBillKey(key)
+  }, [])
+
+  // Open the requested bill once the bills have loaded
+  React.useEffect(() => {
+    if (!pendingOpenBillKey || loadingData) return
+    const idx = pastBills.findIndex(b => b.key === pendingOpenBillKey)
+    if (idx >= 0) {
+      setCurrentBillIndex(idx)
+      loadBillData(pastBills[idx])
+    } else {
+      toast({
+        variant: "destructive",
+        title: "Bill not found",
+        description: "That bill could not be found. It may have been changed or removed.",
+      })
+    }
+    setPendingOpenBillKey(null)
+    if (typeof window !== "undefined" && window.location.search.includes("bill=")) {
+      window.history.replaceState(null, "", window.location.pathname)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingOpenBillKey, pastBills, loadingData])
+
+  const handleStartEdit = () => {
+    if (currentBillIndex === -1) return
+    setIsEditing(true)
+    toast({
+      title: "Edit Mode",
+      description: "Change items, quantities, prices or the supplier, then press Update Bill.",
+    })
+  }
+
+  const handleCancelEdit = () => {
+    const bill = pastBills[currentBillIndex]
+    if (bill) loadBillData(bill)
+    else setIsEditing(false)
   }
 
   const categories = React.useMemo(() => {
@@ -692,12 +709,14 @@ export default function NewPurchasePage() {
     }
   }, [purchaseItems, pendingFocusCell])
 
-  // Ensure there is always at least one row in the acquisition sheet for immediate manual entry
+  // Ensure there is always at least one row in the acquisition sheet for immediate manual entry.
+  // Do NOT add a blank row while a bill from ?bill=KEY is still waiting to be opened,
+  // and never overwrite rows that were just loaded (functional update checks the latest state).
   React.useEffect(() => {
-    if (!loadingData && purchaseItems.length === 0) {
-      setPurchaseItems([createBlankRow()])
-    }
-  }, [loadingData, purchaseItems.length])
+    if (loadingData || pendingOpenBillKey) return
+    setPurchaseItems(prev => (prev.length === 0 ? [createBlankRow()] : prev))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadingData, pendingOpenBillKey, purchaseItems.length])
 
   const TOTAL_INPUT_COLS = 9
 
@@ -1120,6 +1139,7 @@ export default function NewPurchasePage() {
     if (newItems.length > 0) {
       // Starting new bill entry: clear any previous/past items so new bill sheet is completely clean!
       setCurrentBillIndex(-1)
+      setIsEditing(false)
       setPaidAmount("")
       setDiscountInput("")
       setPurchaseItems(newItems)
@@ -1342,6 +1362,10 @@ export default function NewPurchasePage() {
     setInlineNewCategoryItemIndex(null)
   }
 
+  // ── Review / edit state of a saved bill ──
+  const reviewBill: Bill | null = currentBillIndex >= 0 ? pastBills[currentBillIndex] ?? null : null
+  const isReviewLocked = !!reviewBill && !isEditing   // saved bill is shown read-only until "Edit Bill"
+
   const totalTax = purchaseItems.reduce((acc, i) => acc + (Number(i.taxAmount) || 0), 0)
 
   // Sum of all lines (cost x qty + GST)
@@ -1361,13 +1385,25 @@ export default function NewPurchasePage() {
   // Keep the name "total" so Paid, Balance and Commit still work
   const total = Number(grandTotal.toFixed(2))
 
-  const numPaid = paidAmount === "" ? total : Number(paidAmount) || 0
+  // For a saved bill the paid amount comes from the bill itself (payments are managed in Suppliers)
+  const paidUnknown = !!reviewBill && reviewBill.paid === null
+  const numPaid = reviewBill
+    ? (reviewBill.paid ?? total)
+    : (paidAmount === "" ? total : Number(paidAmount) || 0)
   const balanceDue = Math.max(0, total - numPaid)
   const isCredit = balanceDue > 0
+
+  // Rows that really carry a product (the empty spare row at the end is ignored)
+  const hasContent = (i: PurchaseItem) => (i.productName || "").trim() !== "" || Number(i.purchasePrice) > 0
 
   // Commit purchase
   const handleComplete = async () => {
     if (purchaseItems.length === 0 || !user?.uid) return
+    const rowsToSave = purchaseItems.filter(hasContent)
+    if (rowsToSave.length === 0) {
+      toast({ variant: "destructive", title: "Nothing to save", description: "Add at least one product to the bill." })
+      return
+    }
     setIsSubmitting(true)
     try {
       // Ensure a supplier is selected; if not, automatically select or create a default Cash / Counter supplier
@@ -1404,12 +1440,15 @@ export default function NewPurchasePage() {
 
       const supplierId = (currentSupplier as any)?._id || currentSupplier?.id || ""
 
+      // Every row of this bill carries the same billId so the bill can be found again later
+      const billId = newBillId()
+
       // Local copy of stock so rows for the same product add up correctly,
       // and a product created earlier in this loop is never created twice
       const knownProducts: Product[] = [...products]
       const stockAdded: Record<string, number> = {}
 
-      for (const item of purchaseItems) {
+      for (const item of rowsToSave) {
         const itemQty = Math.max(1, Number(item.quantity) || 1)
         const itemCost = Math.max(0, Number(item.purchasePrice) || 0)
         const itemSelling = Math.max(0, Number(item.sellingPrice) || Math.round(itemCost * 1.25))
@@ -1509,6 +1548,13 @@ export default function NewPurchasePage() {
             taxRate: Number(item.taxRate) || 0,
             taxAmount: Number(item.taxAmount) || 0,
             billingDate,
+            // bill-level details, so the bill can be shown / edited later
+            billId,
+            billTotal: total,
+            discount: discountAmt,
+            roundOff: roundOffAmt,
+            paidAmount: numPaid,
+            paymentMode,
           }),
         })
 
@@ -1530,7 +1576,7 @@ export default function NewPurchasePage() {
               supplierId,
               amount: numPaid,
               paymentMode,
-              note: `Paid on Bill (${billingDate}) - Total: ₹${total.toLocaleString()}`,
+              note: `Paid on Bill (${billingDate}) - Total: ₹${total.toLocaleString()} [bill:${billId}]`,
             }),
           })
 
@@ -1554,13 +1600,213 @@ export default function NewPurchasePage() {
 
       toast({
         title: "Purchase Completed ✓",
-        description: `Successfully processed ${purchaseItems.length} products.${isCredit ? ` Balance Due: ₹${balanceDue.toLocaleString()}` : ""}`
+        description: `Successfully processed ${rowsToSave.length} products.${isCredit ? ` Balance Due: ₹${balanceDue.toLocaleString()}` : ""}`
       })
       handleResetToNewBill()
       fetchAll()
     } catch (err: any) {
       console.error("UPDATE ERROR:", err)
       toast({ variant: "destructive", title: "Operation Failed", description: err.message })
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  // Save the changes made to a saved bill
+  //  - changed rows      -> PATCH /api/purchases/[id]
+  //  - rows added        -> POST  /api/purchases
+  //  - rows removed      -> DELETE /api/purchases/[id]
+  //  - product stock is corrected by the difference (new qty - old qty)
+  const handleUpdateBill = async () => {
+    if (!user?.uid || !reviewBill || !isEditing) return
+    const rowsToSave = purchaseItems.filter(hasContent)
+    if (rowsToSave.length === 0) {
+      toast({ variant: "destructive", title: "Nothing to save", description: "A bill needs at least one product." })
+      return
+    }
+
+    setIsSubmitting(true)
+    const jsonHeaders = { "Content-Type": "application/json", "x-user-id": user.uid }
+    const send = async (method: string, url: string, body?: unknown) => {
+      const res = await fetch(url, {
+        method,
+        headers: jsonHeaders,
+        credentials: "include",
+        body: body === undefined ? undefined : JSON.stringify(body),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        const missing = res.status === 404 || res.status === 405
+        throw new Error(
+          (err as any).error ||
+            `${method} ${url} failed (${res.status})${missing ? " — this API route may not exist yet" : ""}`
+        )
+      }
+      return res
+    }
+
+    try {
+      // Fresh product list so stock changes are based on the real current stock
+      let knownProducts: Product[] = [...products]
+      try {
+        const pr = await fetch("/api/products", { headers: { "x-user-id": user.uid }, credentials: "include" })
+        if (pr.ok) {
+          const pj = await pr.json()
+          if (Array.isArray(pj)) knownProducts = pj
+        }
+      } catch {
+        /* keep the list we already have */
+      }
+
+      const supplierId = (selectedSupplier as any)?._id || selectedSupplier?.id || reviewBill.supplierId
+      const billId = reviewBill.key
+
+      const ledger: Record<string, number> = {}              // stock change per product
+      const productPatches: Record<string, Record<string, unknown>> = {}
+      const bump = (id: string, delta: number) => { ledger[id] = (ledger[id] || 0) + delta }
+
+      // 1. take back the quantities of the original bill
+      reviewBill.items.forEach(rec => {
+        if (isRealProductId(rec.productId)) bump(rec.productId, -(Number(rec.quantity) || 0))
+      })
+
+      // 2. work out the product for every row of the edited sheet
+      const planned: { item: PurchaseItem; body: Record<string, unknown> }[] = []
+
+      for (const item of rowsToSave) {
+        const itemQty = Math.max(1, Number(item.quantity) || 1)
+        const itemCost = Math.max(0, Number(item.purchasePrice) || 0)
+        const itemSelling = Math.max(0, Number(item.sellingPrice) || Math.round(itemCost * 1.25))
+        const itemMrp = Math.max(0, Number(item.mrp) || 0)
+        const itemMinStock = Math.max(0, Number(item.minStock) || 2)
+        const itemCategory = (item.category || "General").trim()
+        const itemName = (item.productName || "").trim() || "Item"
+        const itemSku = (item.sku || "").trim() || generateSKU()
+
+        const lowerSku = itemSku.toLowerCase()
+        const lowerName = itemName.toLowerCase()
+
+        const existing = knownProducts.find(p => {
+          if (isRealProductId(item.productId) && p.id === item.productId) return true
+          const pSku = (p.sku || "").trim().toLowerCase()
+          if (lowerSku && pSku && lowerSku === pSku) return true
+          const pName = (p.name || "").trim().toLowerCase()
+          if (lowerName && pName && lowerName === pName) return true
+          return false
+        })
+
+        let finalProductId = item.productId
+
+        if (existing && isRealProductId(existing.id)) {
+          finalProductId = existing.id
+          bump(existing.id, itemQty)
+          productPatches[existing.id] = {
+            name: itemName,
+            sku: itemSku,
+            category: itemCategory,
+            purchasePrice: itemCost,
+            sellingPrice: itemSelling,
+            mrp: itemMrp,
+            minStock: itemMinStock,
+          }
+        } else if (item.purchaseId && isRealProductId(item.productId)) {
+          // the product is no longer in the stock list: keep the old link, do not recreate it
+          finalProductId = item.productId
+        } else {
+          const createRes = await send("POST", "/api/products", {
+            name: itemName,
+            sku: itemSku,
+            category: itemCategory,
+            purchasePrice: itemCost,
+            sellingPrice: itemSelling,
+            mrp: itemMrp,
+            stock: itemQty,
+            minStock: itemMinStock,
+            supplierId,
+            skipPurchase: true,
+          })
+          const created = await createRes.json()
+          finalProductId = created.id || created._id
+          knownProducts.push({
+            id: finalProductId,
+            name: itemName,
+            sku: itemSku,
+            purchasePrice: itemCost,
+            sellingPrice: itemSelling,
+            mrp: itemMrp,
+            stock: itemQty,
+            minStock: itemMinStock,
+            category: itemCategory,
+          })
+        }
+
+        planned.push({
+          item,
+          body: {
+            supplierId,
+            productId: finalProductId,
+            productName: itemName,
+            itemCode: itemSku,
+            quantity: itemQty,
+            purchasePrice: itemCost,
+            taxRate: Number(item.taxRate) || 0,
+            taxAmount: Number(item.taxAmount) || 0,
+            billingDate,
+            billId,
+            billTotal: total,
+            discount: discountAmt,
+            roundOff: roundOffAmt,
+            ...(reviewBill.paid !== null ? { paidAmount: reviewBill.paid } : {}),
+            ...(reviewBill.paymentMode ? { paymentMode: reviewBill.paymentMode } : {}),
+          },
+        })
+      }
+
+      // 3. save the purchase rows (change / add / remove)
+      const keptIds = new Set(planned.map(p => p.item.purchaseId).filter(Boolean) as string[])
+      for (const { item, body } of planned) {
+        if (item.purchaseId) await send("PATCH", `/api/purchases/${item.purchaseId}`, body)
+        else await send("POST", "/api/purchases", body)
+      }
+      for (const rec of reviewBill.items) {
+        if (!keptIds.has(rec.id)) await send("DELETE", `/api/purchases/${rec.id}`)
+      }
+
+      // 4. correct product stock and product details
+      const warnings: string[] = []
+      const touched = new Set([...Object.keys(ledger), ...Object.keys(productPatches)])
+      for (const id of touched) {
+        const delta = ledger[id] || 0
+        if (!(id in productPatches) && delta === 0) continue
+        const base = Number(knownProducts.find(p => p.id === id)?.stock) || 0
+        try {
+          await send("PATCH", `/api/products/${id}`, {
+            ...(productPatches[id] || {}),
+            stock: Math.max(0, base + delta),
+          })
+        } catch (e: any) {
+          warnings.push(e?.message || `Stock update failed for product ${id}`)
+        }
+      }
+
+      toast({
+        title: "Bill Updated ✓",
+        description: warnings.length
+          ? `Bill saved, but ${warnings.length} product stock update(s) failed. Please check stock.`
+          : `Bill #${reviewBill.billNumber} saved with ${planned.length} item(s).`,
+        variant: warnings.length ? "destructive" : undefined,
+      })
+
+      await fetchAll()
+      setPendingOpenBillKey(billId) // reopen the same bill with the saved data
+    } catch (err: any) {
+      console.error("BILL UPDATE ERROR:", err)
+      toast({
+        variant: "destructive",
+        title: "Could not update bill",
+        description: `${err.message}. Some changes may already be saved, so please reload the bill and check.`,
+      })
+      fetchAll()
     } finally {
       setIsSubmitting(false)
     }
@@ -1620,7 +1866,7 @@ export default function NewPurchasePage() {
               size="icon"
               className="h-7 w-7 rounded-lg hover:bg-secondary text-foreground hover:text-accent"
               onClick={handlePrevBill}
-              disabled={pastBills.length === 0 || currentBillIndex === 0}
+              disabled={pastBills.length === 0 || currentBillIndex === 0 || isEditing}
               title="Previous Past Bill"
             >
               <ChevronLeft className="w-4 h-4" />
@@ -1637,7 +1883,7 @@ export default function NewPurchasePage() {
               size="icon"
               className="h-7 w-7 rounded-lg hover:bg-secondary text-foreground hover:text-accent"
               onClick={handleNextBill}
-              disabled={currentBillIndex === -1}
+              disabled={currentBillIndex === -1 || isEditing}
               title="Next Bill (or New Bill)"
             >
               <ChevronRight className="w-4 h-4" />
@@ -1652,6 +1898,7 @@ export default function NewPurchasePage() {
               size="icon"
               className="h-7 w-7 rounded-lg hover:bg-secondary text-foreground hover:text-accent shrink-0"
               onClick={handlePrevDate}
+              disabled={isEditing}
               title="Previous Date"
             >
               <ChevronLeft className="w-4 h-4" />
@@ -1678,10 +1925,11 @@ export default function NewPurchasePage() {
               <input
                 type="date"
                 value={billingDate}
+                disabled={isReviewLocked}
                 onChange={e => {
                   if (e.target.value) setBillingDate(e.target.value)
                 }}
-                className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                className="absolute inset-0 opacity-0 cursor-pointer w-full h-full disabled:cursor-not-allowed"
                 title="Change bill date"
               />
             </div>
@@ -1691,6 +1939,7 @@ export default function NewPurchasePage() {
               size="icon"
               className="h-7 w-7 rounded-lg hover:bg-secondary text-foreground hover:text-accent shrink-0"
               onClick={handleNextDate}
+              disabled={isEditing}
               title="Next Date"
             >
               <ChevronRight className="w-4 h-4" />
@@ -1705,24 +1954,59 @@ export default function NewPurchasePage() {
           )}
         </div>
 
-        {/* Current State / Reset to New Bill */}
+        {/* Current State / Edit / Reset to New Bill */}
         <div className="flex items-center gap-2">
           {currentBillIndex !== -1 ? (
-            <div className="flex items-center gap-2">
-              <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/40 text-xs py-1 px-2.5 font-bold">
-                Reviewing Bill #{pastBills[currentBillIndex]?.billNumber} • {pastBills[currentBillIndex]?.supplierName}
-              </Badge>
-              <Button
-                type="button"
-                size="sm"
-                variant="default"
-                className="h-8 text-xs font-bold bg-accent text-accent-foreground hover:brightness-110 rounded-xl shadow-sm gap-1"
-                onClick={handleResetToNewBill}
-                title="Exit review and start a clear new bill"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                New Bill (Clear)
-              </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              {isEditing ? (
+                <Badge className="bg-red-500/15 text-red-400 border-red-500/40 text-xs py-1 px-2.5 font-bold">
+                  ✎ Editing Bill #{pastBills[currentBillIndex]?.billNumber} • {pastBills[currentBillIndex]?.supplierName}
+                </Badge>
+              ) : (
+                <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/40 text-xs py-1 px-2.5 font-bold">
+                  Reviewing Bill #{pastBills[currentBillIndex]?.billNumber} • {pastBills[currentBillIndex]?.supplierName}
+                </Badge>
+              )}
+
+              {isEditing ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-8 text-xs font-bold rounded-xl gap-1 border-border hover:bg-secondary"
+                  onClick={handleCancelEdit}
+                  disabled={isSubmitting}
+                  title="Throw away the changes and show the saved bill again"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  Cancel Edit
+                </Button>
+              ) : (
+                <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="default"
+                    className="h-8 text-xs font-bold bg-accent text-accent-foreground hover:brightness-110 rounded-xl shadow-sm gap-1"
+                    onClick={handleStartEdit}
+                    title="Change this saved bill"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                    Edit Bill
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-8 text-xs font-bold rounded-xl gap-1 border-border hover:bg-secondary"
+                    onClick={handleResetToNewBill}
+                    title="Exit review and start a clear new bill"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    New Bill
+                  </Button>
+                </>
+              )}
             </div>
           ) : (
             <div className="flex items-center gap-2">
@@ -1751,7 +2035,7 @@ export default function NewPurchasePage() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full">
 
         {/* Card 1: Supplier Selector */}
-        <Card className="border-none bg-card shadow-sm flex flex-col">
+        <Card className={cn("border-none bg-card shadow-sm flex flex-col", isReviewLocked && "pointer-events-none opacity-60")}>
           <CardHeader className="pb-2 pt-4 px-4 flex flex-row items-center justify-between">
             <CardTitle className="text-xs font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
               <Truck className="w-3.5 h-3.5 text-accent" /> Supplier
@@ -1865,11 +2149,11 @@ export default function NewPurchasePage() {
           </CardContent>
         </Card>
 
-        {/* Card 2: AI Invoice Scanner */}
-        <InvoiceScanner key={scannerKey} onScanComplete={handleScanComplete} disabled={isSubmitting} existingCategories={categories} />
+        {/* Card 2: AI Invoice Scanner (only for new bills) */}
+        <InvoiceScanner key={scannerKey} onScanComplete={handleScanComplete} disabled={isSubmitting || currentBillIndex !== -1} existingCategories={categories} />
 
         {/* Card 3: Fast Add Products (Only 5 Best Selling / Search Results) */}
-        <Card className="border-none bg-card shadow-sm flex flex-col">
+        <Card className={cn("border-none bg-card shadow-sm flex flex-col", isReviewLocked && "pointer-events-none opacity-60")}>
           <CardHeader className="pb-2 pt-4 px-4 flex flex-row items-center justify-between">
             <CardTitle className="text-xs font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
               <TrendingUp className="w-3.5 h-3.5 text-emerald-500" /> Fast Add (Top 5)
@@ -2084,6 +2368,16 @@ export default function NewPurchasePage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {isReviewLocked && (
+              <Badge className="bg-amber-500/15 text-amber-400 border border-amber-500/40 text-[10px] py-1 px-2.5 font-bold">
+                🔒 Saved bill — press “Edit Bill” to change
+              </Badge>
+            )}
+            {isEditing && (
+              <Badge className="bg-red-500/15 text-red-400 border border-red-500/40 text-[10px] py-1 px-2.5 font-bold">
+                ✎ Editing — press “Update Bill” to save
+              </Badge>
+            )}
             <Badge variant="secondary" className="font-code text-xs py-1 px-3">
               {purchaseItems.length} Product{purchaseItems.length === 1 ? "" : "s"}
             </Badge>
@@ -2093,10 +2387,14 @@ export default function NewPurchasePage() {
         {/* ── ITEM CODE SETTING BAR: Tickbox for Use Bill Item Codes vs Auto SX Codes (Default: First App Codes) ── */}
         <div className="bg-secondary/15 border-b border-border/40 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5">
           <div className="flex items-center gap-3">
-            <label className="flex items-center gap-2 cursor-pointer select-none group bg-secondary/30 hover:bg-secondary/60 px-3 py-1.5 rounded-xl border border-border/60 transition-all shadow-sm">
+            <label className={cn(
+              "flex items-center gap-2 select-none group bg-secondary/30 px-3 py-1.5 rounded-xl border border-border/60 transition-all shadow-sm",
+              currentBillIndex === -1 ? "cursor-pointer hover:bg-secondary/60" : "opacity-50 cursor-not-allowed"
+            )}>
               <input
                 type="checkbox"
                 checked={useBillItemCode}
+                disabled={currentBillIndex !== -1}
                 onChange={e => handleToggleUseBillItemCode(e.target.checked)}
                 className="w-4 h-4 rounded text-accent accent-accent cursor-pointer"
               />
@@ -2135,20 +2433,22 @@ export default function NewPurchasePage() {
         <div className="bg-secondary/10 border-b border-border/30 px-4 py-3 grid grid-cols-1 sm:grid-cols-3 gap-3 items-center">
           <div>
             <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-              <CreditCard className="w-3.5 h-3.5" /> Amount Paid Now (₹)
+              <CreditCard className="w-3.5 h-3.5" /> {reviewBill ? "Amount Paid On This Bill (₹)" : "Amount Paid Now (₹)"}
             </Label>
             <Input
               type="number"
-              placeholder={`Full amount ₹${total}`}
+              placeholder={reviewBill ? "Not recorded" : `Full amount ₹${total}`}
               style={{ color: '#ffffff', backgroundColor: '#182030' }}
               className="h-9 mt-1 text-xs border border-slate-600 font-bold rounded-lg font-code"
               value={paidAmount}
               onChange={e => setPaidAmount(e.target.value)}
+              disabled={!!reviewBill}
+              title={reviewBill ? "Payments are recorded from the Suppliers page" : undefined}
             />
           </div>
           <div>
             <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Payment Mode</Label>
-            <Select value={paymentMode} onValueChange={setPaymentMode}>
+            <Select value={paymentMode} onValueChange={setPaymentMode} disabled={!!reviewBill}>
               <SelectTrigger className="h-9 mt-1 text-xs bg-background border-border/50">
                 <SelectValue />
               </SelectTrigger>
@@ -2162,7 +2462,11 @@ export default function NewPurchasePage() {
             </Select>
           </div>
           <div className="flex items-end justify-start sm:justify-end gap-2 pt-1 sm:pt-0">
-            {isCredit ? (
+            {paidUnknown ? (
+              <Badge variant="outline" className="border-slate-500/50 bg-slate-500/10 text-slate-300 font-bold py-1.5 px-3 text-xs">
+                Payment not recorded
+              </Badge>
+            ) : isCredit ? (
               <Badge variant="outline" className="border-amber-500/50 bg-amber-500/10 text-amber-400 font-bold py-1.5 px-3 text-xs">
                 Credit Bill • Balance: ₹{balanceDue.toLocaleString()}
               </Badge>
@@ -2174,8 +2478,11 @@ export default function NewPurchasePage() {
           </div>
         </div>
 
-        {/* ── Table (Unified Mobile & Desktop) ── */}
+        {/* ── Table (Unified Mobile & Desktop) ──
+            The fieldset switches every input, dropdown and button inside the sheet off
+            while a saved bill is only being reviewed. */}
         <CardContent className="p-0">
+          <fieldset disabled={isReviewLocked} className="min-w-0 border-0 p-0 m-0">
           <div className="w-full overflow-x-auto min-h-[350px] pb-24">
             <Table className="min-w-[1060px] w-full">
               <TableHeader className="bg-secondary/20 border-b border-border/50">
@@ -2651,6 +2958,7 @@ export default function NewPurchasePage() {
               </TableBody>
             </Table>
           </div>
+          </fieldset>
         </CardContent>
 
         {/* ── 4. BOTTOM TOTALS & COMMIT ENTRY BAR ── */}
@@ -2673,7 +2981,11 @@ export default function NewPurchasePage() {
                   </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 text-xs">
-                  {isCredit ? (
+                  {paidUnknown ? (
+                    <Badge variant="outline" className="border-slate-500/50 bg-slate-500/10 text-slate-300 font-bold">
+                      Paid amount not recorded for this bill
+                    </Badge>
+                  ) : isCredit ? (
                     <>
                       <Badge variant="outline" className="border-amber-500/50 bg-amber-500/10 text-amber-500 font-bold">
                         Paid: ₹{numPaid.toLocaleString()}
@@ -2704,7 +3016,7 @@ export default function NewPurchasePage() {
                         placeholder="0"
                         value={discountInput}
                         onChange={e => setDiscountInput(e.target.value)}
-                        disabled={currentBillIndex !== -1}
+                        disabled={isReviewLocked}
                         style={{ color: '#f87171', backgroundColor: '#0f172a', WebkitTextFillColor: '#f87171' }}
                         className="w-24 h-8 px-2 text-xs border-2 border-slate-600 font-bold text-right font-code rounded-lg focus:border-red-400 focus:outline-none"
                       />
@@ -2716,6 +3028,7 @@ export default function NewPurchasePage() {
                         type="checkbox"
                         checked={roundOffEnabled}
                         onChange={e => setRoundOffEnabled(e.target.checked)}
+                        disabled={isReviewLocked}
                         className="w-3.5 h-3.5 accent-accent cursor-pointer"
                       />
                       <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Round off</span>
@@ -2738,14 +3051,53 @@ export default function NewPurchasePage() {
                 <div className="flex flex-col items-end gap-1.5">
                   <div className="flex gap-2">
                     {currentBillIndex !== -1 ? (
-                      <Button
-                        type="button"
-                        onClick={handleResetToNewBill}
-                        className="bg-accent text-accent-foreground font-bold px-6 sm:px-8 rounded-xl shadow-lg shadow-accent/25 h-11 text-sm sm:text-base hover:brightness-110 transition-all gap-2"
-                      >
-                        <Plus className="w-4 h-4" />
-                        Start New Bill (Clear)
-                      </Button>
+                      isEditing ? (
+                        <>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="rounded-xl font-bold uppercase tracking-wider text-[10px] h-11 px-4 gap-1.5"
+                            onClick={handleCancelEdit}
+                            disabled={isSubmitting}
+                          >
+                            <X className="w-3.5 h-3.5" />
+                            Cancel
+                          </Button>
+                          <Button
+                            type="button"
+                            onClick={handleUpdateBill}
+                            disabled={isSubmitting}
+                            className="bg-accent text-accent-foreground font-bold px-6 sm:px-8 rounded-xl shadow-lg shadow-accent/25 h-11 text-sm sm:text-base hover:brightness-110 transition-all"
+                          >
+                            {isSubmitting ? (
+                              <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                            ) : (
+                              <Save className="w-5 h-5 mr-2" />
+                            )}
+                            Update Bill
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="rounded-xl font-bold uppercase tracking-wider text-[10px] h-11 px-4 gap-1.5"
+                            onClick={handleResetToNewBill}
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            New Bill
+                          </Button>
+                          <Button
+                            type="button"
+                            onClick={handleStartEdit}
+                            className="bg-accent text-accent-foreground font-bold px-6 sm:px-8 rounded-xl shadow-lg shadow-accent/25 h-11 text-sm sm:text-base hover:brightness-110 transition-all gap-2"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                            Edit Bill
+                          </Button>
+                        </>
+                      )
                     ) : (
                       <>
                         <Button
@@ -2793,6 +3145,11 @@ export default function NewPurchasePage() {
                         </p>
                       )}
                     </div>
+                  )}
+                  {isEditing && (
+                    <p className="text-[10px] font-semibold text-muted-foreground max-w-[260px] text-right">
+                      Stock is corrected by the change in quantity. The paid amount stays the same — only the balance is recalculated.
+                    </p>
                   )}
                 </div>
               </div>
