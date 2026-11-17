@@ -1,8 +1,11 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useSession } from 'next-auth/react';
 
 export function useUser() {
+  const { data: session } = useSession();
+
   const [user, setUser] = useState<{ uid: string; email: string } | null>(() => {
     if (typeof window !== 'undefined') {
       try {
@@ -22,18 +25,24 @@ export function useUser() {
     return true;
   });
 
+  // Immediately populate user when NextAuth session is ready without waiting for /api/auth/me
   useEffect(() => {
-    let isMounted = true;
-
-    // Load initial user state from localStorage
-    const storedUser = localStorage.getItem('shopx-user');
-    if (storedUser) {
-      try {
-        setUser(JSON.parse(storedUser));
-      } catch {
-        setUser(null);
+    if (session?.user) {
+      const id = (session.user as any).id || (session.user as any).uid || '';
+      const email = session.user.email || '';
+      if (id) {
+        const sessionUser = { uid: id, email };
+        setUser(sessionUser);
+        setLoading(false);
+        try {
+          localStorage.setItem('shopx-user', JSON.stringify(sessionUser));
+        } catch {}
       }
     }
+  }, [session]);
+
+  useEffect(() => {
+    let isMounted = true;
 
     // Verify session with the backend API
     async function verifySession() {
@@ -45,11 +54,6 @@ export function useUser() {
             const updatedUser = { uid: data.user.uid, email: data.user.email };
             setUser(updatedUser);
             localStorage.setItem('shopx-user', JSON.stringify(updatedUser));
-          }
-        } else {
-          if (isMounted) {
-            setUser(null);
-            localStorage.removeItem('shopx-user');
           }
         }
       } catch (err) {
