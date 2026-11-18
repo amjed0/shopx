@@ -89,6 +89,7 @@ const navigation = [
     url: "/accounting",
     items: [
       { title: "Cash Book", url: "/accounting/cashbook" },
+      { title: "Capital Account", url: "/accounting/capital" },
       { title: "P&L Statement", url: "/accounting/pl-statement" },
       { title: "Balance Sheet", url: "/accounting/balance-sheet" },
       { title: "GST Reports", url: "/accounting/gst-reports" },

@@ -176,11 +176,17 @@ export default function AnalyticsPage() {
   const [error, setError]     = React.useState<string | null>(null)
   const [showTally, setShowTally] = React.useState(false)
 
+  // Indian FY: April-start year (e.g. FY 2025-26 → currentFY = 2025)
+  const currentFY = React.useMemo(() => {
+    const now = new Date()
+    return now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1
+  }, [])
+
   // ── Date filter state (same style as the Sales History page) ──
   const [mode, setMode]               = React.useState<ViewMode>("month")
   const [selectedDate, setSelectedDate]   = React.useState(todayStr)
   const [selectedMonth, setSelectedMonth] = React.useState(todayStr.slice(0, 7))
-  const [selectedYear, setSelectedYear]   = React.useState(todayStr.slice(0, 4))
+  const [selectedYear, setSelectedYear]   = React.useState(String(currentFY))
   const [customFrom, setCustomFrom]   = React.useState(daysAgo(29))
   const [customTo, setCustomTo]       = React.useState(todayStr)
 
@@ -191,7 +197,10 @@ export default function AnalyticsPage() {
       const [y, m] = selectedMonth.split("-").map(Number)
       return { from: `${y}-${pad(m)}-01`, to: `${y}-${pad(m)}-${pad(new Date(y, m, 0).getDate())}` }
     }
-    if (mode === "year") return { from: `${selectedYear}-01-01`, to: `${selectedYear}-12-31` }
+    if (mode === "year") {
+      const fyStart = Number(selectedYear)
+      return { from: `${fyStart}-04-01`, to: `${fyStart + 1}-03-31` }
+    }
     if (mode === "custom") return { from: customFrom, to: customTo }
     return { from: "2000-01-01", to: todayStr }
   }, [mode, selectedDate, selectedMonth, selectedYear, customFrom, customTo, todayStr])
@@ -243,7 +252,7 @@ export default function AnalyticsPage() {
   }
   const stepYear = (delta: number) => {
     const next = Number(selectedYear) + delta
-    if (next <= Number(todayStr.slice(0, 4))) setSelectedYear(String(next))
+    if (next <= currentFY) setSelectedYear(String(next))
   }
 
   const selectedMonthLabel = React.useMemo(() => {
@@ -444,10 +453,10 @@ export default function AnalyticsPage() {
                   <ChevronLeft className="w-4 h-4" />
                 </Button>
                 <div className="px-4 py-0.5 text-center min-w-[130px]">
-                  <span className="text-xs font-bold font-mono block">Year {selectedYear}</span>
-                  <span className="text-[10px] text-muted-foreground font-mono">Jan – Dec</span>
+                  <span className="text-xs font-bold font-mono block">FY {selectedYear}–{String(Number(selectedYear) + 1).slice(2)}</span>
+                  <span className="text-[10px] text-muted-foreground font-mono">Apr – Mar</span>
                 </div>
-                <Button type="button" variant="ghost" size="icon" onClick={() => stepYear(1)} disabled={Number(selectedYear) >= Number(todayStr.slice(0, 4))} className={stepperBtn} title="Next Year">
+                <Button type="button" variant="ghost" size="icon" onClick={() => stepYear(1)} disabled={Number(selectedYear) >= currentFY} className={stepperBtn} title="Next Year">
                   <ChevronRight className="w-4 h-4" />
                 </Button>
               </div>

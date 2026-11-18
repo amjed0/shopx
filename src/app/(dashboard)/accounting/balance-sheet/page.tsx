@@ -81,8 +81,13 @@ const fmtDate = (s: string) => {
     : d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
-const currentYear = new Date().getFullYear()
-const YEARS = Array.from({ length: 5 }, (_, i) => currentYear - i)
+// ── Indian Financial Year helpers ─────────────────────────────────────────────
+// FY 2025-26 starts April 1 2025 → fy = 2025
+const now = new Date()
+const currentFY = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1
+// Last 5 FYs including current
+const FY_YEARS = Array.from({ length: 5 }, (_, i) => currentFY - i)
+const fyLabel = (fy: number) => `${fy}-${String(fy + 1).slice(2)}`   // "2025-26"
 
 // ── Balance sheet maths (shared by screen, PDF and Excel) ─────────────────────
 function calcTotals(d?: ConsolidatedBS) {
@@ -110,34 +115,36 @@ function buildBSRows(p?: ConsolidatedBS, c?: ConsolidatedBS): BSRow[] {
   return [
     { type: 'section',  label: 'ASSETS' },
     { type: 'subhead',  label: 'Current Assets' },
-    { type: 'row',      label: 'Cash',                 a: p?.cash,               b: c?.cash },
-    { type: 'row',      label: 'Accounts Receivable',  a: p?.accountsReceivable, b: c?.accountsReceivable },
-    { type: 'row',      label: 'Prepaid Expenses',     a: p?.prepaidExpenses,    b: c?.prepaidExpenses },
-    { type: 'row',      label: 'Inventory',            a: p?.inventory,          b: c?.inventory },
-    { type: 'subtotal', label: 'Total Current Assets', a: t1.tca, b: t2.tca },
-    { type: 'subhead',  label: 'Non-Current Assets' },
-    { type: 'row',      label: 'Equipment',            a: p?.equipment,          b: c?.equipment },
-    { type: 'row',      label: 'Property',             a: p?.property,           b: c?.property },
-    { type: 'row',      label: 'Goodwill',             a: p?.goodwill,           b: c?.goodwill },
-    { type: 'total',    label: 'TOTAL ASSETS',         a: t1.ta, b: t2.ta },
+    { type: 'row',      label: 'Cash & Bank Balance',          a: p?.cash,               b: c?.cash },
+    { type: 'row',      label: 'Debtors / Accounts Receivable',a: p?.accountsReceivable, b: c?.accountsReceivable },
+    { type: 'row',      label: 'Prepaid / Advance Payments',   a: p?.prepaidExpenses,    b: c?.prepaidExpenses },
+    { type: 'row',      label: 'Closing Stock (Inventory)',     a: p?.inventory,          b: c?.inventory },
+    { type: 'subtotal', label: 'Total Current Assets',         a: t1.tca, b: t2.tca },
+    { type: 'subhead',  label: 'Fixed Assets (Non-Current)' },
+    { type: 'row',      label: 'Equipment, Machinery & Furniture', a: p?.equipment,      b: c?.equipment },
+    { type: 'row',      label: 'Property, Building & Renovation',  a: p?.property,       b: c?.property },
+    { type: 'row',      label: 'Goodwill / Intangibles / Brand',   a: p?.goodwill,       b: c?.goodwill },
+    { type: 'total',    label: 'TOTAL ASSETS',                 a: t1.ta, b: t2.ta },
+
     { type: 'section',  label: 'LIABILITIES' },
     { type: 'subhead',  label: 'Current Liabilities' },
-    { type: 'row',      label: 'Accounts Payable',     a: p?.accountsPayable,    b: c?.accountsPayable },
-    { type: 'row',      label: 'Accrued Expenses',     a: p?.accruedExpenses,    b: c?.accruedExpenses },
-    { type: 'row',      label: 'Unearned Revenue',     a: p?.unearnedRevenue,    b: c?.unearnedRevenue },
-    { type: 'row',      label: 'Salaries Payable',     a: p?.salariesPayable,    b: c?.salariesPayable },
-    { type: 'row',      label: 'Income Taxes Payable', a: p?.incomeTaxesPayable, b: c?.incomeTaxesPayable },
-    { type: 'row',      label: 'Warranty Liability',   a: p?.warrantyLiability,  b: c?.warrantyLiability },
-    { type: 'subtotal', label: 'Total Current Liabilities', a: t1.tcl, b: t2.tcl },
+    { type: 'row',      label: 'Sundry Creditors / Accounts Payable', a: p?.accountsPayable,    b: c?.accountsPayable },
+    { type: 'row',      label: 'Outstanding Expenses (Rent, Electricity, etc.)', a: p?.accruedExpenses, b: c?.accruedExpenses },
+    { type: 'row',      label: 'Unearned / Advance Income',   a: p?.unearnedRevenue,    b: c?.unearnedRevenue },
+    { type: 'row',      label: 'Salaries & Wages Payable',    a: p?.salariesPayable,    b: c?.salariesPayable },
+    { type: 'row',      label: 'Tax Payable (GST / TDS / IT)',a: p?.incomeTaxesPayable, b: c?.incomeTaxesPayable },
+    { type: 'row',      label: 'Warranty / Refund Provision', a: p?.warrantyLiability,  b: c?.warrantyLiability },
+    { type: 'subtotal', label: 'Total Current Liabilities',   a: t1.tcl, b: t2.tcl },
     { type: 'subhead',  label: 'Long-Term Liabilities' },
-    { type: 'row',      label: 'Long-Term Debt',              a: p?.longTermDebt,             b: c?.longTermDebt },
-    { type: 'row',      label: 'Other Long-Term Liabilities', a: p?.otherLongTermLiabilities, b: c?.otherLongTermLiabilities },
-    { type: 'total',    label: 'TOTAL LIABILITIES',    a: t1.tl, b: t2.tl },
-    { type: 'section',  label: "SHAREHOLDER'S EQUITY" },
-    { type: 'row',      label: 'Equity Capital',       a: p?.equityCapital,      b: c?.equityCapital },
-    { type: 'row',      label: 'Retained Earnings',    a: p?.retainedEarnings,   b: c?.retainedEarnings },
-    { type: 'subtotal', label: "Shareholder's Equity", a: t1.se, b: t2.se },
-    { type: 'total',    label: "TOTAL LIABILITIES & SHAREHOLDER'S EQUITY", a: t1.tlse, b: t2.tlse },
+    { type: 'row',      label: 'Bank Loans / Long-Term Debt', a: p?.longTermDebt,             b: c?.longTermDebt },
+    { type: 'row',      label: 'Short-Term Loan / Overdraft & Others', a: p?.otherLongTermLiabilities, b: c?.otherLongTermLiabilities },
+    { type: 'total',    label: 'TOTAL LIABILITIES',           a: t1.tl, b: t2.tl },
+
+    { type: 'section',  label: "OWNER'S EQUITY / CAPITAL" },
+    { type: 'row',      label: "Owner's Capital / Investment", a: p?.equityCapital,      b: c?.equityCapital },
+    { type: 'row',      label: 'Retained Earnings / Net Profit (Loss)', a: p?.retainedEarnings, b: c?.retainedEarnings },
+    { type: 'subtotal', label: "Total Owner's Equity",         a: t1.se, b: t2.se },
+    { type: 'total',    label: "TOTAL LIABILITIES & OWNER'S EQUITY", a: t1.tlse, b: t2.tlse },
   ]
 }
 
@@ -181,6 +188,7 @@ function ConsolidatedBSTable({
   loading: boolean
 }) {
   const v = (val: number | undefined) => (val !== undefined ? fmt(val) : '—')
+  const vClass = (val: number | undefined) => val !== undefined && val < 0 ? 'text-rose-400' : ''
   const rows = buildBSRows(primary, compare)
 
   return (
@@ -192,10 +200,10 @@ function ConsolidatedBSTable({
               Description
             </th>
             <th className="text-right py-3 px-4 text-xs font-bold uppercase tracking-widest text-white">
-              FY {yearA}
+              FY {fyLabel(yearA)} <span className="text-[10px] opacity-75 font-normal">({yearA}–{String(yearA+1).slice(2)})</span>
             </th>
             <th className="text-right py-3 px-4 text-xs font-bold uppercase tracking-widest text-white">
-              FY {yearB}
+              FY {fyLabel(yearB)} <span className="text-[10px] opacity-75 font-normal">({yearB}–{String(yearB+1).slice(2)})</span>
             </th>
           </tr>
         </thead>
@@ -218,10 +226,10 @@ function ConsolidatedBSTable({
             if (row.type === 'row') return (
               <tr key={i} className="border-b border-border/40 hover:bg-secondary/20 transition-colors">
                 <td className="py-2.5 px-4 pl-8">{row.label}</td>
-                <td className={`py-2.5 px-4 text-right font-mono text-xs font-semibold ${loading ? 'text-muted-foreground' : ''}`}>
+                <td className={`py-2.5 px-4 text-right font-mono text-xs font-semibold ${loading ? 'text-muted-foreground' : vClass(row.a)}`}>
                   {v(row.a)}
                 </td>
-                <td className={`py-2.5 px-4 text-right font-mono text-xs font-semibold ${loading ? 'text-muted-foreground' : ''}`}>
+                <td className={`py-2.5 px-4 text-right font-mono text-xs font-semibold ${loading ? 'text-muted-foreground' : vClass(row.b)}`}>
                   {v(row.b)}
                 </td>
               </tr>
@@ -315,8 +323,8 @@ function buildExportModel(
     compareYear,
     bsRows: buildBSRows(data.consolidatedBS, compareData?.consolidatedBS),
     title: `${companyName} - Consolidated Balance Sheet`,
-    subtitle: `FY ${data.year} vs FY ${compareYear}${companyContact ? ` | ${companyContact}` : ''} | Generated ${generated}`,
-    filename: `${safeCompany}_BalanceSheet_FY${data.year}_vs_FY${compareYear}`,
+    subtitle: `FY ${fyLabel(data.year)} (Apr ${data.year}–Mar ${data.year+1}) vs FY ${fyLabel(compareYear)} (Apr ${compareYear}–Mar ${compareYear+1})${companyContact ? ` | ${companyContact}` : ''} | Generated ${generated}`,
+    filename: `${safeCompany}_BalanceSheet_FY${fyLabel(data.year)}_vs_FY${fyLabel(compareYear)}`,
     kpis: [
       { label: 'Total Revenue', value: s.totalRevenue, text: fmtPlain(s.totalRevenue) },
       { label: 'Gross Profit',  value: s.totalGrossProfit, text: fmtPlain(s.totalGrossProfit) },
@@ -429,7 +437,7 @@ async function exportBalanceSheetPDF(m: ExportModel) {
 
     ;(doc as any).autoTable({
       startY: y + 3,
-      head: [['Description', `FY ${m.year}`, `FY ${m.compareYear}`]],
+      head: [['Description', `FY ${fyLabel(m.year)}`, `FY ${fyLabel(m.compareYear)}`]],
       body: bsBody,
       theme: 'plain',
       headStyles: { fillColor: [30, 58, 95], textColor: 255, fontSize: 8.5 },
@@ -497,7 +505,7 @@ async function exportBalanceSheetPDF(m: ExportModel) {
   )
   const blob = buildFallbackPdf(
     m.title, m.subtitle,
-    ['Description', `FY ${m.year}`, `FY ${m.compareYear}`],
+    ['Description', `FY ${fyLabel(m.year)}`, `FY ${fyLabel(m.compareYear)}`],
     rows,
   )
   downloadBlob(blob, `${m.filename}.pdf`)
@@ -509,7 +517,7 @@ async function exportBalanceSheetExcel(m: ExportModel): Promise<'xlsx' | 'csv'> 
     [m.title],
     [m.subtitle],
     [],
-    ['Description', `FY ${m.year}`, `FY ${m.compareYear}`],
+    ['Description', `FY ${fyLabel(m.year)}`, `FY ${fyLabel(m.compareYear)}`],
     ...m.bsRows.map(r =>
       r.type === 'section' || r.type === 'subhead'
         ? [r.label, '', '']
@@ -623,14 +631,14 @@ export default function BalanceSheetPage() {
   const [loading, setLoading]         = React.useState(true)
   const [compareLoading, setCompareLoading] = React.useState(false)
   const [error, setError]             = React.useState<string | null>(null)
-  const [year, setYear]               = React.useState(currentYear)
-  const [compareYear, setCompareYear] = React.useState(currentYear - 1)
+  const [year, setYear]               = React.useState(currentFY)
+  const [compareYear, setCompareYear] = React.useState(currentFY - 1)
   const [exporting, setExporting]     = React.useState<null | 'pdf' | 'excel' | 'transactions'>(null)
 
   const fetchData = React.useCallback(async () => {
     setLoading(true); setError(null)
     try {
-      const res = await fetch(`/api/balance-sheet?year=${year}`, { credentials: 'include' })
+      const res = await fetch(`/api/balance-sheet?fy=${year}`, { credentials: 'include' })
       if (!res.ok) throw new Error((await res.json()).error || 'Failed to fetch')
       setData(await res.json())
     } catch (e: any) {
@@ -643,7 +651,7 @@ export default function BalanceSheetPage() {
   const fetchCompareData = React.useCallback(async () => {
     setCompareLoading(true)
     try {
-      const res = await fetch(`/api/balance-sheet?year=${compareYear}`, { credentials: 'include' })
+      const res = await fetch(`/api/balance-sheet?fy=${compareYear}`, { credentials: 'include' })
       if (!res.ok) { setCompareData(null); return }
       setCompareData(await res.json())
     } catch {
@@ -709,7 +717,7 @@ export default function BalanceSheetPage() {
             Balance <span className="text-primary">Sheet</span>
           </h1>
           <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-            Consolidated balance sheet and transaction history for FY {year}.
+            Consolidated balance sheet and transaction history for FY {fyLabel(year)} (Apr {year} – Mar {year + 1}).
           </p>
         </div>
 
@@ -718,14 +726,14 @@ export default function BalanceSheetPage() {
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" className="border-border font-semibold rounded-full gap-2">
-                FY {year} <ChevronDown className="w-4 h-4" />
+                FY {fyLabel(year)} <ChevronDown className="w-4 h-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              {YEARS.map(y => (
+              {FY_YEARS.map(y => (
                 <DropdownMenuItem key={y} onClick={() => setYear(y)}
                   className={y === year ? 'text-primary font-bold' : ''}>
-                  FY {y}
+                  FY {fyLabel(y)} <span className="text-[11px] text-muted-foreground ml-1">(Apr {y} – Mar {y + 1})</span>
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
@@ -737,14 +745,14 @@ export default function BalanceSheetPage() {
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="sm" className="h-auto p-0 font-semibold gap-1 text-sm">
-                  FY {compareYear} <ChevronDown className="w-3 h-3" />
+                  FY {fyLabel(compareYear)} <ChevronDown className="w-3 h-3" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                {YEARS.map(y => (
+                {FY_YEARS.map(y => (
                   <DropdownMenuItem key={y} onClick={() => setCompareYear(y)}
                     className={y === compareYear ? 'text-primary font-bold' : ''}>
-                    FY {y}
+                    FY {fyLabel(y)} <span className="text-[11px] text-muted-foreground ml-1">(Apr {y} – Mar {y + 1})</span>
                   </DropdownMenuItem>
                 ))}
               </DropdownMenuContent>
@@ -793,7 +801,7 @@ export default function BalanceSheetPage() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5">
         <StatCard icon={IndianRupee} title="Total Revenue"    colorClass="bg-primary/10 text-primary"
           value={s ? fmt(s.totalRevenue) : '—'}
-          badge={{ label: 'FY ' + year, positive: true }} />
+          badge={{ label: 'FY ' + fyLabel(year), positive: true }} />
         <StatCard icon={TrendingUp}  title="Gross Profit"     colorClass="bg-accent/10 text-accent"
           value={s ? fmt(s.totalGrossProfit) : '—'}
           badge={{ label: s ? pct(s.grossMargin) + ' margin' : '—', positive: true }} />
@@ -811,19 +819,29 @@ export default function BalanceSheetPage() {
             <CardTitle className="font-headline flex items-center gap-2 text-lg">
               <Scale className="w-5 h-5 text-primary" />
               Consolidated Balance Sheet
+              {/* Balanced indicator */}
+              {data?.consolidatedBS && (() => {
+                const t = calcTotals(data.consolidatedBS)
+                const diff = Math.abs(t.ta - t.tlse)
+                return diff < 1 ? (
+                  <Badge className="bg-emerald-500/10 text-emerald-400 border-none text-[10px] font-bold ml-1">✓ Balanced</Badge>
+                ) : (
+                  <Badge className="bg-rose-500/10 text-rose-400 border-none text-[10px] font-bold ml-1">⚠ Off by {fmt(diff)}</Badge>
+                )
+              })()}
             </CardTitle>
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               {compareLoading && (
                 <span className="flex items-center gap-1">
-                  <RefreshCw className="w-3 h-3 animate-spin" /> Loading FY {compareYear}…
+                  <RefreshCw className="w-3 h-3 animate-spin" /> Loading FY {fyLabel(compareYear)}…
                 </span>
               )}
               <Badge className="bg-primary/10 text-primary border-none font-bold">
-                FY {year}
+                FY {fyLabel(year)}
               </Badge>
               <span>vs</span>
               <Badge className="bg-secondary text-foreground border-none font-bold">
-                FY {compareYear}
+                FY {fyLabel(compareYear)}
               </Badge>
             </div>
           </div>
@@ -950,7 +968,7 @@ export default function BalanceSheetPage() {
               {data?.history.length === 0 && (
                 <tr>
                   <td colSpan={6} className="text-center py-12 text-muted-foreground text-sm">
-                    No transactions found for FY {year}.
+                    No transactions found for FY {fyLabel(year)} (Apr {year} – Mar {year + 1}).
                   </td>
                 </tr>
               )}

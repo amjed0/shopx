@@ -431,8 +431,12 @@ export default function ProfitLossPage() {
         from = new Date(now.getFullYear(), now.getMonth(), 1); break
       case "quarter":
         from = new Date(now); from.setMonth(now.getMonth() - 3); break
-      case "year":
-        from = new Date(now.getFullYear(), 0, 1); break
+      case "year": {
+        // Indian Financial Year (April 1 to March 31)
+        const fyStartYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1
+        from = new Date(fyStartYear, 3, 1)
+        break
+      }
       default:
         from = new Date(now.getFullYear(), now.getMonth(), 1)
     }
@@ -557,7 +561,7 @@ export default function ProfitLossPage() {
                 { label: "7 Days", key: "week" },
                 { label: "This Month", key: "month" },
                 { label: "3 Months", key: "quarter" },
-                { label: "This Year", key: "year" },
+                { label: "This FY (Apr–Mar)", key: "year" },
               ].map(p => (
                 <Button
                   key={p.key}

@@ -20,6 +20,7 @@ export interface IPurchase extends Document {
   roundOff?: number;
   paidAmount?: number;
   paymentMode?: string;
+  isOpeningStock?: boolean;
 }
 
 const PurchaseSchema = new Schema<IPurchase>({
@@ -43,6 +44,7 @@ const PurchaseSchema = new Schema<IPurchase>({
   roundOff: { type: Number },
   paidAmount: { type: Number },
   paymentMode: { type: String },
+  isOpeningStock: { type: Boolean, default: false },
 }, { strict: false });
 
 // Clear cached model in dev

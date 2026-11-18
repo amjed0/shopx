@@ -165,7 +165,11 @@ const isDateInPeriod = (dateStr: string, period: PeriodFilter): boolean => {
     return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()
   }
   if (period === "yearly") {
-    return d.getFullYear() === now.getFullYear()
+    // Indian Financial Year: April 1 to March 31
+    const currentFYStart = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1
+    const fyStartDate = new Date(currentFYStart, 3, 1, 0, 0, 0, 0)
+    const fyEndDate = new Date(currentFYStart + 1, 2, 31, 23, 59, 59, 999)
+    return d >= fyStartDate && d <= fyEndDate
   }
   return true
 }
@@ -879,7 +883,7 @@ export default function CashbookPage() {
   const periodDisplayLabel = {
     today: "Today",
     monthly: "This Month",
-    yearly: "This Year",
+    yearly: "This FY (Apr–Mar)",
     all: "All Time",
   }[selectedPeriod]
 

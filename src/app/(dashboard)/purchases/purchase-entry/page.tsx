@@ -109,6 +109,7 @@ interface PurchaseItem {
   taxRate?: number | string        // GST %
   taxAmount?: number | string      // GST ₹
   isNewProduct?: boolean
+  isOpeningStock?: boolean         // true when this purchase is opening stock for a new/existing business
 }
 
 // Item shape returned by the AI invoice scanner
@@ -199,6 +200,7 @@ export default function NewPurchasePage() {
   // Bill-level discount (typed manually) and round-off
   const [discountInput, setDiscountInput] = React.useState<string>("")
   const [roundOffEnabled, setRoundOffEnabled] = React.useState(false)
+  const [isOpeningStockBill, setIsOpeningStockBill] = React.useState(false)
 
   const round2 = (n: number) => Number(n.toFixed(2))
 
@@ -260,6 +262,7 @@ export default function NewPurchasePage() {
         taxRate: taxRate,
         taxAmount: taxAmount,
         isNewProduct: false,
+        isOpeningStock: item.isOpeningStock ?? false,
         isManuallyEditedSku: false,
       }
     }))
@@ -405,6 +408,7 @@ export default function NewPurchasePage() {
     setDiscountInput(bill.discount > 0 ? String(bill.discount) : "")
     setRoundOffEnabled(bill.roundOff !== 0)
     if (bill.paymentMode) setPaymentMode(bill.paymentMode)
+    setIsOpeningStockBill(bill.items.some(rec => Boolean((rec as any).isOpeningStock)))
 
     setPurchaseItems(bill.items.map(rec => {
       const prod =
@@ -430,6 +434,7 @@ export default function NewPurchasePage() {
         category: prod?.category || "General",
         minStock: prod?.minStock || 2,
         isNewProduct: false,
+        isOpeningStock: Boolean((rec as any).isOpeningStock),
       }
     }))
   }
@@ -659,6 +664,7 @@ export default function NewPurchasePage() {
         taxRate: 0,
         taxAmount: 0,
         isNewProduct: false,
+        isOpeningStock: isOpeningStockBill,
       }
 
       // If the sheet currently only has 1 blank row, replace it with the selected product
@@ -690,6 +696,7 @@ export default function NewPurchasePage() {
       taxRate: 0,
       taxAmount: 0,
       isNewProduct: true,
+      isOpeningStock: false,
     }
   }
 
@@ -1105,6 +1112,7 @@ export default function NewPurchasePage() {
           taxRate: itemTaxRate,
           taxAmount: itemTaxAmount,
           isNewProduct: false,
+          isOpeningStock: isOpeningStockBill,
         })
         sheetMap.set(sheetDedupKey, targetIdx)
       } else {
@@ -1131,6 +1139,7 @@ export default function NewPurchasePage() {
           taxRate: itemTaxRate,
           taxAmount: itemTaxAmount,
           isNewProduct: true,
+          isOpeningStock: isOpeningStockBill,
         })
         sheetMap.set(sheetDedupKey, targetIdx)
       }
@@ -1555,6 +1564,7 @@ export default function NewPurchasePage() {
             roundOff: roundOffAmt,
             paidAmount: numPaid,
             paymentMode,
+            isOpeningStock: Boolean(isOpeningStockBill || item.isOpeningStock),
           }),
         })
 
@@ -1758,6 +1768,7 @@ export default function NewPurchasePage() {
             roundOff: roundOffAmt,
             ...(reviewBill.paid !== null ? { paidAmount: reviewBill.paid } : {}),
             ...(reviewBill.paymentMode ? { paymentMode: reviewBill.paymentMode } : {}),
+            isOpeningStock: Boolean(isOpeningStockBill || item.isOpeningStock),
           },
         })
       }
@@ -2386,7 +2397,7 @@ export default function NewPurchasePage() {
 
         {/* ── ITEM CODE SETTING BAR: Tickbox for Use Bill Item Codes vs Auto SX Codes (Default: First App Codes) ── */}
         <div className="bg-secondary/15 border-b border-border/40 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5">
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <label className={cn(
               "flex items-center gap-2 select-none group bg-secondary/30 px-3 py-1.5 rounded-xl border border-border/60 transition-all shadow-sm",
               currentBillIndex === -1 ? "cursor-pointer hover:bg-secondary/60" : "opacity-50 cursor-not-allowed"
@@ -2412,8 +2423,47 @@ export default function NewPurchasePage() {
                 {useBillItemCode ? "Bill Code ✓" : "App Code (SX-XXXX)"}
               </Badge>
             </label>
-            <span className="text-[11px] text-muted-foreground hidden sm:inline">
-              {useBillItemCode
+
+            {/* Opening Stock Bill Toggle */}
+            <label className={cn(
+              "flex items-center gap-2 select-none group px-3 py-1.5 rounded-xl border transition-all shadow-sm cursor-pointer",
+              isOpeningStockBill
+                ? "bg-amber-500/15 border-amber-500/50 shadow-amber-500/10"
+                : "bg-secondary/30 border-border/60 hover:bg-secondary/60"
+            )}>
+              <input
+                type="checkbox"
+                checked={isOpeningStockBill}
+                disabled={isReviewLocked}
+                onChange={e => {
+                  const checked = e.target.checked
+                  setIsOpeningStockBill(checked)
+                  setPurchaseItems(prev => prev.map(it => ({ ...it, isOpeningStock: checked })))
+                }}
+                className="w-4 h-4 rounded text-amber-500 accent-amber-500 cursor-pointer"
+              />
+              <span className={cn(
+                "text-xs font-bold transition-colors",
+                isOpeningStockBill ? "text-amber-400" : "text-foreground group-hover:text-amber-400"
+              )}>
+                Opening Stock Bill
+              </span>
+              <Badge
+                variant="outline"
+                className={`text-[9px] px-1.5 py-0 h-4 font-mono font-bold transition-all ${
+                  isOpeningStockBill
+                    ? "bg-amber-500/25 text-amber-300 border-amber-500/60"
+                    : "bg-secondary/40 text-muted-foreground border-border/60"
+                }`}
+              >
+                {isOpeningStockBill ? "Opening Stock ✓" : "Regular"}
+              </Badge>
+            </label>
+
+            <span className="text-[11px] text-muted-foreground hidden lg:inline">
+              {isOpeningStockBill
+                ? "• Tagged as Opening Stock for Capital Account & Balance Sheet."
+                : useBillItemCode
                 ? "• Using item codes from supplier invoice for new items."
                 : "• Using internal app codes (SX-XXXX). Tick if you want to use the bill's item codes."}
             </span>
@@ -2728,6 +2778,25 @@ export default function NewPurchasePage() {
                               In Stock ✓ ({item.sku})
                             </Badge>
                           )}
+
+                          {/* Row-level Opening Stock Checkbox */}
+                          <label
+                            className="flex items-center gap-1 cursor-pointer select-none ml-1.5 px-1 py-0.5 rounded bg-secondary/40 border border-border/40 hover:bg-secondary/70"
+                            title="Tick to tag this product as Opening Stock"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={!!item.isOpeningStock}
+                              onChange={e => updateItem(item.rowId, "isOpeningStock", e.target.checked)}
+                              className="w-3 h-3 rounded text-amber-500 accent-amber-500 cursor-pointer"
+                            />
+                            <span className={cn(
+                              "text-[8px] font-bold uppercase tracking-tight",
+                              item.isOpeningStock ? "text-amber-400" : "text-muted-foreground"
+                            )}>
+                              Opening Stock
+                            </span>
+                          </label>
                         </div>
                       </TableCell>
 

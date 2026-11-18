@@ -48,7 +48,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     let {
   supplierId, productId, productName, itemCode, quantity, purchasePrice, taxRate, taxAmount, billingDate,
-  billId, billTotal, discount, roundOff, paidAmount, paymentMode,
+  billId, billTotal, discount, roundOff, paidAmount, paymentMode, isOpeningStock,
 } = body;
 
     // Handle missing or invalid supplier gracefully by linking to or creating a default supplier
@@ -108,6 +108,7 @@ const purchase = await Purchase.create({
   taxRate: Number(taxRate) || 0,
   taxAmount: Number(taxAmount) || 0,
   billingDate: billingDate || new Date().toISOString().split('T')[0],
+  isOpeningStock: Boolean(isOpeningStock),
   ...(billId ? { billId: String(billId) } : {}),
   ...(num(billTotal) !== undefined ? { billTotal: num(billTotal) } : {}),
   ...(num(discount) !== undefined ? { discount: num(discount) } : {}),
@@ -137,7 +138,7 @@ export async function PATCH(request: Request) {
     }
 
     const body = await request.json();
-    const { productId, quantity, purchasePrice, supplierId, sellingPrice, mrp, billingDate } = body;
+    const { productId, quantity, purchasePrice, supplierId, sellingPrice, mrp, billingDate, isOpeningStock } = body;
 
     if (!productId) {
       return NextResponse.json({ error: 'Product ID is required' }, { status: 400 });
@@ -173,6 +174,7 @@ export async function PATCH(request: Request) {
         quantity: Number(quantity),
         purchasePrice: Number(purchasePrice ?? product.purchasePrice ?? 0),
         billingDate: billingDate || new Date().toISOString().split('T')[0],
+        isOpeningStock: Boolean(isOpeningStock),
       });
     }
 
