@@ -138,7 +138,8 @@ export default function NewBillPage() {
 
   // ── Shop Profile ──
   const [shopProfile, setShopProfile] = React.useState<ShopProfile | null>(null)
-
+  const [isEditingBill, setIsEditingBill] = React.useState(false)
+  
   // ── Date & Bill Navigator ──
   const [billingDate, setBillingDate] = React.useState<string>(() => new Date().toISOString().split("T")[0])
   const [pastSales, setPastSales] = React.useState<PastSale[]>([])
@@ -303,8 +304,12 @@ export default function NewBillPage() {
         : 0,
   })
 
-  const patchRow = (rowId: string, fn: (r: BillItem) => BillItem) =>
+  const patchRow = (rowId: string, fn: (r: BillItem) => BillItem) => {
+    if (currentBillIndex !== -1 && !isEditingBill) {
+      setIsEditingBill(true)
+    }
     setBillRows(prev => prev.map(r => (r.rowId === rowId ? fn(r) : r)))
+  }
 
   // Autocomplete state for the product name box
   const [activeSuggestionRowId, setActiveSuggestionRowId] = React.useState<string | null>(null)
@@ -371,6 +376,9 @@ export default function NewBillPage() {
 
   // Fast Add cards: put the product into the first empty row (or add a row)
   const addItem = (product: Product) => {
+    if (currentBillIndex !== -1 && !isEditingBill) {
+      setIsEditingBill(true)
+    }
     setBillRows(prev => {
       const existing = prev.find(r => r.product?.id === product.id)
       if (existing) {
@@ -404,11 +412,15 @@ export default function NewBillPage() {
     return !!dup
   }
 
-  const removeItem = (rowId: string) =>
+  const removeItem = (rowId: string) => {
+    if (currentBillIndex !== -1 && !isEditingBill) {
+      setIsEditingBill(true)
+    }
     setBillRows(prev => {
       const next = prev.filter(r => r.rowId !== rowId)
       return next.length === 0 ? [createBlankRow()] : next
     })
+  }
 
   const updateItemQuantity = (rowId: string, quantity: number) => {
     const validQty = Math.max(1, quantity)
@@ -648,10 +660,12 @@ export default function NewBillPage() {
       loadPastSale(currentBillIndex + 1)
     } else {
       handleResetToNewBill()
+      setIsEditingBill(false)
     }
   }
 
   const loadPastSale = (index: number) => {
+    setIsEditingBill(false)
     const sale = pastSales[index]
     if (!sale) return
     setCurrentBillIndex(index)
@@ -968,49 +982,78 @@ export default function NewBillPage() {
       setIsSubmitting(true)
 
       // Step 1: Save sale
-      const saleRes = await fetch("/api/sales", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-user-id": user.uid },
-        body: JSON.stringify(saleData),
-      })
-      if (!saleRes.ok) throw new Error("Failed to save sale")
-      const savedSale = await saleRes.json()
+      const editingExisting =
+  isEditingBill && currentBillIndex >= 0
 
-      // Step 2: Update inventory stock
-      await Promise.all(
-        billItems.map(item =>
-          fetch(`/api/products/${item.product.id}`, {
+const saleRes = await fetch(
+  editingExisting
+    ? `/api/sales/${pastSales[currentBillIndex].id}`
+    : "/api/sales",
+  {
+    method: editingExisting ? "PUT" : "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-user-id": user.uid,
+    },
+    body: JSON.stringify(saleData),
+  }
+)
+
+if (!saleRes.ok) {
+  const errorData = await saleRes.json()
+  throw new Error(errorData.error || "Failed to save sale")
+}
+
+const savedSale = await saleRes.json()
+
+      // For NEW sales only: update product stock, customer balance, and cashbook
+      // (When editingExisting, the PUT endpoint already handles stock deltas, customer credit, and cashbook atomically in the DB)
+      if (!editingExisting) {
+        // Step 2: Update inventory stock
+        await Promise.all(
+          billItems.map(item =>
+            fetch(`/api/products/${item.product.id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json", "x-user-id": user.uid },
+              body: JSON.stringify({ stock: item.product.stock - item.quantity }),
+            })
+          )
+        )
+
+        // Step 3: Update customer outstanding balance if credit sale
+        if (paymentMethod === "credit" && activeCustomer) {
+          await fetch(`/api/customers/${activeCustomer.id}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json", "x-user-id": user.uid },
-            body: JSON.stringify({ stock: item.product.stock - item.quantity }),
+            body: JSON.stringify({ outstandingBalance: (activeCustomer.outstandingBalance || 0) + grandTotal }),
           })
-        )
-      )
+        }
 
-      // Step 3: Update customer outstanding balance if credit sale
-      if (paymentMethod === "credit" && activeCustomer) {
-        await fetch(`/api/customers/${activeCustomer.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json", "x-user-id": user.uid },
-          body: JSON.stringify({ outstandingBalance: (activeCustomer.outstandingBalance || 0) + grandTotal }),
-        })
+        // Step 4: Record cashbook entry for revenue
+        if (paymentMethod !== "credit") {
+          await fetch("/api/cashbook", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-user-id": user.uid },
+            body: JSON.stringify({
+              type: "income",
+              category: "Sales Revenue",
+              description: `Sale #${activeBillNumber} to ${activeCustomer?.name || resolvedCustomerName}`,
+              amount: grandTotal,
+              paymentMode: paymentMethod.toUpperCase(),
+              note: `Bill #${activeBillNumber}`,
+            }),
+          }).catch(() => null)
+        }
       }
+      if (editingExisting) {
+  setPastSales(prev =>
+    prev.map(sale =>
+      sale.id === savedSale.id ? savedSale : sale
+    )
+  )
 
-      // Step 4: Record cashbook entry for revenue
-      if (paymentMethod !== "credit") {
-        await fetch("/api/cashbook", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "x-user-id": user.uid },
-          body: JSON.stringify({
-            type: "income",
-            category: "Sales Revenue",
-            description: `Sale #${activeBillNumber} to ${activeCustomer?.name || resolvedCustomerName}`,
-            amount: grandTotal,
-            paymentMode: paymentMethod.toUpperCase(),
-            note: `Bill #${activeBillNumber}`,
-          }),
-        }).catch(() => null)
-      }
+  setIsEditingBill(false)
+}
 
       // Open invoice modal so user can view/print/WhatsApp the completed bill
       setGeneratedInvoiceData({
@@ -1039,16 +1082,20 @@ export default function NewBillPage() {
         netPayable: totalWithPreviousDue,
         paymentMethod,
       })
-      setWasSaleCompleted(true)
+      setWasSaleCompleted(!editingExisting)
       setIsInvoiceModalOpen(true)
 
       // Refresh data
       fetchAllData()
 
       toast({
-        title: "Sale Confirmed ✓",
-        description: `Bill #${activeBillNumber} saved successfully.`,
-      })
+  title: editingExisting
+    ? "Bill Updated Successfully ✓"
+    : "Sale Confirmed ✓",
+  description: editingExisting
+    ? `Bill #${activeBillNumber} updated successfully.`
+    : `Bill #${activeBillNumber} saved successfully.`,
+})
     } catch (err: any) {
       toast({ variant: "destructive", title: "Sale Failed", description: err.message })
     } finally {
@@ -1215,22 +1262,56 @@ export default function NewBillPage() {
         {/* Current State / Reset to New Bill */}
         <div className="flex items-center gap-2">
           {currentBillIndex !== -1 ? (
-            <div className="flex items-center gap-2">
-              <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/40 text-xs py-1 px-2.5 font-bold">
-                Reviewing Bill #{activeBillNumber}
-              </Badge>
-              <Button
-                type="button"
-                size="sm"
-                variant="default"
-                className="h-8 text-xs font-bold bg-primary text-primary-foreground rounded-xl shadow-sm gap-1"
-                onClick={handleResetToNewBill}
-              >
-                <Plus className="w-3.5 h-3.5" />
-                New Bill (Clear)
-              </Button>
-            </div>
-          ) : (
+  <div className="flex items-center gap-2 flex-wrap">
+    <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/40 text-xs py-1 px-2.5 font-bold">
+      Preview Bill #{activeBillNumber}
+    </Badge>
+
+    {!isEditingBill ? (
+      <Button
+        type="button"
+        size="sm"
+        onClick={() => setIsEditingBill(true)}
+        className="h-8 text-xs font-bold rounded-xl gap-1"
+      >
+        <FileText className="w-3.5 h-3.5" />
+        Edit Bill
+      </Button>
+    ) : (
+      <>
+        <Badge variant="outline" className="text-emerald-400">
+          Editing
+        </Badge>
+
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            const index = currentBillIndex
+            setIsEditingBill(false)
+            loadPastSale(index)
+          }}
+        >
+          <X className="w-3.5 h-3.5 mr-1" />
+          Cancel Edit
+        </Button>
+      </>
+    )}
+
+    <Button
+      type="button"
+      size="sm"
+      variant="default"
+      onClick={handleResetToNewBill}
+      className="h-8 text-xs rounded-xl"
+    >
+      <Plus className="w-3.5 h-3.5 mr-1" />
+      New Bill
+    </Button>
+  </div>
+) : (
+          
             <div className="flex items-center gap-2">
               <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-400 text-xs py-1 px-2.5 font-bold">
                 ✓ New Bill Entry
@@ -1824,20 +1905,46 @@ export default function NewBillPage() {
               <span>Generate Bill</span>
             </Button>
 
-            {/* Complete Sale Button */}
-            <Button
-              className="h-10 px-5 bg-primary text-primary-foreground font-bold rounded-xl shadow-lg shadow-primary/20 hover:brightness-110 transition-all gap-1.5"
-              onClick={handleCompleteSale}
-              disabled={billItems.length === 0 || isSubmitting || isCreditMissingCustomer}
-            >
-              {isSubmitting ? (
-                <><Loader2 className="w-4 h-4 animate-spin" /> Processing...</>
-              ) : (
-                <><CheckCircle2 className="w-4 h-4" /> Complete Sale</>
-              )}
-            </Button>
+            {/* Complete Sale or Edit Bill Button */}
+            {currentBillIndex !== -1 && !isEditingBill ? (
+              <Button
+                type="button"
+                className="h-10 px-5 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-xl shadow-lg gap-1.5 transition-all"
+                onClick={() => setIsEditingBill(true)}
+              >
+                <FileText className="w-4 h-4" />
+                Edit This Bill
+              </Button>
+            ) : (
+              <Button
+                className="h-10 px-5 bg-primary text-primary-foreground font-bold rounded-xl shadow-lg gap-1.5"
+                onClick={handleCompleteSale}
+                disabled={
+                  billItems.length === 0 ||
+                  isSubmitting ||
+                  isCreditMissingCustomer
+                }
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Processing...
+                  </>
+                ) : isEditingBill ? (
+                  <>
+                    <CheckCircle2 className="w-4 h-4" />
+                    Update Existing Bill
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-4 h-4" />
+                    Complete Sale
+                  </>
+                )}
+              </Button>
+            )}
           </div>
-          
+
                 </div>
               </div>
             </div>

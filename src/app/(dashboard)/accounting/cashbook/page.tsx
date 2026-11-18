@@ -382,6 +382,20 @@ export default function CashbookPage() {
   const [collectNote, setCollectNote] = React.useState("")
   const [isSubmittingCollect, setIsSubmittingCollect] = React.useState(false)
 
+  // Cash Deposit to Bank State
+  const [bankDepositOpen, setBankDepositOpen] = React.useState(false)
+  const [depositAmount, setDepositAmount] = React.useState("")
+  const [depositBankName, setDepositBankName] = React.useState("Primary Bank Account")
+  const [depositDate, setDepositDate] = React.useState(new Date().toISOString().split("T")[0])
+  const [depositNote, setDepositNote] = React.useState("")
+  const [isSubmittingDeposit, setIsSubmittingDeposit] = React.useState(false)
+  // Live balances fetched from tally API for deposit dialog preview
+  const [tallyBalances, setTallyBalances] = React.useState<{
+    currentCash: number
+    currentBank: number
+    loaded: boolean
+  }>({ currentCash: 0, currentBank: 0, loaded: false })
+
   // Fetch past saved cashbook history records
   const fetchCashbookHistory = React.useCallback(async () => {
     if (!user?.uid) return
@@ -696,6 +710,98 @@ export default function CashbookPage() {
     }
   }
 
+  // ── FETCH TALLY BALANCES FOR DEPOSIT DIALOG ──
+  const fetchTallyBalances = React.useCallback(async () => {
+    if (!user?.uid) return
+    setTallyBalances(prev => ({ ...prev, loaded: false }))
+    try {
+      const today = new Date().toISOString().split("T")[0]
+      const res = await fetch(`/api/analytics/tally?date=${today}`, {
+        headers: { "x-user-id": user.uid },
+      })
+      if (!res.ok) return
+      const data = await res.json()
+
+      // Reconstruct current cash in drawer and bank balance using same formula as tally box
+      const storageKeyCash = `shopx_opening_cash_${user.uid}_${today}`
+      const storageKeyUpi = `shopx_opening_upi_${user.uid}_${today}`
+
+      let openingCash = 0
+      let openingUpi = 0
+      try {
+        const savedCash = localStorage.getItem(storageKeyCash)
+        const savedUpi = localStorage.getItem(storageKeyUpi)
+        openingCash = savedCash !== null ? Number(savedCash) || 0 : (data.openingBalance?.autoCash || 0)
+        openingUpi = savedUpi !== null ? Number(savedUpi) || 0 : (data.openingBalance?.autoUpi || 0)
+      } catch {}
+
+      const todaySalesCash = data.today?.sales?.cash || 0
+      const todaySalesDigital = data.today?.sales?.digital || 0
+      const todayOtherIncomeCash = data.today?.otherIncome?.cash || 0
+      const todayOtherIncomeDigital = data.today?.otherIncome?.digital || 0
+      const todayExpensesCash = data.today?.expenses?.cash || 0
+      const todayExpensesDigital = data.today?.expenses?.digital || 0
+      const todayBankDeposits = data.today?.bankDeposits?.total || 0
+
+      const currentCash = Math.max(0, openingCash + todaySalesCash + todayOtherIncomeCash - todayExpensesCash - todayBankDeposits)
+      const currentBank = Math.max(0, openingUpi + todaySalesDigital + todayOtherIncomeDigital + todayBankDeposits - todayExpensesDigital)
+
+      setTallyBalances({ currentCash, currentBank, loaded: true })
+    } catch (err) {
+      console.error("Failed to fetch tally balances:", err)
+      setTallyBalances(prev => ({ ...prev, loaded: true }))
+    }
+  }, [user?.uid])
+
+  // ── RECORD CASH DEPOSIT TO BANK ──
+  const handleRecordBankDeposit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const amount = Number(depositAmount)
+    if (!user?.uid || !amount || amount <= 0) return
+
+    setIsSubmittingDeposit(true)
+    try {
+      const res = await fetch("/api/cashbook/deposit", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-id": user.uid,
+        },
+        body: JSON.stringify({
+          amount,
+          bankName: depositBankName.trim() || "Primary Bank Account",
+          date: depositDate,
+          note: depositNote.trim(),
+        }),
+      })
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.error || "Failed to record cash deposit")
+      }
+
+      toast({
+        title: "Cash Deposited to Bank ✓",
+        description: `Successfully moved ₹${amount.toLocaleString()} from Cash Drawer into ${depositBankName}.`,
+      })
+
+      fetchAccountingData()
+      fetchCashbookHistory()
+      fetchTallyBalances() // refresh balances after deposit
+      setBankDepositOpen(false)
+      setDepositAmount("")
+      setDepositNote("")
+    } catch (err: any) {
+      toast({
+        variant: "destructive",
+        title: "Deposit Failed",
+        description: err.message,
+      })
+    } finally {
+      setIsSubmittingDeposit(false)
+    }
+  }
+
   // ── CURRENT FORM BATCH TOTALS ──
   const totalIncome = items.filter(i => i.type === "income").reduce((acc, i) => acc + (Number(i.amount) || 0), 0)
   const totalExpense = items.filter(i => i.type === "expense").reduce((acc, i) => acc + (Number(i.amount) || 0), 0)
@@ -803,6 +909,13 @@ export default function CashbookPage() {
             onClick={() => setSupplierPayOpen(true)}
           >
             <Truck className="w-3.5 h-3.5 mr-1.5" /> Pay Supplier
+          </Button>
+          <Button
+            variant="outline"
+            className="rounded-xl font-bold uppercase tracking-wider text-[10px] h-8 sm:h-9 border-blue-500/30 text-blue-600 dark:text-blue-400 hover:bg-blue-500/10"
+            onClick={() => { setBankDepositOpen(true); fetchTallyBalances() }}
+          >
+            <Building2 className="w-3.5 h-3.5 mr-1.5" /> Deposit to Bank
           </Button>
           <Button
             variant="outline"
@@ -1823,6 +1936,167 @@ export default function CashbookPage() {
               >
                 {isSubmittingCollect && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />}
                 Record Collection &amp; Reduce Balance
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── CASH DEPOSIT TO BANK DIALOG ── */}
+      <Dialog open={bankDepositOpen} onOpenChange={setBankDepositOpen}>
+        <DialogContent className="sm:max-w-md rounded-2xl">
+          <form onSubmit={handleRecordBankDeposit}>
+            <DialogHeader>
+              <DialogTitle className="text-lg font-bold flex items-center gap-2">
+                <Building2 className="w-5 h-5 text-blue-500" /> Cash Deposit to Bank
+              </DialogTitle>
+              <p className="text-xs text-muted-foreground">
+                Move cash from physical drawer into your bank account. Decreases Cash in Drawer and increases UPI / Bank Balance without affecting profit.
+              </p>
+            </DialogHeader>
+
+            <div className="space-y-4 py-4">
+              {/* Current Balances + Impact Preview */}
+              <div className="rounded-xl bg-secondary/30 border border-border/50 overflow-hidden">
+                <div className="px-3 pt-2.5 pb-1 flex items-center justify-between">
+                  <span className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground">
+                    Current Balance → After Deposit
+                  </span>
+                  {!tallyBalances.loaded && (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2 p-2.5">
+                  {/* Cash in Drawer */}
+                  <div className="p-2.5 rounded-lg bg-background border border-destructive/20 space-y-1">
+                    <p className="text-[10px] uppercase font-bold text-destructive flex items-center gap-1">
+                      <Wallet className="w-3 h-3" /> Cash in Drawer
+                    </p>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-sm font-bold font-mono text-foreground">
+                        ₹{tallyBalances.currentCash.toLocaleString()}
+                      </span>
+                      {Number(depositAmount) > 0 && (
+                        <>
+                          <span className="text-muted-foreground text-xs">→</span>
+                          <span className={`text-sm font-bold font-mono ${(tallyBalances.currentCash - Number(depositAmount)) < 0 ? "text-rose-500" : "text-destructive"}`}>
+                            ₹{Math.max(0, tallyBalances.currentCash - Number(depositAmount)).toLocaleString()}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                    {Number(depositAmount) > 0 && (
+                      <p className="text-[10px] text-destructive font-mono font-bold">
+                        -{Number(depositAmount).toLocaleString()}
+                      </p>
+                    )}
+                    {Number(depositAmount) > tallyBalances.currentCash && tallyBalances.loaded && (
+                      <p className="text-[10px] text-rose-500 font-bold">⚠ Exceeds drawer!</p>
+                    )}
+                  </div>
+                  {/* Bank / UPI Balance */}
+                  <div className="p-2.5 rounded-lg bg-background border border-blue-500/20 space-y-1">
+                    <p className="text-[10px] uppercase font-bold text-blue-500 flex items-center gap-1">
+                      <Building2 className="w-3 h-3" /> Bank / UPI
+                    </p>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-sm font-bold font-mono text-foreground">
+                        ₹{tallyBalances.currentBank.toLocaleString()}
+                      </span>
+                      {Number(depositAmount) > 0 && (
+                        <>
+                          <span className="text-muted-foreground text-xs">→</span>
+                          <span className="text-sm font-bold font-mono text-blue-500">
+                            ₹{(tallyBalances.currentBank + Number(depositAmount)).toLocaleString()}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                    {Number(depositAmount) > 0 && (
+                      <p className="text-[10px] text-blue-500 font-mono font-bold">
+                        +{Number(depositAmount).toLocaleString()}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Amount */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Deposit Amount (₹) *</Label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-muted-foreground">₹</span>
+                  <Input
+                    type="number"
+                    min={1}
+                    className="h-10 text-sm font-bold font-code rounded-xl pl-7"
+                    placeholder="e.g. 5000"
+                    value={depositAmount}
+                    onChange={e => setDepositAmount(e.target.value)}
+                    required
+                    autoFocus
+                  />
+                </div>
+              </div>
+
+              {/* Bank Name / Target Account */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Target Bank / UPI Account</Label>
+                <Input
+                  className="h-10 text-xs rounded-xl"
+                  placeholder="e.g. SBI Current A/c, HDFC, Business UPI"
+                  value={depositBankName}
+                  onChange={e => setDepositBankName(e.target.value)}
+                />
+              </div>
+
+              {/* Date */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Deposit Date</Label>
+                <Input
+                  type="date"
+                  className="h-10 text-xs rounded-xl"
+                  value={depositDate}
+                  onChange={e => setDepositDate(e.target.value)}
+                  required
+                />
+              </div>
+
+              {/* Notes / Reference */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Note / Deposit Slip Ref (Optional)</Label>
+                <Input
+                  className="h-10 text-xs rounded-xl"
+                  placeholder="e.g. CDM Deposit slip #4829"
+                  value={depositNote}
+                  onChange={e => setDepositNote(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="text-xs rounded-xl"
+                onClick={() => setBankDepositOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={
+                  isSubmittingDeposit ||
+                  !Number(depositAmount) ||
+                  Number(depositAmount) <= 0 ||
+                  (tallyBalances.loaded && Number(depositAmount) > tallyBalances.currentCash)
+                }
+                className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-md disabled:opacity-50"
+              >
+                {isSubmittingDeposit && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />}
+                Deposit to Bank
               </Button>
             </DialogFooter>
           </form>

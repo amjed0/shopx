@@ -20,6 +20,7 @@ import {
   Cell, PieChart, Pie, Legend, AreaChart, Area,
 } from "recharts"
 import { ChartContainer } from "@/components/ui/chart"
+import { AccountsTallyBox } from "@/components/analytics/accounts-tally-box"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface KPIs {
@@ -173,6 +174,7 @@ export default function AnalyticsPage() {
   const [pl, setPl]           = React.useState<PLData | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [error, setError]     = React.useState<string | null>(null)
+  const [showTally, setShowTally] = React.useState(false)
 
   // ── Date filter state (same style as the Sales History page) ──
   const [mode, setMode]               = React.useState<ViewMode>("month")
@@ -299,8 +301,25 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      {/* ── REPORT SHORTCUT BUTTONS ── */}
+      {/* ── REPORT & TALLY SHORTCUT BUTTONS ── */}
       <div className="flex flex-wrap items-center gap-3">
+        <Button
+          type="button"
+          onClick={() => setShowTally(prev => !prev)}
+          className={cn(
+            "h-12 px-5 rounded-2xl gap-2.5 font-bold shadow-md transition-all hover:scale-[1.01] active:scale-[0.99]",
+            showTally
+              ? "bg-gradient-to-r from-emerald-700 via-teal-700 to-cyan-700 text-white ring-2 ring-emerald-500/50"
+              : "bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-950/20"
+          )}
+        >
+          <Scale className="w-5 h-5 text-emerald-200" />
+          <span>Today Accounts Tally</span>
+          <Badge className="bg-white/20 text-white text-[10px] px-2 py-0.5 border-none font-bold">
+            {showTally ? "Hide ✕" : "Check Tally ✓"}
+          </Badge>
+        </Button>
+
         {REPORT_LINKS.map(link => (
           <Button
             key={link.href}
@@ -314,6 +333,13 @@ export default function AnalyticsPage() {
           </Button>
         ))}
       </div>
+
+      {/* ── TODAY ACCOUNTS TALLY BOX (HIDDEN BY DEFAULT, SHOWN ON TOUCH/CLICK) ── */}
+      {showTally && (
+        <div id="accounts-tally-section" className="animate-in fade-in slide-in-from-top-3 duration-300">
+          <AccountsTallyBox userId={user?.uid} onClose={() => setShowTally(false)} />
+        </div>
+      )}
 
       {/* ── DATE FILTER BAR ── */}
       <div className="flex flex-col gap-3 bg-card border border-border/60 p-3 rounded-2xl shadow-sm">
