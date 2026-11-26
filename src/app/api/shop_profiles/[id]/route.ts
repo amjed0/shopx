@@ -53,6 +53,8 @@ export async function POST(
     if (data.email !== undefined) updateFields.email = data.email;
     if (data.gstNumber !== undefined) updateFields.gstNumber = data.gstNumber;
     if (data.businessCategory !== undefined) updateFields.businessCategory = data.businessCategory;
+    if (data.windowsAppUrl !== undefined) updateFields.windowsAppUrl = data.windowsAppUrl;
+    if (data.androidAppUrl !== undefined) updateFields.androidAppUrl = data.androidAppUrl;
 
     const shop = await Shop.findOneAndUpdate(
       { userId: id },

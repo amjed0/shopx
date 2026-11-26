@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
+import dbConnect from "../../../../../lib/mongodb";
+import Shop from "../../../../../models/Shop";
+
+const DEFAULT_WINDOWS_URL =
+  process.env.NEXT_PUBLIC_WINDOWS_DOWNLOAD_URL ||
+  "https://github.com/amjed0/shopx/releases/latest/download/ShopX-Elite-Setup.exe";
 
 function findInstallerPath() {
   const publicDownloadPath = path.join(process.cwd(), "public", "downloads", "ShopX-Elite-Setup.exe");
@@ -25,6 +31,19 @@ function findInstallerPath() {
   return null;
 }
 
+async function getRemoteDownloadUrl() {
+  try {
+    await dbConnect();
+    const shop = await Shop.findOne().sort({ createdAt: -1 });
+    if (shop?.windowsAppUrl && shop.windowsAppUrl.trim().length > 0) {
+      return shop.windowsAppUrl.trim();
+    }
+  } catch {
+    // ignore DB errors on cold start
+  }
+  return DEFAULT_WINDOWS_URL;
+}
+
 export async function HEAD() {
   const filePath = findInstallerPath();
   if (filePath) {
@@ -37,11 +56,13 @@ export async function HEAD() {
       },
     });
   }
-  return new NextResponse(null, { status: 404 });
+  const remoteUrl = await getRemoteDownloadUrl();
+  return NextResponse.redirect(remoteUrl, 302);
 }
 
 export async function GET(req: NextRequest) {
   try {
+    // 1. If running locally with file on disk, stream directly
     const filePath = findInstallerPath();
     if (filePath) {
       const stat = fs.statSync(filePath);
@@ -63,16 +84,12 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    return NextResponse.json(
-      {
-        ready: false,
-        message: "The Windows installer (.exe) has not been compiled yet. Please run 'npm run electron:build' to generate the installer.",
-      },
-      { status: 404 }
-    );
+    // 2. On Vercel / Cloud: Redirect to hosted storage or GitHub Release asset
+    const remoteUrl = await getRemoteDownloadUrl();
+    return NextResponse.redirect(remoteUrl, 302);
   } catch (error: any) {
     return NextResponse.json(
-      { error: "Failed to download Windows setup", details: error.message },
+      { error: "Failed to process download request", details: error.message },
       { status: 500 }
     );
   }

@@ -28,6 +28,9 @@ import {
   Download,
   UserX,
   IdCard,
+  Settings2,
+  ExternalLink,
+  Link2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -72,6 +75,8 @@ interface ShopData {
   location: string
   gstNumber?: string
   businessCategory?: string
+  windowsAppUrl?: string
+  androidAppUrl?: string
   createdAt: string
 }
 
@@ -96,6 +101,12 @@ export default function ProfilePage() {
   const [pinTarget, setPinTarget] = React.useState<EmployeeItem | null>(null)
   const [newEmpPin, setNewEmpPin] = React.useState("")
   const [savingPin, setSavingPin] = React.useState(false)
+
+  // Cloud App Download URLs (Owner only)
+  const [isDownloadSettingsOpen, setIsDownloadSettingsOpen] = React.useState(false)
+  const [windowsDownloadUrl, setWindowsDownloadUrl] = React.useState("")
+  const [androidDownloadUrl, setAndroidDownloadUrl] = React.useState("")
+  const [savingAppUrls, setSavingAppUrls] = React.useState(false)
 
   const fetchEmployees = React.useCallback(async () => {
     if (!isOwner) return
@@ -273,6 +284,8 @@ export default function ProfilePage() {
         if (!res.ok) throw new Error("Failed to fetch")
         const data = await res.json()
         setShopData(data)
+        if (data?.windowsAppUrl) setWindowsDownloadUrl(data.windowsAppUrl)
+        if (data?.androidAppUrl) setAndroidDownloadUrl(data.androidAppUrl)
       } catch (error) {
         console.error("Failed to fetch shop data:", error)
       } finally {
@@ -319,6 +332,38 @@ export default function ProfilePage() {
       })
     } finally {
       setUpdatingCategory(false)
+    }
+  }
+
+  const handleSaveAppUrls = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!session?.user?.id) return
+    setSavingAppUrls(true)
+    try {
+      const res = await fetch(`/api/shop_profiles/${session.user.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          windowsAppUrl: windowsDownloadUrl.trim(),
+          androidAppUrl: androidDownloadUrl.trim(),
+        }),
+      })
+      if (!res.ok) throw new Error("Failed to save download URLs")
+      const updated = await res.json()
+      setShopData(updated)
+      setIsDownloadSettingsOpen(false)
+      toast({
+        title: "Download Links Saved ✓",
+        description: "Your cloud download links have been updated successfully.",
+      })
+    } catch (err: any) {
+      toast({
+        variant: "destructive",
+        title: "Update Failed",
+        description: err.message,
+      })
+    } finally {
+      setSavingAppUrls(false)
     }
   }
 
@@ -720,52 +765,91 @@ export default function ProfilePage() {
           {/* ── DOWNLOAD SHOPX APPS (Owner only) ── */}
           {isOwner && (
             <Card className="border-none bg-gradient-to-br from-indigo-950/60 to-violet-950/60 shadow-sm border border-indigo-500/20">
-              <CardHeader className="pb-3">
-                <CardTitle className="font-headline text-xl flex items-center gap-2">
-                  <Download className="w-5 h-5 text-indigo-400" />
-                  Download ShopX Apps
-                </CardTitle>
-                <CardDescription>
-                  Install ShopX Elite on your devices for the best experience.
-                </CardDescription>
+              <CardHeader className="pb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <CardTitle className="font-headline text-xl flex items-center gap-2">
+                    <Download className="w-5 h-5 text-indigo-400" />
+                    Download ShopX Apps
+                  </CardTitle>
+                  <CardDescription>
+                    Install ShopX Elite on your devices for desktop and mobile access.
+                  </CardDescription>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/20 w-fit"
+                  onClick={() => setIsDownloadSettingsOpen(true)}
+                >
+                  <Settings2 className="w-3.5 h-3.5 mr-1.5" /> Configure Cloud Links
+                </Button>
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {/* Windows */}
                   <a
-                    href="/api/download/windows"
-                    download="ShopX-Elite-Setup.exe"
+                    href={shopData?.windowsAppUrl || "/api/download/windows"}
+                    download={!shopData?.windowsAppUrl ? "ShopX-Elite-Setup.exe" : undefined}
+                    target={shopData?.windowsAppUrl ? "_blank" : undefined}
+                    rel="noreferrer"
                     className="flex items-center gap-4 p-4 rounded-xl bg-indigo-500/10 border border-indigo-500/20 hover:bg-indigo-500/20 transition-colors group cursor-pointer"
                   >
                     <div className="flex-shrink-0 w-12 h-12 rounded-xl bg-indigo-500/20 flex items-center justify-center">
                       <Monitor className="w-6 h-6 text-indigo-400 group-hover:scale-110 transition-transform" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-bold text-foreground">Windows App</p>
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-sm font-bold text-foreground">Windows App</p>
+                        {shopData?.windowsAppUrl && (
+                          <span className="text-[9px] font-bold uppercase tracking-wider text-emerald-400 bg-emerald-500/15 px-1.5 py-0.2 rounded">
+                            Cloud Hosted
+                          </span>
+                        )}
+                      </div>
                       <p className="text-xs text-muted-foreground mt-0.5">ShopX-Elite-Setup.exe</p>
                       <span className="inline-flex items-center gap-1 mt-1.5 text-[10px] font-bold uppercase tracking-wider text-indigo-400 bg-indigo-500/15 px-2 py-0.5 rounded-full">
-                        <Download className="w-2.5 h-2.5" /> Download Installer (.exe)
+                        <Download className="w-2.5 h-2.5" /> Download (.exe)
                       </span>
                     </div>
                   </a>
 
                   {/* Android */}
-                  <div className="flex items-center gap-4 p-4 rounded-xl bg-secondary/40 border border-border/50 opacity-60 cursor-not-allowed select-none">
-                    <div className="flex-shrink-0 w-12 h-12 rounded-xl bg-secondary/60 flex items-center justify-center">
-                      <Smartphone className="w-6 h-6 text-muted-foreground" />
+                  {shopData?.androidAppUrl ? (
+                    <a
+                      href={shopData.androidAppUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center gap-4 p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500/20 transition-colors group cursor-pointer"
+                    >
+                      <div className="flex-shrink-0 w-12 h-12 rounded-xl bg-emerald-500/20 flex items-center justify-center">
+                        <Smartphone className="w-6 h-6 text-emerald-400 group-hover:scale-110 transition-transform" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold text-foreground">Android App</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">ShopX-Elite.apk</p>
+                        <span className="inline-flex items-center gap-1 mt-1.5 text-[10px] font-bold uppercase tracking-wider text-emerald-400 bg-emerald-500/15 px-2 py-0.5 rounded-full">
+                          <Download className="w-2.5 h-2.5" /> Download (.apk)
+                        </span>
+                      </div>
+                    </a>
+                  ) : (
+                    <div className="flex items-center gap-4 p-4 rounded-xl bg-secondary/40 border border-border/50 opacity-60 select-none">
+                      <div className="flex-shrink-0 w-12 h-12 rounded-xl bg-secondary/60 flex items-center justify-center">
+                        <Smartphone className="w-6 h-6 text-muted-foreground" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold text-foreground">Android App</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">ShopX-Elite.apk</p>
+                        <span className="inline-flex items-center gap-1 mt-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground bg-secondary px-2 py-0.5 rounded-full">
+                          Coming Soon
+                        </span>
+                      </div>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-bold text-foreground">Android App</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">ShopX-Elite.apk</p>
-                      <span className="inline-flex items-center gap-1 mt-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground bg-secondary px-2 py-0.5 rounded-full">
-                        Coming Soon
-                      </span>
-                    </div>
-                  </div>
+                  )}
                 </div>
 
                 <p className="mt-4 text-xs text-muted-foreground">
-                  💡 The Windows desktop app requires your ShopX server to be running. After installing, launch it and it will start automatically.
+                  💡 <strong>Hosting on Vercel:</strong> Because Vercel has a 4.5MB serverless limit, host your 121MB setup file on <strong>GitHub Releases</strong>, <strong>Google Drive</strong>, or <strong>Cloudflare</strong> and click <em>Configure Cloud Links</em> above to paste your link.
                 </p>
               </CardContent>
             </Card>
@@ -974,6 +1058,69 @@ export default function ProfilePage() {
               <Button type="submit" size="sm" disabled={savingPin} className="font-bold">
                 {savingPin ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
                 Save Password
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── CONFIGURE APP DOWNLOAD LINKS DIALOG (Owner only) ── */}
+      <Dialog open={isDownloadSettingsOpen} onOpenChange={setIsDownloadSettingsOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <form onSubmit={handleSaveAppUrls}>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-lg font-bold">
+                <Settings2 className="w-5 h-5 text-indigo-400" /> Configure App Download Links
+              </DialogTitle>
+              <CardDescription>
+                When deployed on Vercel, host your 121MB installer on GitHub Releases, Google Drive, or Cloud Storage and paste the direct download URL below.
+              </CardDescription>
+            </DialogHeader>
+
+            <div className="space-y-4 py-4">
+              <div>
+                <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <Monitor className="w-3.5 h-3.5 text-indigo-400" /> Windows (.exe) Download URL
+                </Label>
+                <Input
+                  placeholder="e.g. https://github.com/amjed0/shopx/releases/download/v1.0.0/ShopX-Elite-Setup.exe"
+                  className="mt-1 h-9 text-xs"
+                  value={windowsDownloadUrl}
+                  onChange={e => setWindowsDownloadUrl(e.target.value)}
+                />
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Leave blank to use default GitHub release URL.
+                </p>
+              </div>
+
+              <div>
+                <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <Smartphone className="w-3.5 h-3.5 text-emerald-400" /> Android (.apk) Download URL (Optional)
+                </Label>
+                <Input
+                  placeholder="e.g. https://.../ShopX-Elite.apk or Google Drive link"
+                  className="mt-1 h-9 text-xs"
+                  value={androidDownloadUrl}
+                  onChange={e => setAndroidDownloadUrl(e.target.value)}
+                />
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-secondary/50 border border-border/50 text-xs text-muted-foreground space-y-1.5">
+                <p className="font-semibold text-foreground">💡 How to Host the 121MB File for Free on GitHub:</p>
+                <p>1. Go to your repo: <strong className="text-foreground">github.com/amjed0/shopx</strong> &rarr; <strong>Releases</strong>.</p>
+                <p>2. Click <strong>Draft a new release</strong> (e.g. tag: <code>v1.0.0</code>).</p>
+                <p>3. Drag &amp; drop <code>ShopX-Elite-Setup.exe</code> from your computer.</p>
+                <p>4. Click <strong>Publish release</strong>. Paste the download link above!</p>
+              </div>
+            </div>
+
+            <DialogFooter className="gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => setIsDownloadSettingsOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" size="sm" disabled={savingAppUrls} className="bg-indigo-600 hover:bg-indigo-700 font-bold">
+                {savingAppUrls ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : null}
+                Save Download Links
               </Button>
             </DialogFooter>
           </form>
