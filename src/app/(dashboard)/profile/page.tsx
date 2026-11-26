@@ -775,14 +775,7 @@ export default function ProfilePage() {
                     Install ShopX Elite on your devices for desktop and mobile access.
                   </CardDescription>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8 text-xs border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/20 w-fit"
-                  onClick={() => setIsDownloadSettingsOpen(true)}
-                >
-                  <Settings2 className="w-3.5 h-3.5 mr-1.5" /> Configure Cloud Links
-                </Button>
+                
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
