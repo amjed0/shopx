@@ -4,8 +4,9 @@ import * as React from "react"
 import { SidebarProvider, SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/layout/app-sidebar"
 import { Separator } from "@/components/ui/separator"
-import { Bell, Loader2, User, LogOut } from "lucide-react"
+import { Bell, Loader2, User, LogOut, ArrowLeftRight, Crown, UserCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,8 +16,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { useSession, signOut } from "next-auth/react"
-import { useRouter } from "next/navigation"
+import { useRouter, usePathname } from "next/navigation"
 import { MobileBottomNav } from "@/components/layout/mobile-bottom-nav"
+import { useShopRole } from "@/hooks/useShopRole"
+import { canAccessPath } from "../../../lib/permissions"
 
 export default function DashboardLayout({
   children,
@@ -24,7 +27,9 @@ export default function DashboardLayout({
   children: React.ReactNode
 }) {
   const { data: session, status } = useSession()
+  const { role, empName, empId, permissions, hasPermission, loading: roleLoading, lockShop } = useShopRole()
   const router = useRouter()
+  const pathname = usePathname()
 
   // Hooks must run before any early return
   React.useEffect(() => {
@@ -32,6 +37,18 @@ export default function DashboardLayout({
       router.push("/login")
     }
   }, [status, router])
+
+  React.useEffect(() => {
+    if (status === "authenticated" && !roleLoading && !role) {
+      router.replace("/shop-login")
+    }
+  }, [status, roleLoading, role, router])
+
+  React.useEffect(() => {
+    if (role === "EMPLOYEE" && !roleLoading && !canAccessPath(role, permissions, pathname)) {
+      router.replace("/unauthorized")
+    }
+  }, [role, roleLoading, permissions, pathname, router])
 
   // Immediate synchronous redirect if launched from phone shortcut saved on /purchases/suppliers
   if (typeof window !== "undefined") {
@@ -47,7 +64,7 @@ export default function DashboardLayout({
     }
   }
 
-  if (status === "loading") {
+  if (status === "loading" || roleLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
@@ -55,13 +72,14 @@ export default function DashboardLayout({
     )
   }
 
-  if (!session) return null
+  if (!session || !role) return null
 
   const userName = session.user?.name ?? "User"
   const userEmail = session.user?.email ?? ""
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     sessionStorage.removeItem("shopx_session_started")
+    await fetch("/api/shop-role/logout", { method: "POST", credentials: "include" }).catch(() => {})
     signOut({ callbackUrl: "/login" })
   }
 
@@ -83,6 +101,34 @@ export default function DashboardLayout({
 
             {/* Right side */}
             <div className="flex items-center gap-1 md:gap-2 shrink-0">
+              {/* Role Badge & Switch Role */}
+              <Badge
+                variant="outline"
+                className={`hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold border ${
+                  role === "OWNER"
+                    ? "bg-primary/10 text-primary border-primary/20"
+                    : "bg-amber-500/10 text-amber-500 border-amber-500/20"
+                }`}
+              >
+                {role === "OWNER" ? (
+                  <Crown className="w-3 h-3" />
+                ) : (
+                  <UserCheck className="w-3 h-3" />
+                )}
+                {role === "OWNER" ? "Owner" : `${empName || "Employee"}${empId ? ` (${empId})` : ""}`}
+              </Badge>
+
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={lockShop}
+                className="hidden sm:inline-flex items-center gap-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground h-8 px-2.5"
+                title="Switch Role / Lock Shop"
+              >
+                <ArrowLeftRight className="w-3.5 h-3.5" />
+                <span>Switch Role</span>
+              </Button>
+
               {/* Notifications */}
               <Button
                 variant="ghost"
@@ -97,12 +143,14 @@ export default function DashboardLayout({
               <div className="hidden sm:block h-8 w-[1px] bg-border mx-1" />
 
               {/* New Bill (Desktop only - mobile uses bottom navigation bar) */}
-              <Button
-                onClick={() => router.push("/sales/new")}
-                className="hidden md:inline-flex bg-primary text-primary-foreground font-semibold px-4 md:px-6 rounded-full shadow-lg shadow-primary/20 text-xs md:text-sm h-8 md:h-9"
-              >
-                New Bill
-              </Button>
+              {hasPermission("billing") && (
+                <Button
+                  onClick={() => router.push("/sales/new")}
+                  className="hidden md:inline-flex bg-primary text-primary-foreground font-semibold px-4 md:px-6 rounded-full shadow-lg shadow-primary/20 text-xs md:text-sm h-8 md:h-9"
+                >
+                  New Bill
+                </Button>
+              )}
 
               {/* ── PROFILE MENU ── */}
               <DropdownMenu>
@@ -131,6 +179,13 @@ export default function DashboardLayout({
                   >
                     <User className="mr-2 h-4 w-4" />
                     Profile
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={lockShop}
+                    className="cursor-pointer"
+                  >
+                    <ArrowLeftRight className="mr-2 h-4 w-4" />
+                    Switch Role / Lock Shop
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     onClick={handleLogout}

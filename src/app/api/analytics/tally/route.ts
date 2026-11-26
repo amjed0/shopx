@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import dbConnect from '../../../../../lib/mongodb';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '../../../../../lib/auth';
@@ -6,9 +6,13 @@ import Sale from '../../../../../models/Sale';
 import Expense from '../../../../../models/Expense';
 import Income from '../../../../../models/Income';
 import Customer from '../../../../../models/Customer';
+import { requirePermission } from '../../../../../lib/rbac';
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
+    const authErr = await requirePermission(request, 'dashboard');
+    if (authErr) return authErr;
+
     await dbConnect();
 
     const session = await getServerSession(authOptions);

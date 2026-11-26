@@ -1,8 +1,9 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import dbConnect from '../../../../lib/mongodb';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '../../../../lib/auth';
 import mongoose from 'mongoose';
+import { requirePermission } from '../../../../lib/rbac';
 
 // Inline models to avoid import issues
 const SaleSchema = new mongoose.Schema({
@@ -42,8 +43,11 @@ const Sale =
 const Product =
   mongoose.models.Product || mongoose.model('Product', ProductSchema);
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
+    const authErr = await requirePermission(request, 'dashboard');
+    if (authErr) return authErr;
+
     await dbConnect();
 
     const session = await getServerSession(authOptions);

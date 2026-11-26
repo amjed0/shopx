@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ShopX Elite - Connecting</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #090d16;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      user-select: none;
+    }
+    .card {
+      background: #131b2e;
+      border: 1px solid #1e293b;
+      border-radius: 20px;
+      padding: 40px 32px;
+      width: 100%;
+      max-width: 480px;
+      text-align: center;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    }
+    .logo-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 64px;
+      height: 64px;
+      border-radius: 16px;
+      background: linear-gradient(135deg, #6366f1, #4f46e5);
+      margin-bottom: 20px;
+      box-shadow: 0 10px 25px -5px rgba(99, 102, 241, 0.4);
+    }
+    .logo-badge svg {
+      width: 32px;
+      height: 32px;
+      color: #fff;
+    }
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      margin-bottom: 8px;
+    }
+    .tagline {
+      font-size: 0.875rem;
+      color: #94a3b8;
+      margin-bottom: 28px;
+    }
+    .status-box {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-align: left;
+    }
+    .spinner {
+      width: 22px;
+      height: 22px;
+      border: 2.5px solid #334155;
+      border-top-color: #6366f1;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      flex-shrink: 0;
+    }
+    .status-text {
+      font-size: 0.8125rem;
+      color: #cbd5e1;
+      line-height: 1.4;
+    }
+    .status-url {
+      font-family: monospace;
+      color: #818cf8;
+      font-size: 0.75rem;
+      margin-top: 2px;
+      word-break: break-all;
+    }
+    .tip {
+      font-size: 0.75rem;
+      color: #64748b;
+      line-height: 1.5;
+      margin-bottom: 24px;
+    }
+    .tip code {
+      background: #1e293b;
+      color: #e2e8f0;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: monospace;
+    }
+    .btn {
+      background: #4f46e5;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      padding: 10px 20px;
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s ease;
+      width: 100%;
+    }
+    .btn:hover { background: #4338ca; }
+    .btn:active { transform: scale(0.99); }
+    .config-toggle {
+      background: transparent;
+      border: none;
+      color: #64748b;
+      font-size: 0.75rem;
+      margin-top: 16px;
+      cursor: pointer;
+      text-decoration: underline;
+    }
+    .config-box {
+      margin-top: 16px;
+      display: none;
+      text-align: left;
+    }
+    .config-box.open { display: block; }
+    .config-box label {
+      display: block;
+      font-size: 0.75rem;
+      color: #94a3b8;
+      margin-bottom: 6px;
+    }
+    .config-box input {
+      width: 100%;
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 8px 12px;
+      color: #fff;
+      font-size: 0.8125rem;
+      margin-bottom: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo-badge">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"/>
+      </svg>
+    </div>
+    <h1>ShopX Elite</h1>
+    <p class="tagline">Desktop POS &amp; Shop Management</p>
+
+    <div class="status-box">
+      <div class="spinner" id="spinner"></div>
+      <div class="status-text">
+        <div id="status-msg">Waiting for ShopX server...</div>
+        <div class="status-url" id="server-url">http://localhost:3000</div>
+      </div>
+    </div>
+
+    <p class="tip">
+      Please start your ShopX server in your terminal:
+      <br /><code id="cmd-hint">npm run dev</code> or <code>node server.js</code>
+    </p>
+
+    <button class="btn" onclick="checkConnection()">Retry Connection</button>
+
+    <br />
+    <button class="config-toggle" onclick="toggleConfig()">Change Server Address</button>
+
+    <div class="config-box" id="config-box">
+      <label for="custom-url">Server Address / URL:</label>
+      <input type="text" id="custom-url" value="http://localhost:3000" placeholder="e.g. http://localhost:3000" />
+      <button class="btn" style="background: #334155;" onclick="saveCustomUrl()">Save &amp; Connect</button>
+    </div>
+  </div>
+
+  <script>
+    let serverUrl = localStorage.getItem('shopx_server_url') || 'http://localhost:3000';
+    document.getElementById('server-url').innerText = serverUrl;
+    document.getElementById('custom-url').value = serverUrl;
+
+    let retryTimer = null;
+
+    async function checkConnection() {
+      const msg = document.getElementById('status-msg');
+      msg.innerText = 'Connecting...';
+      try {
+        const res = await fetch(serverUrl + '/api/auth/me', { method: 'GET', mode: 'no-cors' });
+        // Server accepted connection!
+        msg.innerText = 'Connected! Opening ShopX...';
+        setTimeout(() => {
+          window.location.href = serverUrl;
+        }, 300);
+      } catch (err) {
+        msg.innerText = 'Waiting for ShopX server...';
+      }
+    }
+
+    function toggleConfig() {
+      const box = document.getElementById('config-box');
+      box.classList.toggle('open');
+    }
+
+    function saveCustomUrl() {
+      const input = document.getElementById('custom-url').value.trim();
+      if (input) {
+        serverUrl = input.replace(/\/+$/, '');
+        localStorage.setItem('shopx_server_url', serverUrl);
+        document.getElementById('server-url').innerText = serverUrl;
+        document.getElementById('config-box').classList.remove('open');
+        checkConnection();
+      }
+    }
+
+    // Auto-poll every 2 seconds
+    checkConnection();
+    retryTimer = setInterval(checkConnection, 2000);
+  </script>
+</body>
+</html>

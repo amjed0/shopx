@@ -1,10 +1,14 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import dbConnect from '../../../../../lib/mongodb';
 import Expense from '../../../../../models/Expense';
 import Income from '../../../../../models/Income';
+import { requirePermission } from '../../../../../lib/rbac';
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
+    const authErr = await requirePermission(request, 'accounting');
+    if (authErr) return authErr;
+
     await dbConnect();
     const userId = request.headers.get('x-user-id');
     if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

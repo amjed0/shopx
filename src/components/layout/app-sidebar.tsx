@@ -13,6 +13,7 @@ import {
   LogOut,
   User as UserIcon,
   ShieldCheck,
+  ArrowLeftRight,
 } from "lucide-react"
 
 import {
@@ -37,68 +38,95 @@ import { Button } from "@/components/ui/button"
 import * as VisuallyHidden from "@radix-ui/react-visually-hidden"
 import { useSession, signOut } from "next-auth/react"
 import { useShop } from "@/hooks/useShop"
+import { useShopRole } from "@/hooks/useShopRole"
+import { PermissionKey } from "../../../lib/permissions"
 
-const navigation = [
+interface NavSubItem {
+  title: string
+  url: string
+  permission?: PermissionKey
+  ownerOnly?: boolean
+}
+
+interface NavItem {
+  title: string
+  icon: React.ElementType
+  url: string
+  permission?: PermissionKey
+  anyPermission?: PermissionKey[]
+  ownerOnly?: boolean
+  items?: NavSubItem[]
+}
+
+const navigation: NavItem[] = [
   {
     title: "Dashboard",
     icon: LayoutDashboard,
     url: "/dashboard",
+    permission: "dashboard",
   },
   {
     title: "Inventory",
     icon: Box,
     url: "/inventory",
+    anyPermission: ["productView", "inventoryManagement"],
     items: [
-      { title: "Products", url: "/inventory" },
-      { title: "Stock Alerts", url: "/inventory/stock-alert" },
-      { title: "Stock History", url: "/inventory/stock-history" },
+      { title: "Products", url: "/inventory", permission: "productView" },
+      { title: "Stock Alerts", url: "/inventory/stock-alert", permission: "inventoryManagement" },
+      { title: "Stock History", url: "/inventory/stock-history", permission: "inventoryManagement" },
     ],
   },
   {
     title: "Sales",
     icon: ShoppingCart,
     url: "/sales",
+    anyPermission: ["billing", "salesEntry"],
     items: [
-      { title: "New Bill", url: "/sales/new" },
-      { title: "Sales History", url: "/sales/sales-history" },
-      { title: "Returns", url: "/sales/sales-return" },
+      { title: "New Bill", url: "/sales/new", permission: "billing" },
+      { title: "Sales History", url: "/sales/sales-history", permission: "salesEntry" },
+      { title: "Returns", url: "/sales/sales-return", permission: "salesEntry" },
     ],
   },
   {
     title: "Purchases",
     icon: Truck,
     url: "/purchases",
+    anyPermission: ["purchaseEntry", "management"],
     items: [
-      { title: "Suppliers", url: "/purchases/suppliers" },
-      { title: "Purchase Entry", url: "/purchases/purchase-entry" },
-      { title: "History", url: "/purchases/purchase-history" },
+      { title: "Suppliers", url: "/purchases/suppliers", permission: "management" },
+      { title: "Purchase Entry", url: "/purchases/purchase-entry", permission: "purchaseEntry" },
+      { title: "History", url: "/purchases/purchase-history", permission: "purchaseEntry" },
     ],
   },
   {
     title: "Management",
     icon: Users,
     url: "/managment",
+    anyPermission: ["management"],
     items: [
-      { title: "Customers", url: "/managment/customers" },
-      { title: "Credit Tracking", url: "/managment/credit-tracking" },
+      { title: "Customers", url: "/managment/customers", permission: "management" },
+      { title: "Credit Tracking", url: "/managment/credit-tracking", permission: "management" },
+      { title: "Employees", url: "/managment/employees", ownerOnly: true },
     ],
   },
   {
     title: "Accounting",
     icon: Calculator,
     url: "/accounting",
+    anyPermission: ["accounting", "balanceSheet"],
     items: [
-      { title: "Cash Book", url: "/accounting/cashbook" },
-      { title: "Capital Account", url: "/accounting/capital" },
-      { title: "P&L Statement", url: "/accounting/pl-statement" },
-      { title: "Balance Sheet", url: "/accounting/balance-sheet" },
-      { title: "GST Reports", url: "/accounting/gst-reports" },
+      { title: "Cash Book", url: "/accounting/cashbook", permission: "accounting" },
+      { title: "Capital Account", url: "/accounting/capital", permission: "accounting" },
+      { title: "P&L Statement", url: "/accounting/pl-statement", permission: "accounting" },
+      { title: "Balance Sheet", url: "/accounting/balance-sheet", permission: "balanceSheet" },
+      { title: "GST Reports", url: "/accounting/gst-reports", permission: "accounting" },
     ],
   },
   {
     title: "Analytics",
     icon: BarChart3,
     url: "/analytics",
+    permission: "dashboard",
   },
 ]
 
@@ -107,16 +135,44 @@ export function AppSidebar() {
   const router = useRouter()
   const { state, setOpenMobile, isMobile } = useSidebar()
   const { data: session, status } = useSession()
+  const { role, empName, empId, hasPermission, lockShop } = useShopRole()
 
   const userId = session?.user?.id ?? null
   const { data: shopData, loading: shopLoading, isVehicleDealer } = useShop(userId)
 
   const isLoading = status === "loading" || shopLoading
 
+  const visibleNavigation = React.useMemo(() => {
+    if (role === "OWNER") return navigation
+
+    const isSubAllowed = (sub: NavSubItem) => {
+      if (sub.ownerOnly) return false
+      if (!sub.permission) return true
+      // inventoryManagement also grants productView
+      if (sub.permission === "productView" && hasPermission("inventoryManagement")) return true
+      return hasPermission(sub.permission)
+    }
+
+    return navigation
+      .map((item) => {
+        if (item.ownerOnly) return null
+        if (item.permission && !hasPermission(item.permission)) return null
+        if (item.anyPermission && !item.anyPermission.some((p) => hasPermission(p))) return null
+        if (item.items) {
+          const filteredSubs = item.items.filter(isSubAllowed)
+          if (filteredSubs.length === 0) return null
+          return { ...item, items: filteredSubs }
+        }
+        return item
+      })
+      .filter((x): x is NavItem => x !== null)
+  }, [role, hasPermission])
+
   const handleLogout = async (e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
     try {
+      await fetch("/api/shop-role/logout", { method: "POST", credentials: "include" }).catch(() => {})
       await signOut({ redirect: false })
       router.push("/login")
     } catch (error) {
@@ -150,7 +206,7 @@ export function AppSidebar() {
       <SidebarContent>
         <SidebarGroup>
           <SidebarMenu>
-            {navigation.map((item) => (
+            {visibleNavigation.map((item) => (
               <Collapsible
                 key={item.title}
                 asChild
@@ -229,11 +285,15 @@ export function AppSidebar() {
                 ) : (
                   <>
                     <span className="truncate font-bold text-foreground">
-                      {shopData?.ownerName || ""}
+                      {role === "EMPLOYEE"
+                        ? empName || "Employee"
+                        : shopData?.ownerName || ""}
                     </span>
                     <div className="flex items-center gap-1.5 min-w-0">
                       <span className="truncate text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
-                        {shopData?.companyName || ""}
+                        {role === "EMPLOYEE"
+                          ? `${empId || "STAFF"} · ${shopData?.companyName || ""}`
+                          : shopData?.companyName || ""}
                       </span>
                       {isVehicleDealer && (
                         <span className="text-[9px] px-1 py-0 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold shrink-0">
@@ -252,25 +312,47 @@ export function AppSidebar() {
           </div>
 
           {state !== "collapsed" ? (
-            <Button
-              variant="secondary"
-              size="sm"
-              className="w-full justify-start gap-3 bg-secondary/50 text-muted-foreground hover:text-destructive hover:bg-destructive/10 font-bold transition-all rounded-xl touch-manipulation"
-              onClick={handleLogout}
-            >
-              <LogOut className="h-4 w-4 shrink-0" />
-              <span>Exit Terminal</span>
-            </Button>
+            <div className="flex flex-col gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full justify-start gap-3 font-bold transition-all rounded-xl touch-manipulation"
+                onClick={() => { lockShop(); handleNavClick() }}
+              >
+                <ArrowLeftRight className="h-4 w-4 shrink-0" />
+                <span>Switch Role / Lock</span>
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="w-full justify-start gap-3 bg-secondary/50 text-muted-foreground hover:text-destructive hover:bg-destructive/10 font-bold transition-all rounded-xl touch-manipulation"
+                onClick={handleLogout}
+              >
+                <LogOut className="h-4 w-4 shrink-0" />
+                <span>Exit Terminal</span>
+              </Button>
+            </div>
           ) : (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="w-full h-9 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-xl touch-manipulation"
-              onClick={handleLogout}
-              title="Logout"
-            >
-              <LogOut className="h-4 w-4" />
-            </Button>
+            <div className="flex flex-col gap-1.5">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="w-full h-9 text-muted-foreground hover:text-foreground rounded-xl touch-manipulation"
+                onClick={() => { lockShop(); handleNavClick() }}
+                title="Switch Role / Lock Shop"
+              >
+                <ArrowLeftRight className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="w-full h-9 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-xl touch-manipulation"
+                onClick={handleLogout}
+                title="Logout"
+              >
+                <LogOut className="h-4 w-4" />
+              </Button>
+            </div>
           )}
         </div>
       </SidebarFooter>

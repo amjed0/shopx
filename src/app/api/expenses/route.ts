@@ -1,9 +1,13 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import dbConnect from '../../../../lib/mongodb';
 import Expense from '../../../../models/Expense';
+import { requirePermission } from '../../../../lib/rbac';
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
+    const authErr = await requirePermission(request, 'accounting');
+    if (authErr) return authErr;
+
     await dbConnect();
     const userId = request.headers.get('x-user-id');
     if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -33,8 +37,11 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
+    const authErr = await requirePermission(request, 'accounting');
+    if (authErr) return authErr;
+
     await dbConnect();
     const userId = request.headers.get('x-user-id');
     if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -63,8 +70,11 @@ export async function POST(request: Request) {
   }
 }
 
-export async function DELETE(request: Request) {
+export async function DELETE(request: NextRequest) {
   try {
+    const authErr = await requirePermission(request, 'accounting');
+    if (authErr) return authErr;
+
     await dbConnect();
     const userId = request.headers.get('x-user-id');
     if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

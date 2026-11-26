@@ -1,0 +1,36 @@
+{
+  "name": "shopx-elite",
+  "productName": "ShopX Elite",
+  "version": "1.0.0",
+  "description": "ShopX Elite Windows Desktop Application",
+  "main": "main.js",
+  "author": "ShopX Elite",
+  "scripts": {
+    "dist": "electron-builder --win --x64"
+  },
+  "build": {
+    "appId": "com.shopx.elite",
+    "productName": "ShopX Elite",
+    "electronVersion": "45.5.0",
+    "directories": {
+      "output": "../dist"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "ShopX-Elite-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "ShopX Elite"
+    },
+    "asar": true
+  }
+}

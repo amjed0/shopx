@@ -1,12 +1,16 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import dbConnect from '../../../../lib/mongodb';
 import Sale from '../../../../models/Sale';
 import Purchase from '../../../../models/Purchase';
 import Expense from '../../../../models/Expense';
 import Product from '../../../../models/Product';
+import { requirePermission } from '../../../../lib/rbac';
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
+    const authErr = await requirePermission(request, 'accounting');
+    if (authErr) return authErr;
+
     await dbConnect();
 
     const userId = request.headers.get('x-user-id');

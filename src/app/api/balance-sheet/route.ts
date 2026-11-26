@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import dbConnect from '../../../../lib/mongodb';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '../../../../lib/auth';
@@ -6,6 +6,7 @@ import mongoose from 'mongoose';
 import CapitalAccount from '../../../../models/CapitalAccount';
 import Expense from '../../../../models/Expense';
 import Income from '../../../../models/Income';
+import { requirePermission } from '../../../../lib/rbac';
 
 // ── Reuse existing models safely ──────────────────────────────────────────────
 const SaleSchema = new mongoose.Schema({
@@ -63,8 +64,11 @@ function sumByCategory(entries: any[], keywords: string[]): number {
     .reduce((acc: number, e: any) => acc + Math.abs(Number(e.amount) || 0), 0);
 }
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
+    const authErr = await requirePermission(request, 'balanceSheet');
+    if (authErr) return authErr;
+
     await dbConnect();
 
     const session = await getServerSession(authOptions);

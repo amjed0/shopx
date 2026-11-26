@@ -43,3 +43,9 @@ next-env.d.ts
 # firebase
 firebase-debug.log
 firestore-debug.log
+
+# electron & builds
+/dist/
+/public/downloads/*.exe
+/public/downloads/*.zip
+*.exe

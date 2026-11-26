@@ -18,6 +18,16 @@ import {
   Loader2,
   Sparkles,
   FileText,
+  Users,
+  Plus,
+  KeyRound,
+  Trash2,
+  UserCheck,
+  Monitor,
+  Smartphone,
+  Download,
+  UserX,
+  IdCard,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -38,6 +48,21 @@ import { useSession } from "next-auth/react"
 import { toast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
 import { isVehicleDealerCategory } from "@/hooks/useShop"
+import { useShopRole } from "@/hooks/useShopRole"
+import { EmployeePermissions } from "../../../../lib/permissions"
+import {
+  PermissionBadges,
+  EmployeePermissionsPanel,
+} from "@/components/employees/employee-permissions-panel"
+
+interface EmployeeItem {
+  _id: string
+  employeeId: string
+  name: string
+  phone?: string
+  isActive: boolean
+  permissions?: EmployeePermissions
+}
 
 interface ShopData {
   ownerName: string
@@ -53,9 +78,139 @@ interface ShopData {
 export default function ProfilePage() {
   const router = useRouter()
   const { data: session, status } = useSession()
+  const { role } = useShopRole()
+  const isOwner = role === "OWNER"
   const [shopData, setShopData] = React.useState<ShopData | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [updatingCategory, setUpdatingCategory] = React.useState(false)
+
+  // Employee Access & Password Management (Owner only)
+  const [employees, setEmployees] = React.useState<EmployeeItem[]>([])
+  const [empLoading, setEmpLoading] = React.useState(false)
+  const [openAddEmp, setOpenAddEmp] = React.useState(false)
+  const [empName, setEmpName] = React.useState("")
+  const [empId, setEmpId] = React.useState("")
+  const [empPhone, setEmpPhone] = React.useState("")
+  const [empPin, setEmpPin] = React.useState("")
+  const [creatingEmp, setCreatingEmp] = React.useState(false)
+  const [pinTarget, setPinTarget] = React.useState<EmployeeItem | null>(null)
+  const [newEmpPin, setNewEmpPin] = React.useState("")
+  const [savingPin, setSavingPin] = React.useState(false)
+
+  const fetchEmployees = React.useCallback(async () => {
+    if (!isOwner) return
+    setEmpLoading(true)
+    try {
+      const res = await fetch("/api/employees", { credentials: "include" })
+      if (res.ok) {
+        const data = await res.json()
+        setEmployees(Array.isArray(data) ? data : [])
+      }
+    } catch {
+      // ignore
+    } finally {
+      setEmpLoading(false)
+    }
+  }, [isOwner])
+
+  React.useEffect(() => {
+    if (isOwner) fetchEmployees()
+  }, [isOwner, fetchEmployees])
+
+  const handleCreateEmployee = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!empName.trim() || !empId.trim() || empPin.length < 4) {
+      toast({
+        variant: "destructive",
+        title: "Validation Error",
+        description: "Name, Employee ID, and a password/PIN of at least 4 characters are required.",
+      })
+      return
+    }
+    setCreatingEmp(true)
+    try {
+      const res = await fetch("/api/employees", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          name: empName.trim(),
+          employeeId: empId.trim().toUpperCase(),
+          phone: empPhone.trim() || undefined,
+          pin: empPin,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "Failed to add employee")
+      toast({ title: "Employee Created ✓", description: `${data.name} (${data.employeeId}) can now log in.` })
+      setEmpName("")
+      setEmpId("")
+      setEmpPhone("")
+      setEmpPin("")
+      setOpenAddEmp(false)
+      fetchEmployees()
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Error", description: err.message })
+    } finally {
+      setCreatingEmp(false)
+    }
+  }
+
+  const handleResetEmpPin = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!pinTarget || newEmpPin.length < 4) {
+      toast({ variant: "destructive", title: "Error", description: "Password/PIN must be at least 4 characters." })
+      return
+    }
+    setSavingPin(true)
+    try {
+      const res = await fetch(`/api/employees/${pinTarget._id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ pin: newEmpPin }),
+      })
+      if (!res.ok) throw new Error("Failed to update password")
+      toast({ title: "Employee Password Updated ✓", description: `New password/PIN saved for ${pinTarget.name}.` })
+      setPinTarget(null)
+      setNewEmpPin("")
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Error", description: err.message })
+    } finally {
+      setSavingPin(false)
+    }
+  }
+
+  const handleToggleEmpActive = async (emp: EmployeeItem) => {
+    try {
+      const res = await fetch(`/api/employees/${emp._id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ isActive: !emp.isActive }),
+      })
+      if (!res.ok) throw new Error("Failed to update status")
+      toast({ title: emp.isActive ? "Employee Disabled" : "Employee Enabled" })
+      fetchEmployees()
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Error", description: err.message })
+    }
+  }
+
+  const handleDeleteEmp = async (emp: EmployeeItem) => {
+    if (!confirm(`Remove ${emp.name} (${emp.employeeId})?`)) return
+    try {
+      const res = await fetch(`/api/employees/${emp._id}`, {
+        method: "DELETE",
+        credentials: "include",
+      })
+      if (!res.ok) throw new Error("Failed to delete employee")
+      toast({ title: "Employee Removed" })
+      fetchEmployees()
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Error", description: err.message })
+    }
+  }
 
   // Edit Business Profile Dialog
   const [isEditProfileOpen, setIsEditProfileOpen] = React.useState(false)
@@ -243,14 +398,16 @@ export default function ProfilePage() {
                 <CardTitle className="font-headline text-xl">Business Identity</CardTitle>
                 <CardDescription>Public information about your establishment.</CardDescription>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="rounded-full gap-2 border-border hover:bg-secondary/50 font-bold"
-                onClick={handleOpenEdit}
-              >
-                <Edit className="w-4 h-4" /> Edit Profile
-              </Button>
+              {isOwner && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-full gap-2 border-border hover:bg-secondary/50 font-bold"
+                  onClick={handleOpenEdit}
+                >
+                  <Edit className="w-4 h-4" /> Edit Profile
+                </Button>
+              )}
             </CardHeader>
             <CardContent className="grid gap-6 sm:grid-cols-2">
               <div className="space-y-1">
@@ -317,7 +474,8 @@ export default function ProfilePage() {
             </CardContent>
           </Card>
 
-          {/* Business Category Switcher Card */}
+          {/* Business Category Switcher Card (Owner Only) */}
+          {isOwner && (
           <Card className="border-none bg-card shadow-sm">
             <CardHeader className="space-y-1">
               <div className="flex items-center justify-between">
@@ -400,6 +558,121 @@ export default function ProfilePage() {
               </div>
             </CardContent>
           </Card>
+          )}
+
+          {/* Employee Passwords & Access Card (Owner Only) */}
+          {isOwner && (
+            <Card className="border-none bg-card shadow-sm border-l-4 border-l-primary">
+              <CardHeader className="flex flex-row items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <CardTitle className="font-headline text-xl flex items-center gap-2">
+                    <Users className="w-5 h-5 text-primary" />
+                    Employee Passwords &amp; Access
+                  </CardTitle>
+                  <CardDescription>
+                    Set Employee IDs and passwords/PINs for staff login. Owner role uses your same account email password.
+                  </CardDescription>
+                </div>
+                <Button
+                  size="sm"
+                  className="rounded-full gap-1.5 font-bold shrink-0"
+                  onClick={() => setOpenAddEmp(true)}
+                >
+                  <Plus className="w-4 h-4" /> Add Employee
+                </Button>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {empLoading ? (
+                  <div className="py-6 flex justify-center">
+                    <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                  </div>
+                ) : employees.length === 0 ? (
+                  <div className="p-4 rounded-xl bg-secondary/20 text-xs text-muted-foreground text-center">
+                    No employees added yet. Click <strong>Add Employee</strong> to create a staff ID and password.
+                  </div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {employees.map((emp) => (
+                      <div
+                        key={emp._id}
+                        className="p-3.5 rounded-xl bg-secondary/25 border border-border/50 flex flex-col gap-3"
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div className="space-y-0.5">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-sm">{emp.name}</span>
+                              <Badge
+                                variant="outline"
+                                className={
+                                  emp.isActive
+                                    ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20 text-[10px]"
+                                    : "bg-destructive/10 text-destructive border-destructive/20 text-[10px]"
+                                }
+                              >
+                                {emp.isActive ? "Active" : "Disabled"}
+                              </Badge>
+                            </div>
+                            <p className="text-xs font-mono text-primary font-semibold flex items-center gap-1">
+                              <IdCard className="w-3.5 h-3.5" />
+                              {emp.employeeId}
+                              {emp.phone ? <span className="text-muted-foreground font-sans ml-2">· {emp.phone}</span> : null}
+                            </p>
+                            <PermissionBadges permissions={emp.permissions} />
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-8 text-xs gap-1"
+                              onClick={() => {
+                                setPinTarget(emp)
+                                setNewEmpPin("")
+                              }}
+                            >
+                              <KeyRound className="w-3.5 h-3.5" />
+                              Set Password
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-8 text-xs gap-1"
+                              onClick={() => handleToggleEmpActive(emp)}
+                            >
+                              {emp.isActive ? <UserX className="w-3.5 h-3.5" /> : <UserCheck className="w-3.5 h-3.5" />}
+                              {emp.isActive ? "Disable" : "Enable"}
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                              onClick={() => handleDeleteEmp(emp)}
+                              title="Delete Employee"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        </div>
+
+                        <EmployeePermissionsPanel
+                          employeeId={emp._id}
+                          employeeName={emp.name}
+                          permissions={emp.permissions}
+                          onUpdated={(nextPerms) =>
+                            setEmployees((prev) =>
+                              prev.map((item) =>
+                                item._id === emp._id ? { ...item, permissions: nextPerms } : item
+                              )
+                            )
+                          }
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           <Card className="border-none bg-card shadow-sm border-l-4 border-l-accent">
             <CardHeader>
@@ -407,19 +680,16 @@ export default function ProfilePage() {
                 <Key className="w-5 h-5 text-accent" />
                 Security Status
               </CardTitle>
-              <CardDescription>Your account is protected by hardware-grade encryption.</CardDescription>
+              <CardDescription>Owner mode uses your primary account email password.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="p-4 rounded-xl bg-accent/5 border border-accent/10 flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-bold">Security Auth Code</p>
-                  <p className="text-xs text-muted-foreground">Private ShopX Authorization Active</p>
+                  <p className="text-sm font-bold">Owner Role Password</p>
+                  <p className="text-xs text-muted-foreground">Same as your account login email password</p>
                 </div>
-                <Badge variant="outline" className="border-accent/30 text-accent font-code">VALIDATED</Badge>
+                <Badge variant="outline" className="border-accent/30 text-accent font-code">SYNCED</Badge>
               </div>
-              <Button variant="link" className="text-accent p-0 h-auto font-bold text-xs uppercase tracking-widest">
-                Update Password or Auth Code
-              </Button>
             </CardContent>
           </Card>
 
@@ -446,6 +716,60 @@ export default function ProfilePage() {
               </div>
             </CardContent>
           </Card>
+
+          {/* ── DOWNLOAD SHOPX APPS (Owner only) ── */}
+          {isOwner && (
+            <Card className="border-none bg-gradient-to-br from-indigo-950/60 to-violet-950/60 shadow-sm border border-indigo-500/20">
+              <CardHeader className="pb-3">
+                <CardTitle className="font-headline text-xl flex items-center gap-2">
+                  <Download className="w-5 h-5 text-indigo-400" />
+                  Download ShopX Apps
+                </CardTitle>
+                <CardDescription>
+                  Install ShopX Elite on your devices for the best experience.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Windows */}
+                  <a
+                    href="/api/download/windows"
+                    download="ShopX-Elite-Setup.exe"
+                    className="flex items-center gap-4 p-4 rounded-xl bg-indigo-500/10 border border-indigo-500/20 hover:bg-indigo-500/20 transition-colors group cursor-pointer"
+                  >
+                    <div className="flex-shrink-0 w-12 h-12 rounded-xl bg-indigo-500/20 flex items-center justify-center">
+                      <Monitor className="w-6 h-6 text-indigo-400 group-hover:scale-110 transition-transform" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold text-foreground">Windows App</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">ShopX-Elite-Setup.exe</p>
+                      <span className="inline-flex items-center gap-1 mt-1.5 text-[10px] font-bold uppercase tracking-wider text-indigo-400 bg-indigo-500/15 px-2 py-0.5 rounded-full">
+                        <Download className="w-2.5 h-2.5" /> Download Installer (.exe)
+                      </span>
+                    </div>
+                  </a>
+
+                  {/* Android */}
+                  <div className="flex items-center gap-4 p-4 rounded-xl bg-secondary/40 border border-border/50 opacity-60 cursor-not-allowed select-none">
+                    <div className="flex-shrink-0 w-12 h-12 rounded-xl bg-secondary/60 flex items-center justify-center">
+                      <Smartphone className="w-6 h-6 text-muted-foreground" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold text-foreground">Android App</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">ShopX-Elite.apk</p>
+                      <span className="inline-flex items-center gap-1 mt-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground bg-secondary px-2 py-0.5 rounded-full">
+                        Coming Soon
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <p className="mt-4 text-xs text-muted-foreground">
+                  💡 The Windows desktop app requires your ShopX server to be running. After installing, launch it and it will start automatically.
+                </p>
+              </CardContent>
+            </Card>
+          )}
         </div>
       </div>
 
@@ -547,6 +871,109 @@ export default function ProfilePage() {
               >
                 {isSavingProfile ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
                 Save Identity
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── ADD EMPLOYEE DIALOG (OWNER ONLY) ── */}
+      <Dialog open={openAddEmp} onOpenChange={setOpenAddEmp}>
+        <DialogContent className="sm:max-w-md">
+          <form onSubmit={handleCreateEmployee}>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-lg font-bold">
+                <Users className="w-5 h-5 text-primary" /> Add Employee
+              </DialogTitle>
+              <CardDescription>
+                Create an Employee ID and Password/PIN for Stage-2 Employee Login.
+              </CardDescription>
+            </DialogHeader>
+            <div className="space-y-3 py-4">
+              <div>
+                <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Employee Name *</Label>
+                <Input
+                  required
+                  placeholder="e.g. Rahul Sharma"
+                  className="mt-1 h-9 text-xs"
+                  value={empName}
+                  onChange={e => setEmpName(e.target.value)}
+                />
+              </div>
+              <div>
+                <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Employee ID *</Label>
+                <Input
+                  required
+                  placeholder="e.g. EMP001"
+                  className="mt-1 h-9 text-xs uppercase"
+                  value={empId}
+                  onChange={e => setEmpId(e.target.value.toUpperCase())}
+                />
+              </div>
+              <div>
+                <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Phone (Optional)</Label>
+                <Input
+                  placeholder="e.g. 9876543210"
+                  className="mt-1 h-9 text-xs"
+                  value={empPhone}
+                  onChange={e => setEmpPhone(e.target.value)}
+                />
+              </div>
+              <div>
+                <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Employee Password / PIN * (min. 4 chars)</Label>
+                <Input
+                  required
+                  type="password"
+                  placeholder="Enter password or PIN"
+                  className="mt-1 h-9 text-xs"
+                  value={empPin}
+                  onChange={e => setEmpPin(e.target.value)}
+                />
+              </div>
+            </div>
+            <DialogFooter className="gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => setOpenAddEmp(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" size="sm" disabled={creatingEmp} className="font-bold">
+                {creatingEmp ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
+                Create Employee
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── SET EMPLOYEE PASSWORD DIALOG (OWNER ONLY) ── */}
+      <Dialog open={!!pinTarget} onOpenChange={(v) => !v && setPinTarget(null)}>
+        <DialogContent className="sm:max-w-sm">
+          <form onSubmit={handleResetEmpPin}>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-lg font-bold">
+                <KeyRound className="w-5 h-5 text-primary" /> Set Employee Password
+              </DialogTitle>
+              <CardDescription>
+                Update password/PIN for <strong>{pinTarget?.name}</strong> ({pinTarget?.employeeId}).
+              </CardDescription>
+            </DialogHeader>
+            <div className="py-4">
+              <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">New Password / PIN * (min. 4 chars)</Label>
+              <Input
+                required
+                type="password"
+                placeholder="Enter new password or PIN"
+                className="mt-1 h-9 text-xs"
+                value={newEmpPin}
+                onChange={e => setNewEmpPin(e.target.value)}
+              />
+            </div>
+            <DialogFooter className="gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => setPinTarget(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" size="sm" disabled={savingPin} className="font-bold">
+                {savingPin ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
+                Save Password
               </Button>
             </DialogFooter>
           </form>

@@ -21,7 +21,7 @@ export default function LoginPage() {
 
   React.useEffect(() => {
     if (status === "authenticated") {
-      router.replace("/dashboard")
+      router.replace("/shop-login")
     }
   }, [status, router])
 
@@ -64,10 +64,10 @@ export default function LoginPage() {
     }
 
     toast({
-      title: "Access Granted",
-      description: "Welcome back to ShopX Elite.",
+      title: "Workspace Verified",
+      description: "Please select Owner or Employee to enter your shop.",
     })
-    router.push("/dashboard")
+    router.push("/shop-login")
   } catch (err: any) {
     const msg = err.message || "Invalid credentials. Please try again."
     setError(msg)

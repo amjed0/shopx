@@ -9,7 +9,10 @@ import {
   Plus,
   Truck,
   PieChart,
+  Box,
+  History,
 } from "lucide-react"
+import { useShopRole } from "@/hooks/useShopRole"
 
 interface NavItem {
   label: string
@@ -53,8 +56,63 @@ const navItems: NavItem[] = [
   },
 ]
 
+const employeeNavItems: NavItem[] = [
+  {
+    label: "Products",
+    href: "/inventory",
+    icon: Box,
+    matchPrefix: "/inventory",
+  },
+  {
+    label: "Sales",
+    href: "/sales/sales-history",
+    icon: History,
+    matchPrefix: "/sales/sales-history",
+  },
+  {
+    label: "New Bill",
+    href: "/sales/new",
+    icon: Plus,
+    isCenter: true,
+    matchPrefix: "/sales/new",
+  },
+  {
+    label: "Purchases",
+    href: "/purchases/purchase-entry",
+    icon: Truck,
+    matchPrefix: "/purchases",
+  },
+]
+
 export function MobileBottomNav() {
   const pathname = usePathname()
+  const { role, hasPermission } = useShopRole()
+
+  const activeItems = React.useMemo(() => {
+    if (role === "OWNER") return navItems
+
+    const dynamic: NavItem[] = []
+    if (hasPermission("dashboard")) {
+      dynamic.push({ label: "Dashboard", href: "/dashboard", icon: LayoutGrid, matchPrefix: "/dashboard" })
+    } else if (hasPermission("productView") || hasPermission("inventoryManagement")) {
+      dynamic.push({ label: "Products", href: "/inventory", icon: Box, matchPrefix: "/inventory" })
+    }
+    if (hasPermission("accounting")) {
+      dynamic.push({ label: "Cash Book", href: "/accounting/cashbook", icon: ArrowDownUp, matchPrefix: "/accounting/cashbook" })
+    } else if (hasPermission("salesEntry")) {
+      dynamic.push({ label: "Sales", href: "/sales/sales-history", icon: History, matchPrefix: "/sales/sales-history" })
+    }
+    if (hasPermission("billing")) {
+      dynamic.push({ label: "New Bill", href: "/sales/new", icon: Plus, isCenter: true, matchPrefix: "/sales/new" })
+    }
+    if (hasPermission("purchaseEntry")) {
+      dynamic.push({ label: "Purchases", href: "/purchases/purchase-entry", icon: Truck, matchPrefix: "/purchases" })
+    }
+    if (hasPermission("balanceSheet")) {
+      dynamic.push({ label: "Balance", href: "/accounting/balance-sheet", icon: PieChart, matchPrefix: "/accounting/balance-sheet" })
+    }
+    return dynamic.length > 0 ? dynamic : employeeNavItems
+  }, [role, hasPermission])
 
   return (
     <nav
@@ -68,7 +126,7 @@ export function MobileBottomNav() {
         <div className="absolute left-1/2 -top-6 -translate-x-1/2 w-24 h-12 bg-teal-500/25 blur-xl pointer-events-none rounded-full" />
 
         <div className="flex items-end justify-around max-w-md mx-auto relative">
-          {navItems.map((item) => {
+          {activeItems.map((item) => {
             const Icon = item.icon
             const isActive =
               item.matchPrefix === "/dashboard"

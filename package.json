@@ -1,14 +1,46 @@
 {
   "name": "shopx-elite",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
+  "main": "electron/main.js",
   "scripts": {
     "dev": "node server.js",
     "build": "next build",
     "start": "node -e \"process.env.NODE_ENV='production'; require('./server.js')\"",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "verify-migration": "node scripts/verifyMigration.js"
+    "verify-migration": "node scripts/verifyMigration.js",
+    "electron": "set ELECTRON_DEV=1 && electron .",
+    "electron:build": "next build && cd electron && npx electron-builder --win --x64 && powershell -Command \"Copy-Item -Path ../dist/ShopX-Elite-Setup.exe -Destination ../public/downloads/ShopX-Elite-Setup.exe -Force\"",
+    "electron:pack": "electron-builder --win --x64 --dir"
+  },
+  "build": {
+    "appId": "com.shopx.elite",
+    "productName": "ShopX Elite",
+    "copyright": "Copyright © 2024 ShopX Elite",
+    "directories": {
+      "app": "electron",
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "ShopX-Elite-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "ShopX Elite"
+    },
+    "asar": true
   },
   "dependencies": {
     "@genkit-ai/google-genai": "^1.36.0",
@@ -69,6 +101,8 @@
     "@types/node": "^20",
     "@types/react": "^19.2.1",
     "@types/react-dom": "^19.2.1",
+    "electron": "^45.5.0",
+    "electron-builder": "^26.18.0",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
     "typescript": "^5"
